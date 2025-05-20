@@ -424,6 +424,10 @@ public class ControllerRequestURLBuilder {
     return StringUtil.join("/", _baseUrl, "segments", tableName, encode(segmentName), "metadata");
   }
 
+  public String forSegmentMetadata(String tableName, TableType tableType) {
+    return StringUtil.join("/", _baseUrl, "segments", tableName, "metadata") + "?type=" + tableType.name();
+  }
+
   public String forListAllSegmentLineages(String tableName, String tableType) {
     return StringUtil.join("/", _baseUrl, "segments", tableName, "lineage?type=" + tableType);
   }
@@ -632,5 +636,29 @@ public class ControllerRequestURLBuilder {
 
   public String forIdealState(String tableName) {
     return StringUtil.join("/", _baseUrl, "tables", tableName, "idealstate");
+  }
+
+  public String forLogicalTableCreate() {
+    return StringUtil.join("/", _baseUrl, "logicalTables");
+  }
+
+  public String forLogicalTableUpdate(String logicalTableName) {
+    return StringUtil.join("/", _baseUrl, "logicalTables", logicalTableName);
+  }
+
+  public String forLogicalTableGet(String logicalTableName) {
+    return StringUtil.join("/", _baseUrl, "logicalTables", logicalTableName);
+  }
+
+  public String forLogicalTableNamesGet() {
+    return StringUtil.join("/", _baseUrl, "logicalTables");
+  }
+
+  public String forLogicalTableDelete(String logicalTableName) {
+    return StringUtil.join("/", _baseUrl, "logicalTables", logicalTableName);
+  }
+
+  public String forTableTimeBoundary(String tableName) {
+    return StringUtil.join("/", _baseUrl, "tables", tableName, "timeBoundary");
   }
 }
