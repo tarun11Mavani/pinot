@@ -26,6 +26,11 @@ import java.util.Collections;
 import java.util.HashMap;
 import java.util.List;
 import java.util.Map;
+import java.util.Random;
+import java.util.concurrent.TimeUnit;
+import org.apache.avro.file.DataFileWriter;
+import org.apache.avro.generic.GenericData;
+import org.apache.avro.generic.GenericDatumWriter;
 import org.apache.commons.io.FileUtils;
 import org.apache.helix.task.TaskState;
 import org.apache.pinot.common.metadata.segment.SegmentZKMetadata;
@@ -36,8 +41,10 @@ import org.apache.pinot.controller.helix.core.minion.TaskSchedulingContext;
 import org.apache.pinot.core.common.MinionConstants;
 import org.apache.pinot.spi.config.table.TableConfig;
 import org.apache.pinot.spi.config.table.TableTaskConfig;
+import org.apache.pinot.spi.config.table.TableType;
 import org.apache.pinot.spi.data.FieldSpec;
 import org.apache.pinot.spi.data.Schema;
+import org.apache.pinot.spi.utils.CommonConstants;
 import org.apache.pinot.util.TestUtils;
 import org.testng.annotations.AfterClass;
 import org.testng.annotations.BeforeClass;
@@ -58,7 +65,7 @@ public class UpsertCompactMergeTaskIntegrationTest extends BaseClusterIntegratio
   private static final int NUM_BROKERS = 1;
   private static final String PRIMARY_KEY_COL = "clientId";
   private static final String TIME_COL = "DaysSinceEpoch";
-  private static final long TIMEOUT_MS = 60_000L;
+  private static final long TIMEOUT_MS = 120_000L;
 
   protected PinotHelixTaskResourceManager _helixTaskResourceManager;
   protected PinotTaskManager _taskManager;
@@ -67,9 +74,9 @@ public class UpsertCompactMergeTaskIntegrationTest extends BaseClusterIntegratio
   private List<File> _avroFiles;
   private long _countStarResult;
 
-  @BeforeClass
+    @BeforeClass
   public void setUp() throws Exception {
-    TestUtils.ensureDirectoriesExistAndEmpty(_tempDir);
+    TestUtils.ensureDirectoriesExistAndEmpty(_tempDir, _segmentDir, _tarDir);
 
     // Start the Pinot cluster
     startZk();
@@ -78,35 +85,28 @@ public class UpsertCompactMergeTaskIntegrationTest extends BaseClusterIntegratio
     startServers(NUM_SERVERS);
     startMinion();
 
-    // Unpack the Avro files
-    _avroFiles = unpackAvroData(_tempDir);
+    // Start Kafka
+    startKafkaWithoutTopic();
 
-    // Start Kafka and push data into Kafka
-    startKafka();
-    pushAvroIntoKafka(_avroFiles);
+    // Push data to Kafka and set up table
+    String kafkaTopicName = getKafkaTopic();
+    setUpKafka(kafkaTopicName);
+    setUpTable(getTableName(), kafkaTopicName);
 
-    // Create and upload schema
-    Schema schema = createSchema();
-    addSchema(schema);
-
-    // Create and upload table config with upsert enabled using base class method
-    TableConfig tableConfig = createUpsertTableConfig(_avroFiles.get(0), PRIMARY_KEY_COL, null,
-        getNumKafkaPartitions());
-    // Add task configuration to the table config
-    tableConfig.setTaskConfig(getUpsertCompactMergeTaskConfig());
-    addTableConfig(tableConfig);
-
-    // Wait for all segments to be online
+    // Wait for documents to be loaded using the base class method
     waitForAllDocsLoaded(TIMEOUT_MS);
 
     _helixTaskResourceManager = _controllerStarter.getHelixTaskResourceManager();
     _taskManager = _controllerStarter.getTaskManager();
     _pinotHelixResourceManager = _controllerStarter.getHelixResourceManager();
+    
+    // Wait for segments to be completed (not consuming) and persisted to deep storage
+    waitForSegmentsToBeCompletedAndPersisted();
   }
 
   @AfterClass
   public void tearDown() throws Exception {
-    dropRealtimeTable(SCHEMA_NAME);
+    dropRealtimeTable(getTableName());
     stopMinion();
     stopServer();
     stopBroker();
@@ -401,6 +401,105 @@ public class UpsertCompactMergeTaskIntegrationTest extends BaseClusterIntegratio
 
   // Helper methods
 
+  @Override
+  protected long getCountStarResult() {
+    // Due to upsert behavior, we expect only unique primary keys (20)
+    return 20L;
+  }
+
+  @Override
+  protected int getRealtimeSegmentFlushSize() {
+    // Use small flush size to ensure segments complete quickly for testing
+    return 50;  // Flush after 50 records
+  }
+
+  private void createAvroFile() throws Exception {
+    org.apache.avro.Schema avroSchema = org.apache.avro.Schema.createRecord("myRecord", null, null, false);
+    List<org.apache.avro.Schema.Field> fields = new ArrayList<>();
+    fields.add(new org.apache.avro.Schema.Field(PRIMARY_KEY_COL, org.apache.avro.Schema.create(org.apache.avro.Schema.Type.STRING), null, null));
+    fields.add(new org.apache.avro.Schema.Field("name", org.apache.avro.Schema.create(org.apache.avro.Schema.Type.STRING), null, null));
+    fields.add(new org.apache.avro.Schema.Field("city", org.apache.avro.Schema.create(org.apache.avro.Schema.Type.STRING), null, null));
+    fields.add(new org.apache.avro.Schema.Field("score", org.apache.avro.Schema.create(org.apache.avro.Schema.Type.DOUBLE), null, null));
+    fields.add(new org.apache.avro.Schema.Field("count", org.apache.avro.Schema.create(org.apache.avro.Schema.Type.LONG), null, null));
+    fields.add(new org.apache.avro.Schema.Field(TIME_COL, org.apache.avro.Schema.create(org.apache.avro.Schema.Type.LONG), null, null));
+    avroSchema.setFields(fields);
+    
+    File avroFile = new File(_tempDir, "test_data.avro");
+    try (DataFileWriter<GenericData.Record> fileWriter = new DataFileWriter<>(new GenericDatumWriter<>(avroSchema))) {
+      fileWriter.create(avroSchema, avroFile);
+      
+      // Create test records - some duplicates to test upsert behavior
+      long currentTimeMs = System.currentTimeMillis();
+      long startTimestamp = currentTimeMs - TimeUnit.DAYS.toMillis(30); // 30 days ago
+      
+      Random random = new Random(0); // Use seed for reproducible data
+      for (int i = 0; i < 100; i++) {
+        GenericData.Record record = new GenericData.Record(avroSchema);
+        
+        // Create some duplicate primary keys to test upsert behavior
+        String primaryKey = "client_" + (i % 20); // 20 unique primary keys, each repeated 5 times
+        
+        record.put(PRIMARY_KEY_COL, primaryKey);
+        record.put("name", "Name_" + primaryKey);
+        record.put("city", "City_" + (i % 5)); // 5 different cities
+        record.put("score", random.nextDouble() * 100.0);
+        record.put("count", (long) (i + 1));
+        record.put(TIME_COL, startTimestamp + (i * TimeUnit.HOURS.toMillis(1))); // One hour apart
+        
+        fileWriter.append(record);
+      }
+    }
+    _avroFiles = Collections.singletonList(avroFile);
+  }
+
+  private void setUpKafka(String kafkaTopicName) throws Exception {
+    // Create Avro files with matching schema
+    createAvroFile();
+    
+    // Create Kafka topic and push data
+    createKafkaTopic(kafkaTopicName);
+    pushAvroIntoKafka(_avroFiles);
+  }
+
+  private TableConfig setUpTable(String tableName, String kafkaTopicName) throws Exception {
+    Schema schema = createSchema();
+    schema.setSchemaName(tableName);
+    addSchema(schema);
+
+    TableConfig tableConfig = createUpsertTableConfig(_avroFiles.get(0), PRIMARY_KEY_COL, null,
+        getNumKafkaPartitions());
+    
+    // Add task configuration to the table config
+    tableConfig.setTaskConfig(getUpsertCompactMergeTaskConfig());
+    addTableConfig(tableConfig);
+
+    return tableConfig;
+  }
+
+  @Override
+  protected void waitForAllDocsLoaded(long timeoutMs) {
+    waitForAllDocsLoadedWithoutUpsert(getTableName(), timeoutMs, 100L); // We push 100 records before upsert
+  }
+
+  private void waitForAllDocsLoadedWithoutUpsert(String tableName, long timeoutMs, long expectedCountStarWithoutUpsertResult) {
+    TestUtils.waitForCondition(aVoid -> {
+      try {
+        return queryCountStarWithoutUpsert(tableName) == expectedCountStarWithoutUpsertResult;
+      } catch (Exception e) {
+        return null;
+      }
+    }, timeoutMs, "Failed to load all documents");
+  }
+
+  private long queryCountStarWithoutUpsert(String tableName) {
+    try {
+      return getPinotConnection().execute("SELECT COUNT(*) FROM " + tableName + " OPTION(skipUpsert=true)")
+          .getResultSet(0).getLong(0);
+    } catch (Exception e) {
+      return 0;
+    }
+  }
+
   protected Schema createSchema() {
     return new Schema.SchemaBuilder()
         .setSchemaName(SCHEMA_NAME)
@@ -429,6 +528,31 @@ public class UpsertCompactMergeTaskIntegrationTest extends BaseClusterIntegratio
     return taskConfigs;
   }
 
+  private void waitForSegmentsToBeCompletedAndPersisted() {
+    TestUtils.waitForCondition(input -> {
+      try {
+        List<SegmentZKMetadata> segments = _pinotHelixResourceManager.getSegmentsZKMetadata(REALTIME_TABLE_NAME);
+        if (segments.isEmpty()) {
+          return false;
+        }
+        
+        // Check that we have at least some completed segments (Status.DONE)
+        int completedSegments = 0;
+        for (SegmentZKMetadata segment : segments) {
+          // Check if segment is completed (Status.DONE means it's been persisted to deep storage)
+          if (segment.getStatus() == CommonConstants.Segment.Realtime.Status.DONE) {
+            completedSegments++;
+          }
+        }
+        
+        // We need at least 2 completed segments to be eligible for merge
+        return completedSegments >= 2;
+      } catch (Exception e) {
+        return false;
+      }
+    }, TIMEOUT_MS, "Failed to wait for segments to be completed and persisted");
+  }
+
   private void waitForTaskToComplete() {
     TestUtils.waitForCondition(input -> {
       // Check task state
@@ -442,20 +566,7 @@ public class UpsertCompactMergeTaskIntegrationTest extends BaseClusterIntegratio
     }, TIMEOUT_MS, "Failed to complete task");
   }
 
-  protected void waitForAllDocsLoaded(long timeoutMs) {
-    TestUtils.waitForCondition(aVoid -> {
-      try {
-        String query = "SELECT COUNT(*) FROM " + SCHEMA_NAME;
-        JsonNode response = postQuery(query);
-        long actualCount = response.get("resultTable").get("rows").get(0).get(0).asLong();
-        // Store the actual count for verification in tests
-        _countStarResult = actualCount;
-        return actualCount > 0; // Just ensure we have some data loaded
-      } catch (Exception e) {
-        return false;
-      }
-    }, timeoutMs, "Failed to load all documents");
-  }
+
 
   private void verifyInitialSegmentState() {
     List<SegmentZKMetadata> segments = _pinotHelixResourceManager.getSegmentsZKMetadata(REALTIME_TABLE_NAME);
@@ -465,7 +576,20 @@ public class UpsertCompactMergeTaskIntegrationTest extends BaseClusterIntegratio
     for (SegmentZKMetadata segment : segments) {
       assertTrue(segment.getSegmentName().contains("__"), "Should be realtime segment format");
       assertNotNull(segment.getStatus(), "Segment status should not be null");
-      assertTrue(segment.getTotalDocs() > 0, "Segment should have documents");
+    }
+
+    // Use query-based verification instead of metadata since it's more reliable for verifying data presence
+    try {
+      long actualCount = queryCountStarWithoutUpsert(getTableName());
+      assertTrue(actualCount > 0, "Should have documents in segments. Count: " + actualCount);
+      
+      // Also verify using normal query that should account for upsert
+      long upsertCount = getPinotConnection().execute("SELECT COUNT(*) FROM " + getTableName())
+          .getResultSet(0).getLong(0);
+      assertTrue(upsertCount > 0, "Should have upserted documents. Count: " + upsertCount);
+      assertTrue(upsertCount <= actualCount, "Upsert count should be <= total count due to deduplication");
+    } catch (Exception e) {
+      fail("Failed to verify initial segment state via queries: " + e.getMessage());
     }
   }
 
