@@ -126,6 +126,7 @@ public class FileUploadDownloadClient implements AutoCloseable {
   private static final String SEGMENT_LINEAGE_ENTRY_ID_PARAMETER = "&segmentLineageEntryId=";
   private static final String FORCE_REVERT_PARAMETER = "&forceRevert=";
   private static final String FORCE_CLEANUP_PARAMETER = "&forceCleanup=";
+  private static final String CLEANUP_PARAMETER = "&cleanup=";
 
   private static final String RETENTION_PARAMETER = "retention=";
 
@@ -391,11 +392,12 @@ public class FileUploadDownloadClient implements AutoCloseable {
   }
 
   public static URI getEndReplaceSegmentsURI(URI controllerURI, String rawTableName, String tableType,
-      String segmentLineageEntryId)
+      String segmentLineageEntryId, boolean cleanup)
       throws URISyntaxException {
     return getURI(controllerURI.getScheme(), controllerURI.getHost(), controllerURI.getPort(),
         OLD_SEGMENT_PATH + "/" + rawTableName + END_REPLACE_SEGMENTS_PATH,
-        TYPE_DELIMITER + tableType + SEGMENT_LINEAGE_ENTRY_ID_PARAMETER + segmentLineageEntryId);
+        TYPE_DELIMITER + tableType
+            + SEGMENT_LINEAGE_ENTRY_ID_PARAMETER + segmentLineageEntryId + CLEANUP_PARAMETER + cleanup);
   }
 
   public static URI getRevertReplaceSegmentsURI(URI controllerURI, String rawTableName, String tableType,
@@ -514,6 +516,13 @@ public class FileUploadDownloadClient implements AutoCloseable {
   private static ClassicHttpRequest getRevertReplaceSegmentRequest(URI uri) {
     ClassicRequestBuilder requestBuilder = ClassicRequestBuilder.post(uri).setVersion(HttpVersion.HTTP_1_1)
         .setHeader(HttpHeaders.CONTENT_TYPE, HttpClient.JSON_CONTENT_TYPE);
+    return requestBuilder.build();
+  }
+
+  private static ClassicHttpRequest getRevertReplaceSegmentRequest(URI uri, @Nullable AuthProvider authProvider) {
+    ClassicRequestBuilder requestBuilder = ClassicRequestBuilder.post(uri).setVersion(HttpVersion.HTTP_1_1)
+        .setHeader(HttpHeaders.CONTENT_TYPE, HttpClient.JSON_CONTENT_TYPE);
+    AuthProviderUtils.toRequestHeaders(authProvider).forEach(requestBuilder::addHeader);
     return requestBuilder.build();
   }
 
@@ -726,6 +735,29 @@ public class FileUploadDownloadClient implements AutoCloseable {
     NameValuePair tableTypeValuePair = new BasicNameValuePair(QueryParameters.TABLE_TYPE, tableType.name());
     List<NameValuePair> parameters = Arrays.asList(tableNameValuePair, tableTypeValuePair);
     return uploadSegment(uri, segmentName, segmentFile, null, parameters, HttpClient.DEFAULT_SOCKET_TIMEOUT_MS);
+  }
+
+  /**
+   * Upload segment with segment file using default settings. Include table name and type as a request parameters.
+   *
+   * @param uri URI
+   * @param segmentName Segment name
+   * @param segmentFile Segment file
+   * @param headers Optional http headers
+   * @param tableName Table name with or without type suffix
+   * @param tableType Table type
+   * @return Response
+   * @throws IOException
+   * @throws HttpErrorStatusException
+   */
+  public SimpleHttpResponse uploadSegment(URI uri, String segmentName, File segmentFile, List<Header> headers,
+    String tableName, TableType tableType)
+    throws IOException, HttpErrorStatusException {
+    // Add table name and type request parameters
+    NameValuePair tableNameValuePair = new BasicNameValuePair(QueryParameters.TABLE_NAME, tableName);
+    NameValuePair tableTypeValuePair = new BasicNameValuePair(QueryParameters.TABLE_TYPE, tableType.name());
+    List<NameValuePair> parameters = Arrays.asList(tableNameValuePair, tableTypeValuePair);
+    return uploadSegment(uri, segmentName, segmentFile, headers, parameters, HttpClient.DEFAULT_SOCKET_TIMEOUT_MS);
   }
 
   /**
@@ -1151,7 +1183,22 @@ public class FileUploadDownloadClient implements AutoCloseable {
    */
   public SimpleHttpResponse revertReplaceSegments(URI uri)
       throws IOException, HttpErrorStatusException {
-    return HttpClient.wrapAndThrowHttpException(_httpClient.sendRequest(getRevertReplaceSegmentRequest(uri)));
+    return revertReplaceSegments(uri, null);
+  }
+
+  /**
+   * Revert replace segments with default settings.
+   *
+   * @param uri URI
+   * @param authProvider auth provider
+   * @return Response
+   * @throws IOException
+   * @throws HttpErrorStatusException
+   */
+  public SimpleHttpResponse revertReplaceSegments(URI uri, @Nullable AuthProvider authProvider)
+      throws IOException, HttpErrorStatusException {
+    return HttpClient.wrapAndThrowHttpException(_httpClient.sendRequest(
+        getRevertReplaceSegmentRequest(uri, authProvider)));
   }
 
   /**

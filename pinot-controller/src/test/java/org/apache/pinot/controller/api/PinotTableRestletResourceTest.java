@@ -29,8 +29,15 @@ import java.util.Arrays;
 import java.util.HashMap;
 import java.util.List;
 import java.util.Map;
+import java.util.Set;
+import javax.ws.rs.core.Response;
+import org.apache.commons.lang3.tuple.Pair;
+import org.apache.helix.task.TaskState;
 import org.apache.pinot.controller.helix.ControllerTest;
+import org.apache.pinot.controller.helix.core.minion.ClusterInfoAccessor;
 import org.apache.pinot.controller.helix.core.minion.PinotTaskManager;
+import org.apache.pinot.controller.helix.core.minion.TaskSchedulingContext;
+import org.apache.pinot.controller.helix.core.minion.TaskSchedulingInfo;
 import org.apache.pinot.controller.helix.core.minion.generator.BaseTaskGenerator;
 import org.apache.pinot.controller.helix.core.rebalance.RebalanceResult;
 import org.apache.pinot.core.common.MinionConstants;
@@ -48,16 +55,27 @@ import org.apache.pinot.spi.config.table.assignment.InstanceTagPoolConfig;
 import org.apache.pinot.spi.data.FieldSpec;
 import org.apache.pinot.spi.data.LogicalTableConfig;
 import org.apache.pinot.spi.data.Schema;
-import org.apache.pinot.spi.stream.StreamConfig;
+import org.apache.pinot.spi.utils.CommonConstants;
 import org.apache.pinot.spi.utils.JsonUtils;
 import org.apache.pinot.spi.utils.StringUtil;
+import org.apache.pinot.spi.utils.builder.ControllerRequestURLBuilder;
 import org.apache.pinot.spi.utils.builder.TableConfigBuilder;
 import org.apache.pinot.spi.utils.builder.TableNameBuilder;
+import org.apache.pinot.util.TestUtils;
+import org.mockito.Mockito;
 import org.testng.annotations.AfterClass;
+import org.testng.annotations.AfterMethod;
 import org.testng.annotations.BeforeClass;
+import org.testng.annotations.BeforeMethod;
 import org.testng.annotations.Test;
 
-import static org.testng.Assert.*;
+import static org.mockito.ArgumentMatchers.any;
+import static org.testng.Assert.assertEquals;
+import static org.testng.Assert.assertNotNull;
+import static org.testng.Assert.assertNull;
+import static org.testng.Assert.assertTrue;
+import static org.testng.Assert.expectThrows;
+import static org.testng.Assert.fail;
 
 
 /**
@@ -66,8 +84,8 @@ import static org.testng.Assert.*;
 public class PinotTableRestletResourceTest extends ControllerTest {
   private static final String OFFLINE_TABLE_NAME = "testOfflineTable";
   private static final String REALTIME_TABLE_NAME = "testRealtimeTable";
-  private final TableConfigBuilder _offlineBuilder = new TableConfigBuilder(TableType.OFFLINE);
-  private final TableConfigBuilder _realtimeBuilder = new TableConfigBuilder(TableType.REALTIME);
+  private final TableConfigBuilder _offlineBuilder = getOfflineTableBuilder(OFFLINE_TABLE_NAME);
+  private final TableConfigBuilder _realtimeBuilder = getRealtimeTableBuilder(REALTIME_TABLE_NAME);
   private String _createTableUrl;
 
   @BeforeClass
@@ -76,53 +94,59 @@ public class PinotTableRestletResourceTest extends ControllerTest {
     DEFAULT_INSTANCE.setupSharedStateAndValidate();
     registerMinionTasks();
     _createTableUrl = DEFAULT_INSTANCE.getControllerRequestURLBuilder().forTableCreate();
-    _offlineBuilder.setTableName(OFFLINE_TABLE_NAME).setTimeColumnName("timeColumn").setTimeType("DAYS")
-        .setRetentionTimeUnit("DAYS").setRetentionTimeValue("5");
+  }
 
-    // add schema for realtime table
+  private TableConfigBuilder getRealtimeTableBuilder(String tableName) {
+    return new TableConfigBuilder(TableType.REALTIME)
+        .setTableName(tableName)
+        .setTimeColumnName("timeColumn")
+        .setTimeType("DAYS")
+        .setRetentionTimeUnit("DAYS")
+        .setRetentionTimeValue("5")
+        .setStreamConfigs(FakeStreamConfigUtils.getDefaultLowLevelStreamConfigs().getStreamConfigsMap());
+  }
+
+  private TableConfigBuilder getOfflineTableBuilder(String tableName) {
+    return new TableConfigBuilder(TableType.OFFLINE)
+        .setTableName(tableName)
+        .setTimeColumnName("timeColumn")
+        .setTimeType("DAYS")
+        .setRetentionTimeUnit("DAYS")
+        .setRetentionTimeValue("5");
+  }
+
+  @BeforeMethod
+  public void beforeMethod()
+      throws Exception {
     DEFAULT_INSTANCE.addDummySchema(REALTIME_TABLE_NAME);
     DEFAULT_INSTANCE.addDummySchema(OFFLINE_TABLE_NAME);
-    StreamConfig streamConfig = FakeStreamConfigUtils.getDefaultLowLevelStreamConfigs();
-    _realtimeBuilder.setTableName(REALTIME_TABLE_NAME).setTimeColumnName("timeColumn").setTimeType("DAYS")
-        .setRetentionTimeUnit("DAYS").setRetentionTimeValue("5")
-        .setStreamConfigs(streamConfig.getStreamConfigsMap());
   }
 
   private void registerMinionTasks() {
     PinotTaskManager taskManager = DEFAULT_INSTANCE.getControllerStarter().getTaskManager();
-    taskManager.registerTaskGenerator(new BaseTaskGenerator() {
+    ClusterInfoAccessor clusterInfoAccessor = Mockito.mock(ClusterInfoAccessor.class);
+    Mockito.when(clusterInfoAccessor.getClusterConfig(any())).thenReturn(null);
+    registerTaskGenerator(MinionConstants.SegmentGenerationAndPushTask.TASK_TYPE, taskManager, clusterInfoAccessor);
+    registerTaskGenerator(MinionConstants.MergeRollupTask.TASK_TYPE, taskManager, clusterInfoAccessor);
+    registerTaskGenerator(MinionConstants.RealtimeToOfflineSegmentsTask.TASK_TYPE, taskManager, clusterInfoAccessor);
+  }
+
+  private static void registerTaskGenerator(String taskType, PinotTaskManager taskManager,
+      ClusterInfoAccessor clusterInfoAccessor) {
+    BaseTaskGenerator taskGenerator = new BaseTaskGenerator() {
       @Override
       public String getTaskType() {
-        return MinionConstants.SegmentGenerationAndPushTask.TASK_TYPE;
+        return taskType;
       }
 
       @Override
       public List<PinotTaskConfig> generateTasks(List<TableConfig> tableConfigs) {
-        return List.of(new PinotTaskConfig(MinionConstants.SegmentGenerationAndPushTask.TASK_TYPE, new HashMap<>()));
+        return List.of(new PinotTaskConfig(taskType,
+            tableConfigs.get(0).getTaskConfig().getConfigsForTaskType(getTaskType())));
       }
-    });
-    taskManager.registerTaskGenerator(new BaseTaskGenerator() {
-      @Override
-      public String getTaskType() {
-        return MinionConstants.MergeRollupTask.TASK_TYPE;
-      }
-
-      @Override
-      public List<PinotTaskConfig> generateTasks(List<TableConfig> tableConfigs) {
-        return List.of(new PinotTaskConfig(MinionConstants.MergeRollupTask.TASK_TYPE, new HashMap<>()));
-      }
-    });
-    taskManager.registerTaskGenerator(new BaseTaskGenerator() {
-      @Override
-      public String getTaskType() {
-        return MinionConstants.RealtimeToOfflineSegmentsTask.TASK_TYPE;
-      }
-
-      @Override
-      public List<PinotTaskConfig> generateTasks(List<TableConfig> tableConfigs) {
-        return List.of(new PinotTaskConfig(MinionConstants.RealtimeToOfflineSegmentsTask.TASK_TYPE, new HashMap<>()));
-      }
-    });
+    };
+    taskGenerator.init(clusterInfoAccessor);
+    taskManager.registerTaskGenerator(taskGenerator);
   }
 
   @Test
@@ -634,6 +658,59 @@ public class PinotTableRestletResourceTest extends ControllerTest {
     assertEquals(deleteResponse, "{\"status\":\"Tables: [table3_OFFLINE] deleted\"}");
   }
 
+  @Test(dataProvider = "tableTypeProvider")
+  public void testDeleteTableWithLogicalTable(TableType tableType)
+      throws IOException {
+    ControllerRequestURLBuilder urlBuilder = DEFAULT_INSTANCE.getControllerRequestURLBuilder();
+    String logicalTable = "logicalTable";
+    String tableName = "physicalTable";
+    String tableNameWithType = TableNameBuilder.forType(tableType).tableNameWithType(tableName);
+    DEFAULT_INSTANCE.addDummySchema(tableName);
+    DEFAULT_INSTANCE.addDummySchema(logicalTable);
+    DEFAULT_INSTANCE.addTableConfig(createDummyTableConfig(tableName, tableType));
+
+    LogicalTableConfig logicalTableConfig =
+        ControllerTest.getDummyLogicalTableConfig(logicalTable, List.of(tableNameWithType), "DefaultTenant");
+    String logicalTableUrl = urlBuilder.forLogicalTableCreate();
+    String response = ControllerTest.sendPostRequest(logicalTableUrl, logicalTableConfig.toSingleLineJsonString());
+    assertEquals(response,
+        "{\"unrecognizedProperties\":{},\"status\":\"logicalTable logical table successfully added.\"}");
+
+    // table deletion should fail
+    String tableDeleteUrl = urlBuilder.forTableDelete(tableNameWithType);
+    String msg = expectThrows(IOException.class, () -> ControllerTest.sendDeleteRequest(tableDeleteUrl)).getMessage();
+    assertTrue(msg.contains("Cannot delete table config: " + tableNameWithType
+        + " because it is referenced in logical table: logicalTable"), msg);
+
+    // table delete with name and type should also fail
+    msg = expectThrows(IOException.class,
+        () -> ControllerTest.sendDeleteRequest(tableDeleteUrl + "?type=" + tableType)).getMessage();
+    assertTrue(msg.contains("Cannot delete table config: " + tableNameWithType
+        + " because it is referenced in logical table: logicalTable"), msg);
+
+    // table delete with raw table name also should fail
+    msg = expectThrows(IOException.class,
+        () -> ControllerTest.sendDeleteRequest(urlBuilder.forTableDelete(tableName))).getMessage();
+    assertTrue(msg.contains(
+        "Cannot delete table config: " + tableName + " because it is referenced in logical table: logicalTable"), msg);
+
+    // table delete with raw table name and type also should fail
+    msg = expectThrows(IOException.class,
+        () -> ControllerTest.sendDeleteRequest(urlBuilder.forTableDelete(tableName + "?type=" + tableType)))
+            .getMessage();
+    assertTrue(msg.contains(
+        "Cannot delete table config: " + tableName + " because it is referenced in logical table: logicalTable"), msg);
+
+    // Delete logical table
+    String logicalTableDeleteUrl = urlBuilder.forLogicalTableDelete(logicalTable);
+    response = ControllerTest.sendDeleteRequest(logicalTableDeleteUrl);
+    assertEquals(response, "{\"status\":\"logicalTable logical table successfully deleted.\"}");
+
+    // Now table deletion should succeed
+    response = ControllerTest.sendDeleteRequest(tableDeleteUrl);
+    assertEquals(response, "{\"status\":\"Tables: [" + tableNameWithType + "] deleted\"}");
+  }
+
   @Test
   public void testCheckTableState()
       throws IOException {
@@ -814,13 +891,7 @@ public class PinotTableRestletResourceTest extends ControllerTest {
     instanceAssignmentConfigMap.put(InstancePartitionsType.CONSUMING.name(),
         getInstanceAssignmentConfig("DefaultTenant_REALTIME", 4, 2));
 
-    TableConfig realtimeTableConfig = new TableConfigBuilder(TableType.REALTIME).setTableName(tableName)
-        .setServerTenant("DefaultTenant")
-        .setTimeColumnName("timeColumn")
-        .setTimeType("DAYS")
-        .setRetentionTimeUnit("DAYS")
-        .setRetentionTimeValue("5")
-        .setStreamConfigs(FakeStreamConfigUtils.getDefaultLowLevelStreamConfigs().getStreamConfigsMap())
+    TableConfig realtimeTableConfig = getRealtimeTableBuilder(tableName)
         .setInstanceAssignmentConfigMap(instanceAssignmentConfigMap)
         .setNumReplicas(10)
         .build();
@@ -836,13 +907,7 @@ public class PinotTableRestletResourceTest extends ControllerTest {
     instanceAssignmentConfigMap.put(InstancePartitionsType.CONSUMING.name(),
         getInstanceAssignmentConfig("DefaultTenant_REALTIME", 4, 1));
 
-    realtimeTableConfig = new TableConfigBuilder(TableType.REALTIME).setTableName(tableName)
-        .setServerTenant("DefaultTenant")
-        .setTimeColumnName("timeColumn")
-        .setTimeType("DAYS")
-        .setRetentionTimeUnit("DAYS")
-        .setRetentionTimeValue("5")
-        .setStreamConfigs(FakeStreamConfigUtils.getDefaultLowLevelStreamConfigs().getStreamConfigsMap())
+    realtimeTableConfig = getRealtimeTableBuilder(tableName)
         .setInstanceAssignmentConfigMap(instanceAssignmentConfigMap)
         .setNumReplicas(10)
         .build();
@@ -895,28 +960,41 @@ public class PinotTableRestletResourceTest extends ControllerTest {
         aThrows.getMessage());
   }
 
+  @Test
+  public void testGetNonExistentTableConfig()
+      throws IOException {
+    // Attempt to get a non-existent table config
+    String tableName = "nonExistentTable";
+    String url = DEFAULT_INSTANCE.getControllerRequestURLBuilder().forTableGet(tableName);
+    Pair<Integer, String> respWithStatusCode = sendGetRequestWithStatusCode(url, null);
+    assertEquals(Response.Status.NOT_FOUND.getStatusCode(), respWithStatusCode.getLeft());
+    String msg = respWithStatusCode.getRight();
+    assertTrue(msg.contains("Table nonExistentTable does not exist"), msg);
+
+    // Attempt to get a non-existent table config with type
+    String offlineUrl = DEFAULT_INSTANCE.getControllerRequestURLBuilder().forTableGet(tableName, TableType.OFFLINE);
+    respWithStatusCode = sendGetRequestWithStatusCode(offlineUrl, null);
+    assertEquals(Response.Status.NOT_FOUND.getStatusCode(), respWithStatusCode.getLeft());
+    msg = respWithStatusCode.getRight();
+    assertTrue(msg.contains("Table nonExistentTable_OFFLINE does not exist"), msg);
+
+    String realtimeUrl = DEFAULT_INSTANCE.getControllerRequestURLBuilder().forTableGet(tableName, TableType.REALTIME);
+    respWithStatusCode = sendGetRequestWithStatusCode(realtimeUrl, null);
+    assertEquals(Response.Status.NOT_FOUND.getStatusCode(), respWithStatusCode.getLeft());
+    msg = respWithStatusCode.getRight();
+    assertTrue(msg.contains("Table nonExistentTable_REALTIME does not exist"), msg);
+  }
+
   /**
    * Updating existing REALTIME table with invalid replication factor should throw exception.
    */
   private void validateTableUpdateReplicationToInvalidValue(String rawTableName, TableType tableType) {
     String tableNameWithType = TableNameBuilder.forType(tableType).tableNameWithType(rawTableName);
-    TableConfig tableConfig =
-        tableType == TableType.REALTIME ? new TableConfigBuilder(TableType.REALTIME).setTableName(rawTableName)
-            .setServerTenant("DefaultTenant")
-            .setTimeColumnName("timeColumn")
-            .setTimeType("DAYS")
-            .setRetentionTimeUnit("DAYS")
-            .setRetentionTimeValue("5")
-            .setStreamConfigs(FakeStreamConfigUtils.getDefaultLowLevelStreamConfigs().getStreamConfigsMap())
-            .setNumReplicas(5)
-            .build() : new TableConfigBuilder(TableType.OFFLINE).setTableName(rawTableName)
-            .setServerTenant("DefaultTenant")
-            .setTimeColumnName("timeColumn")
-            .setTimeType("DAYS")
-            .setRetentionTimeUnit("DAYS")
-            .setRetentionTimeValue("5")
-            .setNumReplicas(5)
-            .build();
+    TableConfig tableConfig = (tableType == TableType.REALTIME
+        ? getRealtimeTableBuilder(rawTableName)
+        : getOfflineTableBuilder(rawTableName))
+        .setNumReplicas(5)
+        .build();
 
     try {
       sendPostRequest(_createTableUrl, tableConfig.toJsonString());
@@ -926,23 +1004,11 @@ public class PinotTableRestletResourceTest extends ControllerTest {
   }
 
   private void createTableWithValidReplication(String rawTableName, TableType tableType) {
-    TableConfig tableConfig =
-        tableType == TableType.REALTIME ? new TableConfigBuilder(TableType.REALTIME).setTableName(rawTableName)
-            .setServerTenant("DefaultTenant")
-            .setTimeColumnName("timeColumn")
-            .setTimeType("DAYS")
-            .setRetentionTimeUnit("DAYS")
-            .setRetentionTimeValue("5")
-            .setStreamConfigs(FakeStreamConfigUtils.getDefaultLowLevelStreamConfigs().getStreamConfigsMap())
-            .setNumReplicas(1)
-            .build() : new TableConfigBuilder(TableType.OFFLINE).setTableName(rawTableName)
-            .setServerTenant("DefaultTenant")
-            .setTimeColumnName("timeColumn")
-            .setTimeType("DAYS")
-            .setRetentionTimeUnit("DAYS")
-            .setRetentionTimeValue("5")
-            .setNumReplicas(1)
-            .build();
+    TableConfig tableConfig = (tableType == TableType.REALTIME
+        ? getRealtimeTableBuilder(rawTableName)
+        : getOfflineTableBuilder(rawTableName))
+        .setNumReplicas(1)
+        .build();
 
     try {
       sendPostRequest(_createTableUrl, tableConfig.toJsonString());
@@ -959,23 +1025,11 @@ public class PinotTableRestletResourceTest extends ControllerTest {
       throws IOException {
     String tableNameWithType = TableNameBuilder.forType(tableType).tableNameWithType(rawTableName);
     DEFAULT_INSTANCE.addDummySchema(rawTableName);
-    TableConfig tableConfig =
-        tableType == TableType.REALTIME ? new TableConfigBuilder(TableType.REALTIME).setTableName(rawTableName)
-            .setServerTenant("DefaultTenant")
-            .setTimeColumnName("timeColumn")
-            .setTimeType("DAYS")
-            .setRetentionTimeUnit("DAYS")
-            .setRetentionTimeValue("5")
-            .setStreamConfigs(FakeStreamConfigUtils.getDefaultLowLevelStreamConfigs().getStreamConfigsMap())
-            .setNumReplicas(5)
-            .build() : new TableConfigBuilder(TableType.OFFLINE).setTableName(rawTableName)
-            .setServerTenant("DefaultTenant")
-            .setTimeColumnName("timeColumn")
-            .setTimeType("DAYS")
-            .setRetentionTimeUnit("DAYS")
-            .setRetentionTimeValue("5")
-            .setNumReplicas(5)
-            .build();
+    TableConfig tableConfig = (tableType == TableType.REALTIME
+        ? getRealtimeTableBuilder(rawTableName)
+        : getOfflineTableBuilder(rawTableName))
+        .setNumReplicas(5)
+        .build();
 
     try {
       sendPostRequest(_createTableUrl, tableConfig.toJsonString());
@@ -996,6 +1050,202 @@ public class PinotTableRestletResourceTest extends ControllerTest {
     return new InstanceAssignmentConfig(instanceTagPoolConfig, instanceConstraintConfig,
         instanceReplicaGroupPartitionConfig,
         InstanceAssignmentConfig.PartitionSelector.FD_AWARE_INSTANCE_PARTITION_SELECTOR.name(), false);
+  }
+
+  @Test
+  public void testTableTasksValidationWithNoDanglingTasks()
+      throws Exception {
+    String tableName = "testTableTasksValidation";
+    DEFAULT_INSTANCE.addDummySchema(tableName);
+
+    TableConfig offlineTableConfig = getOfflineTableBuilder(tableName)
+        .setTaskConfig(new TableTaskConfig(ImmutableMap.of(
+            MinionConstants.SegmentGenerationAndPushTask.TASK_TYPE, ImmutableMap.of())))
+        .build();
+
+    // Should succeed when no dangling tasks exist
+    String creationResponse = sendPostRequest(_createTableUrl, offlineTableConfig.toJsonString());
+    assertEquals(creationResponse,
+        "{\"unrecognizedProperties\":{},\"status\":\"Table testTableTasksValidation_OFFLINE successfully added\"}");
+
+    // Clean up
+    sendDeleteRequest(DEFAULT_INSTANCE.getControllerRequestURLBuilder().forTableDelete(tableName));
+  }
+
+  @Test
+  public void testTableTasksValidationWithDanglingTasks()
+      throws Exception {
+    String tableName = "testTableTasksValidationWithDangling";
+    DEFAULT_INSTANCE.addDummySchema(tableName);
+
+    TableConfig offlineTableConfig = getOfflineTableBuilder(tableName)
+        .setTaskConfig(new TableTaskConfig(ImmutableMap.of(
+            MinionConstants.SegmentGenerationAndPushTask.TASK_TYPE,
+            ImmutableMap.of(PinotTaskManager.SCHEDULE_KEY, "0 */10 * ? * * *",
+                CommonConstants.TABLE_NAME, tableName + "_OFFLINE"))))
+        .build();
+
+    // First create the table successfully
+    sendPostRequest(_createTableUrl, offlineTableConfig.toJsonString());
+
+    // Create a task manually to simulate dangling task
+    PinotTaskManager taskManager = DEFAULT_INSTANCE.getControllerStarter().getTaskManager();
+    TaskSchedulingContext context = new TaskSchedulingContext();
+    context.setTablesToSchedule(Set.of(tableName + "_OFFLINE"));
+    Map<String, TaskSchedulingInfo> taskInfo = taskManager.scheduleTasks(context);
+    String taskName = taskInfo.values().iterator().next().getScheduledTaskNames().get(0);
+    waitForTaskState(taskName, TaskState.IN_PROGRESS);
+
+    // Now try to create another table with same name (simulating re-creation with dangling tasks)
+    sendDeleteRequest(DEFAULT_INSTANCE.getControllerRequestURLBuilder()
+        .forTableDelete(tableName + "?ignoreActiveTasks=true"));
+
+    try {
+      sendPostRequest(_createTableUrl, offlineTableConfig.toJsonString());
+      fail("Table creation should fail when dangling tasks exist");
+    } catch (IOException e) {
+      assertTrue(e.getMessage().contains("The table has dangling task data"));
+    }
+
+    // Clean up any remaining tasks
+    try {
+      sendDeleteRequest(DEFAULT_INSTANCE.getControllerRequestURLBuilder()
+          .forTableDelete(tableName + "?ignoreActiveTasks=true"));
+    } catch (Exception ignored) {
+      // Ignore if table doesn't exist
+    }
+  }
+
+  @Test
+  public void testTableTasksValidationWithNullTaskConfig()
+      throws Exception {
+    String tableName = "testTableTasksValidationNullConfig";
+    DEFAULT_INSTANCE.addDummySchema(tableName);
+
+    TableConfig offlineTableConfig = getOfflineTableBuilder(tableName).build(); // No task config
+
+    // Should succeed when task config is null
+    String creationResponse = sendPostRequest(_createTableUrl, offlineTableConfig.toJsonString());
+    assertEquals(creationResponse, "{\"unrecognizedProperties\":{},"
+        + "\"status\":\"Table testTableTasksValidationNullConfig_OFFLINE successfully added\"}");
+
+    // Clean up
+    sendDeleteRequest(DEFAULT_INSTANCE.getControllerRequestURLBuilder().forTableDelete(tableName));
+  }
+
+  @Test
+  public void testTableTasksCleanupWithNonActiveTasks()
+      throws Exception {
+    String tableName = "testTableTasksCleanup";
+    DEFAULT_INSTANCE.addDummySchema(tableName);
+
+    TableConfig offlineTableConfig = getOfflineTableBuilder(tableName)
+        .setTaskConfig(new TableTaskConfig(ImmutableMap.of(
+            MinionConstants.SegmentGenerationAndPushTask.TASK_TYPE,
+            ImmutableMap.of(PinotTaskManager.SCHEDULE_KEY, "0 */10 * ? * * *",
+                CommonConstants.TABLE_NAME, tableName + "_OFFLINE"))))
+        .build();
+
+    // Create table
+    sendPostRequest(_createTableUrl, offlineTableConfig.toJsonString());
+
+    // Create some completed tasks
+    PinotTaskManager taskManager = DEFAULT_INSTANCE.getControllerStarter().getTaskManager();
+    TaskSchedulingContext context = new TaskSchedulingContext();
+    context.setTablesToSchedule(Set.of(tableName + "_OFFLINE"));
+    Map<String, TaskSchedulingInfo> taskInfo = taskManager.scheduleTasks(context);
+    String taskName = taskInfo.values().iterator().next().getScheduledTaskNames().get(0);
+    waitForTaskState(taskName, TaskState.IN_PROGRESS);
+
+    // stop the task queue to abort the task
+    sendPutRequest(DEFAULT_INSTANCE.getControllerRequestURLBuilder()
+        .forStopMinionTaskQueue(MinionConstants.SegmentGenerationAndPushTask.TASK_TYPE));
+    waitForTaskState(taskName, TaskState.STOPPED);
+    // resume the task queue again to avoid affecting other tests
+    sendPutRequest(DEFAULT_INSTANCE.getControllerRequestURLBuilder()
+        .forResumeMinionTaskQueue(MinionConstants.SegmentGenerationAndPushTask.TASK_TYPE));
+
+    // Delete table - should succeed and clean up tasks
+    String deleteResponse = sendDeleteRequest(
+        DEFAULT_INSTANCE.getControllerRequestURLBuilder().forTableDelete(tableName));
+    assertEquals(deleteResponse, "{\"status\":\"Tables: [" + tableName + "_OFFLINE] deleted\"}");
+  }
+
+  private static void waitForTaskState(String taskName, TaskState expectedState) {
+    TestUtils.waitForCondition((aVoid) -> {
+      String response;
+      try {
+        response = sendGetRequest(DEFAULT_INSTANCE.getControllerRequestURLBuilder().forMinionTaskState(taskName));
+      } catch (IOException e) {
+        return false;
+      }
+      return response.replace("\"", "").equals(expectedState.name());
+    }, 5000, "Task not scheduled");
+  }
+
+  @Test
+  public void testTableTasksCleanupWithActiveTasks()
+      throws Exception {
+    String tableName = "testTableTasksCleanupActive";
+    DEFAULT_INSTANCE.addDummySchema(tableName);
+
+    TableConfig offlineTableConfig = getOfflineTableBuilder(tableName)
+        .setTaskConfig(new TableTaskConfig(ImmutableMap.of(
+            MinionConstants.SegmentGenerationAndPushTask.TASK_TYPE,
+            ImmutableMap.of(PinotTaskManager.SCHEDULE_KEY, "0 */10 * ? * * *",
+                CommonConstants.TABLE_NAME, tableName + "_OFFLINE"))))
+        .build();
+
+    // Create table
+    sendPostRequest(_createTableUrl, offlineTableConfig.toJsonString());
+
+    // Create an active/in-progress task
+    PinotTaskManager taskManager = DEFAULT_INSTANCE.getControllerStarter().getTaskManager();
+    TaskSchedulingContext context = new TaskSchedulingContext();
+    context.setTablesToSchedule(Set.of(tableName + "_OFFLINE"));
+    Map<String, TaskSchedulingInfo> taskInfo = taskManager.scheduleTasks(context);
+    String taskName = taskInfo.values().iterator().next().getScheduledTaskNames().get(0);
+    waitForTaskState(taskName, TaskState.IN_PROGRESS);
+    try {
+      // Try to delete table without ignoring active tasks - should fail
+      sendDeleteRequest(DEFAULT_INSTANCE.getControllerRequestURLBuilder().forTableDelete(tableName));
+      fail("Table deletion should fail when active tasks exist");
+    } catch (IOException e) {
+      assertTrue(e.getMessage().contains("The table has") && e.getMessage().contains("active running tasks"));
+    }
+
+    // Delete table with ignoreActiveTasks flag - should succeed
+    String deleteResponse = sendDeleteRequest(
+        DEFAULT_INSTANCE.getControllerRequestURLBuilder().forTableDelete(tableName + "?ignoreActiveTasks=true"));
+    assertEquals(deleteResponse, "{\"status\":\"Tables: [" + tableName + "_OFFLINE] deleted\"}");
+
+    // delete task
+    sendDeleteRequest(DEFAULT_INSTANCE.getControllerRequestURLBuilder().forDeleteMinionTask(taskName)
+        + "?forceDelete=true");
+  }
+
+  @Test
+  public void testTableTasksCleanupWithNullTaskConfig()
+      throws Exception {
+    String tableName = "testTableTasksCleanupNullConfig";
+    DEFAULT_INSTANCE.addDummySchema(tableName);
+
+    TableConfig offlineTableConfig = getOfflineTableBuilder(tableName).build(); // No task config
+
+    // Create table
+    sendPostRequest(_createTableUrl, offlineTableConfig.toJsonString());
+
+    // Delete table - should succeed even with null task config
+    String deleteResponse = sendDeleteRequest(
+        DEFAULT_INSTANCE.getControllerRequestURLBuilder().forTableDelete(tableName));
+    assertEquals(deleteResponse, "{\"status\":\"Tables: [" + tableName + "_OFFLINE] deleted\"}");
+  }
+
+  @AfterMethod
+  public void cleanUp()
+      throws IOException {
+    // Delete all tables after each test
+    DEFAULT_INSTANCE.cleanup();
   }
 
   @AfterClass

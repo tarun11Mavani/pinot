@@ -32,6 +32,7 @@ import org.apache.pinot.query.planner.partitioning.KeySelectorFactory;
 import org.apache.pinot.query.planner.plannode.JoinNode;
 import org.apache.pinot.query.runtime.blocks.MseBlock;
 import org.apache.pinot.query.runtime.plan.OpChainExecutionContext;
+import org.apache.pinot.spi.trace.Tracing;
 
 
 public class AsofJoinOperator extends BaseJoinOperator {
@@ -39,7 +40,8 @@ public class AsofJoinOperator extends BaseJoinOperator {
 
   // The right table is a map from the hash key (columns in the ON join condition) to a sorted map of match key
   // (column in the MATCH_CONDITION) to rows.
-  private final Map<Object, NavigableMap<Comparable<?>, Object[]>> _rightTable;
+  @Nullable
+  private Map<Object, NavigableMap<Comparable<?>, Object[]>> _rightTable;
   private final KeySelector<?> _leftKeySelector;
   private final KeySelector<?> _rightKeySelector;
   private final MatchConditionType _matchConditionType;
@@ -68,6 +70,7 @@ public class AsofJoinOperator extends BaseJoinOperator {
 
   @Override
   protected void addRowsToRightTable(List<Object[]> rows) {
+    assert _rightTable != null : "Right table should not be null when adding rows";
     for (Object[] row : rows) {
       Comparable<?> matchKey = (Comparable<?>) row[_rightMatchKeyIndex];
       if (matchKey == null) {
@@ -87,13 +90,20 @@ public class AsofJoinOperator extends BaseJoinOperator {
   }
 
   @Override
+  protected void onEosProduced() {
+    _rightTable = null; // Release memory in case we keep the operator around for a while
+  }
+
+  @Override
   protected List<Object[]> buildJoinedRows(MseBlock.Data leftBlock) {
+    assert _rightTable != null : "Right table should not be null when building joined rows";
     List<Object[]> rows = new ArrayList<>();
     for (Object[] leftRow : leftBlock.asRowHeap().getRows()) {
       Comparable<?> matchKey = (Comparable<?>) leftRow[_leftMatchKeyIndex];
       if (matchKey == null) {
         // Rows with null match keys cannot be matched with any right rows
         if (needUnmatchedLeftRows()) {
+          Tracing.ThreadAccountantOps.sampleAndCheckInterruptionPeriodically(rows.size());
           rows.add(joinRow(leftRow, null));
         }
         continue;
@@ -102,15 +112,18 @@ public class AsofJoinOperator extends BaseJoinOperator {
       NavigableMap<Comparable<?>, Object[]> rightRows = _rightTable.get(hashKey);
       if (rightRows == null) {
         if (needUnmatchedLeftRows()) {
+          Tracing.ThreadAccountantOps.sampleAndCheckInterruptionPeriodically(rows.size());
           rows.add(joinRow(leftRow, null));
         }
       } else {
         Object[] rightRow = closestMatch(matchKey, rightRows);
         if (rightRow == null) {
           if (needUnmatchedLeftRows()) {
+            Tracing.ThreadAccountantOps.sampleAndCheckInterruptionPeriodically(rows.size());
             rows.add(joinRow(leftRow, null));
           }
         } else {
+          Tracing.ThreadAccountantOps.sampleAndCheckInterruptionPeriodically(rows.size());
           rows.add(joinRow(leftRow, rightRow));
         }
       }

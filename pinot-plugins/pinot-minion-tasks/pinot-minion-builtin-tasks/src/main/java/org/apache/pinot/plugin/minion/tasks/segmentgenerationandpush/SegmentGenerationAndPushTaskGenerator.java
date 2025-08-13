@@ -50,6 +50,7 @@ import org.apache.pinot.spi.filesystem.PinotFS;
 import org.apache.pinot.spi.ingestion.batch.BatchConfigProperties;
 import org.apache.pinot.spi.plugin.PluginManager;
 import org.apache.pinot.spi.utils.IngestionConfigUtils;
+import org.apache.pinot.spi.utils.Obfuscator;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
 
@@ -111,18 +112,8 @@ public class SegmentGenerationAndPushTaskGenerator extends BaseTaskGenerator {
           tableTaskConfig.getConfigsForTaskType(MinionConstants.SegmentGenerationAndPushTask.TASK_TYPE);
       Preconditions.checkNotNull(taskConfigs, "Task config shouldn't be null for Table: %s", tableNameWithType);
 
-      // Get max number of tasks for this table
-      int tableMaxNumTasks;
-      String tableMaxNumTasksConfig = taskConfigs.get(MinionConstants.TABLE_MAX_NUM_TASKS_KEY);
-      if (tableMaxNumTasksConfig != null) {
-        try {
-          tableMaxNumTasks = Integer.parseInt(tableMaxNumTasksConfig);
-        } catch (NumberFormatException e) {
-          tableMaxNumTasks = Integer.MAX_VALUE;
-        }
-      } else {
-        tableMaxNumTasks = Integer.MAX_VALUE;
-      }
+      // Get max number of subtasks for this table
+      int tableMaxNumTasks = getAndUpdateMaxNumSubTasks(taskConfigs, Integer.MAX_VALUE, tableNameWithType);
 
       // Generate tasks
       int tableNumTasks = 0;
@@ -169,8 +160,11 @@ public class SegmentGenerationAndPushTaskGenerator extends BaseTaskGenerator {
             }
           }
         } catch (Exception e) {
-          LOGGER.error("Unable to generate the SegmentGenerationAndPush task. [ table configs: {}, task configs: {} ]",
-              tableConfig, taskConfigs, e);
+          if (LOGGER.isErrorEnabled()) {
+            LOGGER.error(
+                "Unable to generate the SegmentGenerationAndPush task. [ table configs: {}, task configs: {} ]",
+                Obfuscator.DEFAULT.toJsonString(tableConfig), Obfuscator.DEFAULT.toJsonString(taskConfigs), e);
+          }
         }
       }
     }
@@ -224,8 +218,10 @@ public class SegmentGenerationAndPushTaskGenerator extends BaseTaskGenerator {
       }
       return pinotTaskConfigs;
     } catch (Exception e) {
-      LOGGER.error("Unable to generate the SegmentGenerationAndPush task. [ table configs: {}, task configs: {} ]",
-          tableConfig, taskConfigs, e);
+      if (LOGGER.isErrorEnabled()) {
+        LOGGER.error("Unable to generate the SegmentGenerationAndPush task. [ table configs: {}, task configs: {} ]",
+            Obfuscator.DEFAULT.toJsonString(tableConfig), Obfuscator.DEFAULT.toJsonString(taskConfigs), e);
+      }
       throw e;
     }
   }

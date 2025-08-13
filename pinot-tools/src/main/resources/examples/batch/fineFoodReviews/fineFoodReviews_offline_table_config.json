@@ -4,7 +4,6 @@
   "segmentsConfig": {
     "segmentPushType": "APPEND",
     "segmentAssignmentStrategy": "BalanceNumSegmentAssignmentStrategy",
-    "schemaName": "fineFoodReviews",
     "replication": "1"
   },
   "tenants": {
@@ -13,7 +12,10 @@
     "loadMode": "MMAP",
     "noDictionaryColumns": ["Text"],
     "invertedIndexColumns": [
-    ]
+    ],
+    "multiColumnTextIndexConfig": {
+      "columns": ["UserId", "ProductId", "Summary"]
+    }
   },
   "metadata": {
     "customConfigs": {

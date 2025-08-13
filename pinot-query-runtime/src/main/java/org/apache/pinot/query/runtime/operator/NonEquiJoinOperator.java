@@ -22,11 +22,13 @@ import com.google.common.base.Preconditions;
 import java.util.ArrayList;
 import java.util.BitSet;
 import java.util.List;
+import javax.annotation.Nullable;
 import org.apache.calcite.rel.core.JoinRelType;
 import org.apache.pinot.common.utils.DataSchema;
 import org.apache.pinot.query.planner.plannode.JoinNode;
 import org.apache.pinot.query.runtime.blocks.MseBlock;
 import org.apache.pinot.query.runtime.plan.OpChainExecutionContext;
+import org.apache.pinot.spi.trace.Tracing;
 
 
 /**
@@ -39,6 +41,7 @@ public class NonEquiJoinOperator extends BaseJoinOperator {
   private final List<Object[]> _rightTable;
   // Track matched right rows for right join and full join to output non-matched right rows.
   // TODO: Revisit whether we should use IntList or RoaringBitmap for smaller memory footprint.
+  @Nullable
   private BitSet _matchedRightRows;
 
   public NonEquiJoinOperator(OpChainExecutionContext context, MultiStageOperator leftInput, DataSchema leftSchema,
@@ -68,6 +71,11 @@ public class NonEquiJoinOperator extends BaseJoinOperator {
   }
 
   @Override
+  protected void onEosProduced() {
+    _matchedRightRows = null;
+  }
+
+  @Override
   protected List<Object[]> buildJoinedRows(MseBlock.Data leftBlock) {
     ArrayList<Object[]> rows = new ArrayList<>();
     for (Object[] leftRow : leftBlock.asRowHeap().getRows()) {
@@ -77,14 +85,14 @@ public class NonEquiJoinOperator extends BaseJoinOperator {
       boolean maxRowsLimitReached = false;
       for (int i = 0; i < numRightRows; i++) {
         Object[] rightRow = _rightTable.get(i);
-        // TODO: Optimize this to avoid unnecessary object copy.
-        Object[] resultRow = joinRow(leftRow, rightRow);
-        if (matchNonEquiConditions(resultRow)) {
+        List<Object> joinRowView = joinRowView(leftRow, rightRow);
+        if (matchNonEquiConditions(joinRowView)) {
           if (isMaxRowsLimitReached(rows.size())) {
             maxRowsLimitReached = true;
             break;
           }
-          rows.add(resultRow);
+          Tracing.ThreadAccountantOps.sampleAndCheckInterruptionPeriodically(rows.size());
+          rows.add(joinRowView.toArray());
           hasMatchForLeftRow = true;
           if (_matchedRightRows != null) {
             _matchedRightRows.set(i);
@@ -98,6 +106,7 @@ public class NonEquiJoinOperator extends BaseJoinOperator {
         if (isMaxRowsLimitReached(rows.size())) {
           break;
         }
+        Tracing.ThreadAccountantOps.sampleAndCheckInterruptionPeriodically(rows.size());
         rows.add(joinRow(leftRow, null));
       }
     }
@@ -106,6 +115,7 @@ public class NonEquiJoinOperator extends BaseJoinOperator {
 
   @Override
   protected List<Object[]> buildNonMatchRightRows() {
+    assert _matchedRightRows != null : "Matched right rows should not be null when building non-matched right rows";
     int numRightRows = _rightTable.size();
     int numMatchedRightRows = _matchedRightRows.cardinality();
     if (numMatchedRightRows == numRightRows) {
@@ -114,6 +124,7 @@ public class NonEquiJoinOperator extends BaseJoinOperator {
     List<Object[]> rows = new ArrayList<>(numRightRows - numMatchedRightRows);
     int unmatchedIndex = 0;
     while ((unmatchedIndex = _matchedRightRows.nextClearBit(unmatchedIndex)) < numRightRows) {
+      Tracing.ThreadAccountantOps.sampleAndCheckInterruptionPeriodically(rows.size());
       rows.add(joinRow(null, _rightTable.get(unmatchedIndex++)));
     }
     return rows;

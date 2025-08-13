@@ -43,6 +43,7 @@ import org.apache.pinot.query.runtime.operator.window.WindowFunction;
 import org.apache.pinot.query.runtime.operator.window.WindowFunctionFactory;
 import org.apache.pinot.query.runtime.plan.OpChainExecutionContext;
 import org.apache.pinot.spi.exception.QueryErrorCode;
+import org.apache.pinot.spi.trace.Tracing;
 import org.apache.pinot.spi.utils.CommonConstants.MultiStageQueryRunner.WindowOverFlowMode;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
@@ -91,9 +92,7 @@ public class WindowAggregateOperator extends MultiStageOperator {
   private final MultiStageOperator _input;
   private final DataSchema _resultSchema;
   private final int[] _keys;
-  private final WindowFrame _windowFrame;
   private final WindowFunction[] _windowFunctions;
-  private final Map<Key, List<Object[]>> _partitionRows = new HashMap<>();
   private final StatMap<StatKey> _statMap = new StatMap<>(StatKey.class);
 
   // Below are specific parameters to protect the window cache from growing too large.
@@ -125,12 +124,12 @@ public class WindowAggregateOperator extends MultiStageOperator {
     for (int i = 0; i < numKeys; i++) {
       _keys[i] = keys.get(i);
     }
-    _windowFrame = new WindowFrame(node.getWindowFrameType(), node.getLowerBound(), node.getUpperBound());
+    WindowFrame windowFrame = new WindowFrame(node.getWindowFrameType(), node.getLowerBound(), node.getUpperBound());
     Preconditions.checkState(
-        _windowFrame.isRowType() || ((_windowFrame.isUnboundedPreceding() || _windowFrame.isLowerBoundCurrentRow()) && (
-            _windowFrame.isUnboundedFollowing() || _windowFrame.isUpperBoundCurrentRow())),
+        windowFrame.isRowType() || ((windowFrame.isUnboundedPreceding() || windowFrame.isLowerBoundCurrentRow()) && (
+            windowFrame.isUnboundedFollowing() || windowFrame.isUpperBoundCurrentRow())),
         "RANGE window frame with offset PRECEDING / FOLLOWING is not supported");
-    Preconditions.checkState(_windowFrame.getLowerBound() <= _windowFrame.getUpperBound(),
+    Preconditions.checkState(windowFrame.getLowerBound() <= windowFrame.getUpperBound(),
         "Window frame lower bound can't be greater than upper bound");
     List<RelFieldCollation> collations = node.getCollations();
     List<RexExpression.FunctionCall> aggCalls = node.getAggCalls();
@@ -139,7 +138,7 @@ public class WindowAggregateOperator extends MultiStageOperator {
     for (int i = 0; i < numAggCalls; i++) {
       RexExpression.FunctionCall aggCall = aggCalls.get(i);
       _windowFunctions[i] =
-          WindowFunctionFactory.constructWindowFunction(aggCall, inputSchema, collations, _windowFrame);
+          WindowFunctionFactory.constructWindowFunction(aggCall, inputSchema, collations, windowFrame);
     }
 
     Map<String, String> metadata = context.getOpChainMetadata();
@@ -210,6 +209,7 @@ public class WindowAggregateOperator extends MultiStageOperator {
    * @return the final block, which must be either an end of stream or an error.
    */
   private MseBlock computeBlocks() {
+    Map<Key, List<Object[]>> partitionRows = new HashMap<>();
     MseBlock block = _input.nextBlock();
     while (block.isData()) {
       List<Object[]> container = ((MseBlock.Data) block).asRowHeap().getRows();
@@ -231,7 +231,8 @@ public class WindowAggregateOperator extends MultiStageOperator {
       for (Object[] row : container) {
         // TODO: Revisit null direction handling for all query types
         Key key = AggregationUtils.extractRowKey(row, _keys);
-        _partitionRows.computeIfAbsent(key, k -> new ArrayList<>()).add(row);
+        Tracing.ThreadAccountantOps.sampleAndCheckInterruptionPeriodically(_numRows);
+        partitionRows.computeIfAbsent(key, k -> new ArrayList<>()).add(row);
       }
       _numRows += containerSize;
       sampleAndCheckInterruption();
@@ -246,7 +247,7 @@ public class WindowAggregateOperator extends MultiStageOperator {
 
     ColumnDataType[] resultStoredTypes = _resultSchema.getStoredColumnDataTypes();
     List<Object[]> rows = new ArrayList<>(_numRows);
-    for (Map.Entry<Key, List<Object[]>> e : _partitionRows.entrySet()) {
+    for (Map.Entry<Key, List<Object[]>> e : partitionRows.entrySet()) {
       List<Object[]> rowList = e.getValue();
 
       // Each window function will return a list of results for each row in the input set
@@ -254,6 +255,7 @@ public class WindowAggregateOperator extends MultiStageOperator {
       for (WindowFunction windowFunction : _windowFunctions) {
         List<Object> processRows = windowFunction.processRows(rowList);
         assert processRows.size() == rowList.size();
+        Tracing.ThreadAccountantOps.sampleAndCheckInterruptionPeriodically(windowFunctionResults.size());
         windowFunctionResults.add(processRows);
       }
 
@@ -266,6 +268,7 @@ public class WindowAggregateOperator extends MultiStageOperator {
         }
         // Convert the results from WindowFunction to the desired type
         TypeUtils.convertRow(row, resultStoredTypes);
+        Tracing.ThreadAccountantOps.sampleAndCheckInterruptionPeriodically(rows.size());
         rows.add(row);
       }
     }

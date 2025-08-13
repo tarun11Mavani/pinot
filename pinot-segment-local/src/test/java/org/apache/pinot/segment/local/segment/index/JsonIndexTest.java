@@ -29,6 +29,8 @@ import java.util.List;
 import java.util.Map;
 import java.util.stream.Collectors;
 import org.apache.commons.io.FileUtils;
+import org.apache.pinot.common.metrics.ServerMeter;
+import org.apache.pinot.common.metrics.ServerMetrics;
 import org.apache.pinot.segment.local.PinotBuffersAfterMethodCheckRule;
 import org.apache.pinot.segment.local.realtime.impl.json.MutableJsonIndexImpl;
 import org.apache.pinot.segment.local.segment.creator.impl.inv.json.OffHeapJsonIndexCreator;
@@ -48,6 +50,8 @@ import org.testng.annotations.AfterMethod;
 import org.testng.annotations.BeforeMethod;
 import org.testng.annotations.Test;
 
+import static org.mockito.ArgumentMatchers.eq;
+import static org.mockito.Mockito.*;
 import static org.testng.Assert.*;
 
 
@@ -78,11 +82,15 @@ public class JsonIndexTest implements PinotBuffersAfterMethodCheckRule {
       + "  \"programming\""
       + "]"
       + "}";
+  private ServerMetrics _serverMetrics;
 
   @BeforeMethod
   public void setUp()
       throws IOException {
     FileUtils.forceMkdir(INDEX_DIR);
+    _serverMetrics = mock(ServerMetrics.class);
+    ServerMetrics.deregister();
+    ServerMetrics.register(_serverMetrics);
   }
 
   @AfterMethod
@@ -155,7 +163,7 @@ public class JsonIndexTest implements PinotBuffersAfterMethodCheckRule {
         PinotDataBuffer offHeapBuffer = PinotDataBuffer.mapReadOnlyBigEndianFile(offHeapIndexFile);
         JsonIndexReader onHeapReader = new ImmutableJsonIndexReader(onHeapBuffer, records.length);
         JsonIndexReader offHeapReader = new ImmutableJsonIndexReader(offHeapBuffer, records.length);
-        MutableJsonIndexImpl mutableJsonIndex = new MutableJsonIndexImpl(jsonIndexConfig)) {
+        MutableJsonIndexImpl mutableJsonIndex = new MutableJsonIndexImpl(jsonIndexConfig, "table__0__1", "col")) {
       for (String record : records) {
         mutableJsonIndex.add(record);
       }
@@ -293,7 +301,7 @@ public class JsonIndexTest implements PinotBuffersAfterMethodCheckRule {
         PinotDataBuffer offHeapBuffer = PinotDataBuffer.mapReadOnlyBigEndianFile(offHeapIndexFile);
         JsonIndexReader onHeapReader = new ImmutableJsonIndexReader(onHeapBuffer, records.length);
         JsonIndexReader offHeapReader = new ImmutableJsonIndexReader(offHeapBuffer, records.length);
-        MutableJsonIndexImpl mutableJsonIndex = new MutableJsonIndexImpl(jsonIndexConfig)) {
+        MutableJsonIndexImpl mutableJsonIndex = new MutableJsonIndexImpl(jsonIndexConfig, "table__0__1", "col")) {
       for (String record : records) {
         mutableJsonIndex.add(record);
       }
@@ -345,7 +353,7 @@ public class JsonIndexTest implements PinotBuffersAfterMethodCheckRule {
         PinotDataBuffer offHeapBuffer = PinotDataBuffer.mapReadOnlyBigEndianFile(offHeapIndexFile);
         JsonIndexReader onHeapReader = new ImmutableJsonIndexReader(onHeapBuffer, records.length);
         JsonIndexReader offHeapReader = new ImmutableJsonIndexReader(offHeapBuffer, records.length);
-        MutableJsonIndexImpl mutableIndex = new MutableJsonIndexImpl(indexConfig)) {
+        MutableJsonIndexImpl mutableIndex = new MutableJsonIndexImpl(indexConfig, "table__0__1", "col")) {
       for (String record : records) {
         mutableIndex.add(record);
       }
@@ -389,9 +397,24 @@ public class JsonIndexTest implements PinotBuffersAfterMethodCheckRule {
    */
   private void createIndex(boolean createOnHeap, JsonIndexConfig jsonIndexConfig, String[] records)
       throws IOException {
+    createIndex(createOnHeap, jsonIndexConfig, records, false);
+  }
+
+  /**
+   * Creates a JSON index with the given config and adds the given records
+   * @param createOnHeap Whether to create an on-heap index
+   * @param jsonIndexConfig the JSON index config
+   * @param records the records to be added to the index
+   * @param continueOnError whether continueOnError should be enabled or disabled
+   * @throws IOException on error
+   */
+  private void createIndex(boolean createOnHeap, JsonIndexConfig jsonIndexConfig, String[] records, boolean continueOnError)
+      throws IOException {
     try (JsonIndexCreator indexCreator = createOnHeap
-        ? new OnHeapJsonIndexCreator(INDEX_DIR, ON_HEAP_COLUMN_NAME, jsonIndexConfig)
-        : new OffHeapJsonIndexCreator(INDEX_DIR, OFF_HEAP_COLUMN_NAME, jsonIndexConfig)) {
+        ? new OnHeapJsonIndexCreator(INDEX_DIR, ON_HEAP_COLUMN_NAME, "myTable_OFFLINE", continueOnError,
+        jsonIndexConfig)
+        : new OffHeapJsonIndexCreator(INDEX_DIR, OFF_HEAP_COLUMN_NAME, "myTable_OFFLINE", continueOnError,
+            jsonIndexConfig)) {
       for (String record : records) {
         indexCreator.add(record);
       }
@@ -445,8 +468,9 @@ public class JsonIndexTest implements PinotBuffersAfterMethodCheckRule {
     };
 
     String colName = "col";
-    try (JsonIndexCreator offHeapCreator = new OffHeapJsonIndexCreator(INDEX_DIR, colName, getIndexConfig());
-        MutableJsonIndexImpl mutableIndex = new MutableJsonIndexImpl(getIndexConfig())) {
+    try (JsonIndexCreator offHeapCreator = new OffHeapJsonIndexCreator(INDEX_DIR, colName, "myTable_OFFLINE",
+        false, getIndexConfig());
+        MutableJsonIndexImpl mutableIndex = new MutableJsonIndexImpl(getIndexConfig(), "table__0__1", "col")) {
       for (String record : records) {
         offHeapCreator.add(record);
         mutableIndex.add(record);
@@ -514,8 +538,9 @@ public class JsonIndexTest implements PinotBuffersAfterMethodCheckRule {
     // @formatter: on
 
     String colName = "col";
-    try (JsonIndexCreator offHeapCreator = new OffHeapJsonIndexCreator(INDEX_DIR, colName, getIndexConfig());
-        MutableJsonIndexImpl mutableIndex = new MutableJsonIndexImpl(getIndexConfig())) {
+    try (JsonIndexCreator offHeapCreator = new OffHeapJsonIndexCreator(INDEX_DIR, colName, "myTable_OFFLINE",
+        false, getIndexConfig());
+        MutableJsonIndexImpl mutableIndex = new MutableJsonIndexImpl(getIndexConfig(), "table__0__1", "col")) {
       for (String record : records) {
         offHeapCreator.add(record);
         mutableIndex.add(record);
@@ -694,7 +719,7 @@ public class JsonIndexTest implements PinotBuffersAfterMethodCheckRule {
         PinotDataBuffer offHeapBuffer = PinotDataBuffer.mapReadOnlyBigEndianFile(offHeapIndexFile);
         JsonIndexReader onHeapIndex = new ImmutableJsonIndexReader(onHeapBuffer, records.length);
         JsonIndexReader offHeapIndex = new ImmutableJsonIndexReader(offHeapBuffer, records.length);
-        MutableJsonIndexImpl mutableIndex = new MutableJsonIndexImpl(jsonIndexConfig)) {
+        MutableJsonIndexImpl mutableIndex = new MutableJsonIndexImpl(jsonIndexConfig, "table__0__1", "col")) {
       for (String record : records) {
         mutableIndex.add(record);
       }
@@ -782,7 +807,7 @@ public class JsonIndexTest implements PinotBuffersAfterMethodCheckRule {
         PinotDataBuffer offHeapBuffer = PinotDataBuffer.mapReadOnlyBigEndianFile(offHeapIndexFile);
         JsonIndexReader onHeapIndex = new ImmutableJsonIndexReader(onHeapBuffer, records.length);
         JsonIndexReader offHeapIndex = new ImmutableJsonIndexReader(offHeapBuffer, records.length);
-        MutableJsonIndexImpl mutableIndex = new MutableJsonIndexImpl(jsonIndexConfig)) {
+        MutableJsonIndexImpl mutableIndex = new MutableJsonIndexImpl(jsonIndexConfig, "table__0__1", "col")) {
       for (String record : records) {
         mutableIndex.add(record);
       }
@@ -809,7 +834,7 @@ public class JsonIndexTest implements PinotBuffersAfterMethodCheckRule {
   }
 
   @Test
-  public void testSkipInvalidJsonEnable() throws Exception {
+  public void testSkipInvalidJsonEnableContinueOnErrorFalse() throws Exception {
     JsonIndexConfig jsonIndexConfig = getIndexConfig();
     jsonIndexConfig.setSkipInvalidJson(true);
     // the braces don't match and cannot be parsed
@@ -827,7 +852,7 @@ public class JsonIndexTest implements PinotBuffersAfterMethodCheckRule {
         PinotDataBuffer offHeapBuffer = PinotDataBuffer.mapReadOnlyBigEndianFile(offHeapIndexFile);
         JsonIndexReader onHeapReader = new ImmutableJsonIndexReader(onHeapBuffer, records.length);
         JsonIndexReader offHeapReader = new ImmutableJsonIndexReader(offHeapBuffer, records.length);
-        MutableJsonIndexImpl mutableJsonIndex = new MutableJsonIndexImpl(jsonIndexConfig)) {
+        MutableJsonIndexImpl mutableJsonIndex = new MutableJsonIndexImpl(jsonIndexConfig, "table__0__1", "col")) {
       for (String record : records) {
         mutableJsonIndex.add(record);
       }
@@ -841,8 +866,68 @@ public class JsonIndexTest implements PinotBuffersAfterMethodCheckRule {
     }
   }
 
+  @Test
+  public void testSkipInvalidJsonEnableContinueOnErrorTrue() throws Exception {
+    JsonIndexConfig jsonIndexConfig = getIndexConfig();
+    jsonIndexConfig.setSkipInvalidJson(true);
+    // the braces don't match and cannot be parsed
+    String[] records = {"{\"key1\":\"va\""};
+
+    createIndex(true, jsonIndexConfig, records, true);
+    File onHeapIndexFile = new File(INDEX_DIR, ON_HEAP_COLUMN_NAME + V1Constants.Indexes.JSON_INDEX_FILE_EXTENSION);
+    assertTrue(onHeapIndexFile.exists());
+
+    createIndex(false, jsonIndexConfig, records, true);
+    File offHeapIndexFile = new File(INDEX_DIR, OFF_HEAP_COLUMN_NAME + V1Constants.Indexes.JSON_INDEX_FILE_EXTENSION);
+    assertTrue(offHeapIndexFile.exists());
+
+    try (PinotDataBuffer onHeapBuffer = PinotDataBuffer.mapReadOnlyBigEndianFile(onHeapIndexFile);
+        PinotDataBuffer offHeapBuffer = PinotDataBuffer.mapReadOnlyBigEndianFile(offHeapIndexFile);
+        JsonIndexReader onHeapReader = new ImmutableJsonIndexReader(onHeapBuffer, records.length);
+        JsonIndexReader offHeapReader = new ImmutableJsonIndexReader(offHeapBuffer, records.length);
+        MutableJsonIndexImpl mutableJsonIndex = new MutableJsonIndexImpl(jsonIndexConfig, "table__0__1", "col")) {
+      for (String record : records) {
+        mutableJsonIndex.add(record);
+      }
+      Map<String, RoaringBitmap> onHeapRes = getMatchingDocsMap(onHeapReader, "$");
+      Map<String, RoaringBitmap> offHeapRes = getMatchingDocsMap(offHeapReader, "$");
+      Map<String, RoaringBitmap> mutableRes = mutableJsonIndex.getMatchingFlattenedDocsMap("$", null);
+      Object expectedRes = Collections.singletonMap(JsonUtils.SKIPPED_VALUE_REPLACEMENT, RoaringBitmap.bitmapOf(0));
+      assertEquals(onHeapRes, expectedRes);
+      assertEquals(offHeapRes, expectedRes);
+      assertEquals(mutableRes, expectedRes);
+    }
+  }
+
+  @Test
+  public void testSkipInvalidJsonDisabledContinueOnErrorTrue() throws Exception {
+    // by default, skipInvalidJson is disabled
+    JsonIndexConfig jsonIndexConfig = getIndexConfig();
+    // the braces don't match and cannot be parsed
+    String[] records = {"{\"key1\":\"va\""};
+
+    createIndex(true, jsonIndexConfig, records, true);
+    File onHeapIndexFile = new File(INDEX_DIR, ON_HEAP_COLUMN_NAME + V1Constants.Indexes.JSON_INDEX_FILE_EXTENSION);
+    assertTrue(onHeapIndexFile.exists());
+
+    createIndex(false, jsonIndexConfig, records, true);
+    File offHeapIndexFile = new File(INDEX_DIR, OFF_HEAP_COLUMN_NAME + V1Constants.Indexes.JSON_INDEX_FILE_EXTENSION);
+    assertTrue(offHeapIndexFile.exists());
+
+    try (PinotDataBuffer onHeapBuffer = PinotDataBuffer.mapReadOnlyBigEndianFile(onHeapIndexFile);
+        PinotDataBuffer offHeapBuffer = PinotDataBuffer.mapReadOnlyBigEndianFile(offHeapIndexFile);
+        JsonIndexReader onHeapReader = new ImmutableJsonIndexReader(onHeapBuffer, records.length);
+        JsonIndexReader offHeapReader = new ImmutableJsonIndexReader(offHeapBuffer, records.length)) {
+      Map<String, RoaringBitmap> onHeapRes = getMatchingDocsMap(onHeapReader, "$");
+      Map<String, RoaringBitmap> offHeapRes = getMatchingDocsMap(offHeapReader, "$");
+      Object expectedRes = Collections.singletonMap(JsonUtils.SKIPPED_VALUE_REPLACEMENT, RoaringBitmap.bitmapOf(0));
+      assertEquals(onHeapRes, expectedRes);
+      assertEquals(offHeapRes, expectedRes);
+    }
+  }
+
   @Test(expectedExceptions = JsonProcessingException.class)
-  public void testSkipInvalidJsonDisabled() throws Exception {
+  public void testSkipInvalidJsonDisabledContinueOnErrorFalse() throws Exception {
     // by default, skipInvalidJson is disabled
     JsonIndexConfig jsonIndexConfig = getIndexConfig();
     // the braces don't match and cannot be parsed
@@ -901,7 +986,7 @@ public class JsonIndexTest implements PinotBuffersAfterMethodCheckRule {
         PinotDataBuffer offHeapBuffer = PinotDataBuffer.mapReadOnlyBigEndianFile(offHeapIndexFile);
         ImmutableJsonIndexReader onHeapReader = new ImmutableJsonIndexReader(onHeapBuffer, records.length);
         ImmutableJsonIndexReader offHeapReader = new ImmutableJsonIndexReader(offHeapBuffer, records.length);
-        MutableJsonIndexImpl mutableIndex = new MutableJsonIndexImpl(jsonIndexConfig)) {
+        MutableJsonIndexImpl mutableIndex = new MutableJsonIndexImpl(jsonIndexConfig, "table__0__1", "col")) {
       for (String record : records) {
         mutableIndex.add(record);
       }
@@ -921,6 +1006,35 @@ public class JsonIndexTest implements PinotBuffersAfterMethodCheckRule {
     }
   }
 
+  @Test
+  public void testMutableJsonIndexSizeLimit() {
+    JsonIndexConfig jsonIndexConfig = new JsonIndexConfig();
+    try (MutableJsonIndexImpl mutableIndex = new MutableJsonIndexImpl(jsonIndexConfig, "table1__0__1", "col")) {
+      assertTrue(mutableIndex.canAddMore());
+      mutableIndex.add("{\"key\":\"value\"}");
+      mutableIndex.add("{\"key\":\"value2\"}");
+      assertTrue(mutableIndex.canAddMore());
+    } catch (IOException e) {
+      fail();
+    }
+
+    verify(_serverMetrics, times(1)).addMeteredTableValue(eq("table1"), eq("col"),
+        eq(ServerMeter.MUTABLE_JSON_INDEX_MEMORY_USAGE),
+        eq(25L)); // bytes(.key) + bytes(.key\u0000value) +  bytes(.key\u0000value2)
+
+    jsonIndexConfig.setMaxBytesSize(5L);
+    try (MutableJsonIndexImpl mutableIndex = new MutableJsonIndexImpl(jsonIndexConfig, "table2__0__1", "col")) {
+      assertTrue(mutableIndex.canAddMore());
+      mutableIndex.add("{\"anotherKey\":\"anotherValue\"}");
+      assertFalse(mutableIndex.canAddMore());
+    } catch (IOException e) {
+      fail();
+    }
+    verify(_serverMetrics, times(1)).addMeteredTableValue(eq("table2"), eq("col"),
+        eq(ServerMeter.MUTABLE_JSON_INDEX_MEMORY_USAGE),
+        eq(35L)); // bytes(.anotherKey) + bytes(.anotherKey\u0000anotherValue)
+  }
+
   public static class ConfTest extends AbstractSerdeIndexContract {
 
     @Test
@@ -937,9 +1051,11 @@ public class JsonIndexTest implements PinotBuffersAfterMethodCheckRule {
       FieldConfig fieldConfig = _tableConfig.getFieldConfigList().stream()
           .filter(fc -> fc.getName().equals("dimStr"))
           .collect(Collectors.toList()).get(0);
-      assertNotNull(fieldConfig.getIndexes().get(JsonIndexType.INDEX_DISPLAY_NAME));
       assertNull(_tableConfig.getIndexingConfig().getJsonIndexColumns());
       assertNull(_tableConfig.getIndexingConfig().getJsonIndexConfigs());
+      assertNotNull(fieldConfig.getIndexes().get(JsonIndexType.INDEX_DISPLAY_NAME));
+      assertTrue(fieldConfig.getIndexTypes().isEmpty());
+      assertNull(fieldConfig.getProperties());
     }
   }
 }

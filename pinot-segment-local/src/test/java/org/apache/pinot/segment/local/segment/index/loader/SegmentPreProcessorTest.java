@@ -39,12 +39,12 @@ import org.apache.pinot.segment.local.PinotBuffersAfterClassCheckRule;
 import org.apache.pinot.segment.local.segment.creator.SegmentTestUtils;
 import org.apache.pinot.segment.local.segment.creator.impl.SegmentIndexCreationDriverImpl;
 import org.apache.pinot.segment.local.segment.index.converter.SegmentV1V2ToV3FormatConverter;
-import org.apache.pinot.segment.local.segment.index.forward.ForwardIndexType;
 import org.apache.pinot.segment.local.segment.index.loader.columnminmaxvalue.ColumnMinMaxValueGeneratorMode;
 import org.apache.pinot.segment.local.segment.readers.GenericRowRecordReader;
 import org.apache.pinot.segment.local.segment.store.SegmentLocalFSDirectory;
 import org.apache.pinot.segment.local.utils.SegmentAllIndexPreprocessThrottler;
 import org.apache.pinot.segment.local.utils.SegmentDownloadThrottler;
+import org.apache.pinot.segment.local.utils.SegmentMultiColTextIndexPreprocessThrottler;
 import org.apache.pinot.segment.local.utils.SegmentOperationsThrottler;
 import org.apache.pinot.segment.local.utils.SegmentStarTreePreprocessThrottler;
 import org.apache.pinot.segment.spi.ColumnMetadata;
@@ -52,6 +52,9 @@ import org.apache.pinot.segment.spi.V1Constants;
 import org.apache.pinot.segment.spi.compression.ChunkCompressionType;
 import org.apache.pinot.segment.spi.creator.SegmentGeneratorConfig;
 import org.apache.pinot.segment.spi.creator.SegmentVersion;
+import org.apache.pinot.segment.spi.index.FieldIndexConfigs;
+import org.apache.pinot.segment.spi.index.ForwardIndexConfig;
+import org.apache.pinot.segment.spi.index.IndexReaderFactory;
 import org.apache.pinot.segment.spi.index.IndexType;
 import org.apache.pinot.segment.spi.index.StandardIndexes;
 import org.apache.pinot.segment.spi.index.metadata.SegmentMetadataImpl;
@@ -147,7 +150,8 @@ public class SegmentPreProcessorTest implements PinotBuffersAfterClassCheckRule 
 
   private static final SegmentOperationsThrottler SEGMENT_OPERATIONS_THROTTLER =
       new SegmentOperationsThrottler(new SegmentAllIndexPreprocessThrottler(2, 4, true),
-          new SegmentStarTreePreprocessThrottler(1, 2, true), new SegmentDownloadThrottler(2, 4, true));
+          new SegmentStarTreePreprocessThrottler(1, 2, true), new SegmentDownloadThrottler(2, 4, true),
+          new SegmentMultiColTextIndexPreprocessThrottler(1, 2, true));
 
   private final File _avroFile;
   private final Schema _schema;
@@ -279,14 +283,16 @@ public class SegmentPreProcessorTest implements PinotBuffersAfterClassCheckRule 
   }
 
   private TableConfig createTableConfig() {
-    TableConfig tableConfig =
-        new TableConfigBuilder(TableType.OFFLINE).setTableName(RAW_TABLE_NAME).setTimeColumnName("daysSinceEpoch")
-            .setNoDictionaryColumns(new ArrayList<>(_noDictionaryColumns))
-            .setInvertedIndexColumns(new ArrayList<>(_invertedIndexColumns))
-            .setCreateInvertedIndexDuringSegmentGeneration(true)
-            .setRangeIndexColumns(new ArrayList<>(_rangeIndexColumns))
-            .setFieldConfigList(new ArrayList<>(_fieldConfigMap.values())).setNullHandlingEnabled(true)
-            .setIngestionConfig(_ingestionConfig).build();
+    TableConfig tableConfig = new TableConfigBuilder(TableType.OFFLINE).setTableName(RAW_TABLE_NAME)
+        .setTimeColumnName("daysSinceEpoch")
+        .setNoDictionaryColumns(new ArrayList<>(_noDictionaryColumns))
+        .setInvertedIndexColumns(new ArrayList<>(_invertedIndexColumns))
+        .setCreateInvertedIndexDuringSegmentGeneration(true)
+        .setRangeIndexColumns(new ArrayList<>(_rangeIndexColumns))
+        .setFieldConfigList(new ArrayList<>(_fieldConfigMap.values()))
+        .setNullHandlingEnabled(true)
+        .setIngestionConfig(_ingestionConfig)
+        .build();
     IndexingConfig indexingConfig = tableConfig.getIndexingConfig();
     if (_columnMinMaxValueGeneratorMode != null) {
       indexingConfig.setColumnMinMaxValueGeneratorMode(_columnMinMaxValueGeneratorMode.name());
@@ -313,8 +319,7 @@ public class SegmentPreProcessorTest implements PinotBuffersAfterClassCheckRule 
   private void runPreProcessor(Schema schema)
       throws Exception {
     try (SegmentDirectory segmentDirectory = new SegmentLocalFSDirectory(INDEX_DIR, ReadMode.mmap);
-        SegmentPreProcessor processor = new SegmentPreProcessor(segmentDirectory, createIndexLoadingConfig(schema),
-            schema)) {
+        SegmentPreProcessor processor = new SegmentPreProcessor(segmentDirectory, createIndexLoadingConfig(schema))) {
       processor.process(SEGMENT_OPERATIONS_THROTTLER);
     }
   }
@@ -462,9 +467,8 @@ public class SegmentPreProcessorTest implements PinotBuffersAfterClassCheckRule 
     buildV3Segment();
     validateIndex(StandardIndexes.range(), EXISTING_INT_COL_RAW, 42242, 16, false, false, false, 0, true, 0,
         ChunkCompressionType.LZ4, false, DataType.INT, 100000);
-    long oldRangeIndexSize =
-        new SegmentMetadataImpl(INDEX_DIR).getColumnMetadataFor(EXISTING_INT_COL_RAW).getIndexSizeMap()
-            .get(StandardIndexes.range());
+    long oldRangeIndexSize = new SegmentMetadataImpl(INDEX_DIR).getColumnMetadataFor(EXISTING_INT_COL_RAW)
+        .getIndexSizeFor(StandardIndexes.range());
     // At this point, the segment has range index. Now the reload path should create a dictionary and rewrite the
     // range index.
     _noDictionaryColumns.remove(EXISTING_INT_COL_RAW);
@@ -472,9 +476,8 @@ public class SegmentPreProcessorTest implements PinotBuffersAfterClassCheckRule 
         DataType.INT, 100000);
     validateIndex(StandardIndexes.range(), EXISTING_INT_COL_RAW, 42242, 16, false, true, false, 0, true, 0, null, false,
         DataType.INT, 100000);
-    long newRangeIndexSize =
-        new SegmentMetadataImpl(INDEX_DIR).getColumnMetadataFor(EXISTING_INT_COL_RAW).getIndexSizeMap()
-            .get(StandardIndexes.range());
+    long newRangeIndexSize = new SegmentMetadataImpl(INDEX_DIR).getColumnMetadataFor(EXISTING_INT_COL_RAW)
+        .getIndexSizeFor(StandardIndexes.range());
     assertNotEquals(oldRangeIndexSize, newRangeIndexSize);
   }
 
@@ -557,15 +560,15 @@ public class SegmentPreProcessorTest implements PinotBuffersAfterClassCheckRule 
         DataType.INT, 100000);
     validateIndex(StandardIndexes.range(), COLUMN10_NAME, 3960, 12, false, true, false, 0, true, 0, null, false,
         DataType.INT, 100000);
-    long oldRangeIndexSize = new SegmentMetadataImpl(INDEX_DIR).getColumnMetadataFor(COLUMN10_NAME).getIndexSizeMap()
-        .get(StandardIndexes.range());
+    long oldRangeIndexSize =
+        new SegmentMetadataImpl(INDEX_DIR).getColumnMetadataFor(COLUMN10_NAME).getIndexSizeFor(StandardIndexes.range());
     _noDictionaryColumns.add(COLUMN10_NAME);
     checkForwardIndexCreation(COLUMN10_NAME, 3960, 12, _schema, false, false, false, 0, ChunkCompressionType.LZ4, true,
         0, DataType.INT, 100000);
     validateIndex(StandardIndexes.range(), COLUMN10_NAME, 3960, 12, false, false, false, 0, true, 0,
         ChunkCompressionType.LZ4, false, DataType.INT, 100000);
-    long newRangeIndexSize = new SegmentMetadataImpl(INDEX_DIR).getColumnMetadataFor(COLUMN10_NAME).getIndexSizeMap()
-        .get(StandardIndexes.range());
+    long newRangeIndexSize =
+        new SegmentMetadataImpl(INDEX_DIR).getColumnMetadataFor(COLUMN10_NAME).getIndexSizeFor(StandardIndexes.range());
     assertNotEquals(oldRangeIndexSize, newRangeIndexSize);
 
     // TEST4: Disable dictionary but add text index.
@@ -770,7 +773,8 @@ public class SegmentPreProcessorTest implements PinotBuffersAfterClassCheckRule 
     SegmentMetadataImpl segmentMetadata = new SegmentMetadataImpl(INDEX_DIR);
     ColumnMetadata columnMetadata = segmentMetadata.getColumnMetadataFor(column);
     assertEquals(columnMetadata.hasDictionary(), hasDictionary);
-    assertEquals(columnMetadata.getFieldSpec(), new DimensionFieldSpec(column, dataType, isSingleValued));
+    assertEquals(columnMetadata.getFieldSpec(),
+        new DimensionFieldSpec(column, dataType, isSingleValued, columnMetadata.getFieldSpec().getMaxLength(), null));
     assertEquals(columnMetadata.getCardinality(), cardinality);
     assertEquals(columnMetadata.getTotalDocs(), 100000);
     assertEquals(columnMetadata.getBitsPerElement(), bits);
@@ -803,8 +807,12 @@ public class SegmentPreProcessorTest implements PinotBuffersAfterClassCheckRule 
       // Check if the raw forward index compressionType is correct.
       if (expectedCompressionType != null) {
         assertFalse(hasDictionary);
-
-        try (ForwardIndexReader<?> fwdIndexReader = ForwardIndexType.read(reader, columnMetadata)) {
+        IndexReaderFactory<ForwardIndexReader> readerFactory = StandardIndexes.forward().getReaderFactory();
+        FieldIndexConfigs fieldIndexConfigs = new FieldIndexConfigs.Builder()
+            .add(StandardIndexes.forward(), ForwardIndexConfig.getDefault())
+            .build();
+        try (ForwardIndexReader fwdIndexReader = readerFactory.createIndexReader(reader, fieldIndexConfigs,
+            columnMetadata)) {
           ChunkCompressionType compressionType = fwdIndexReader.getCompressionType();
           assertEquals(compressionType, expectedCompressionType);
         }
@@ -1006,6 +1014,7 @@ public class SegmentPreProcessorTest implements PinotBuffersAfterClassCheckRule 
 
     ColumnMetadata hllMetricMetadata = segmentMetadata.getColumnMetadataFor(NEW_HLL_BYTE_METRIC_COLUMN_NAME);
     FieldSpec expectedHllMetricFieldSpec = _newColumnsSchema3.getFieldSpecFor(NEW_HLL_BYTE_METRIC_COLUMN_NAME);
+    expectedHllMetricFieldSpec.setMaxLength(hllMetricMetadata.getFieldSpec().getMaxLength());
     assertEquals(hllMetricMetadata.getFieldSpec(), expectedHllMetricFieldSpec);
     ByteArray expectedDefaultValue = new ByteArray((byte[]) expectedHllMetricFieldSpec.getDefaultNullValue());
     assertEquals(hllMetricMetadata.getMinValue(), expectedDefaultValue);
@@ -1013,6 +1022,7 @@ public class SegmentPreProcessorTest implements PinotBuffersAfterClassCheckRule 
 
     ColumnMetadata tDigestMetricMetadata = segmentMetadata.getColumnMetadataFor(NEW_TDIGEST_BYTE_METRIC_COLUMN_NAME);
     FieldSpec expectedTDigestMetricFieldSpec = _newColumnsSchema3.getFieldSpecFor(NEW_TDIGEST_BYTE_METRIC_COLUMN_NAME);
+    expectedTDigestMetricFieldSpec.setMaxLength(tDigestMetricMetadata.getFieldSpec().getMaxLength());
     assertEquals(tDigestMetricMetadata.getFieldSpec(), expectedTDigestMetricFieldSpec);
     expectedDefaultValue = new ByteArray((byte[]) expectedTDigestMetricFieldSpec.getDefaultNullValue());
     assertEquals(tDigestMetricMetadata.getMinValue(), expectedDefaultValue);
@@ -1064,8 +1074,9 @@ public class SegmentPreProcessorTest implements PinotBuffersAfterClassCheckRule 
     assertEquals(columnMetadata.getMaxValue(), 0);
 
     columnMetadata = segmentMetadata.getColumnMetadataFor(NEW_STRING_MV_DIMENSION_COLUMN_NAME);
-    assertEquals(columnMetadata.getFieldSpec(),
-        _newColumnsSchema1.getFieldSpecFor(NEW_STRING_MV_DIMENSION_COLUMN_NAME));
+    FieldSpec spec = _newColumnsSchema1.getFieldSpecFor(NEW_STRING_MV_DIMENSION_COLUMN_NAME);
+    spec.setMaxLength(columnMetadata.getFieldSpec().getMaxLength());
+    assertEquals(columnMetadata.getFieldSpec(), spec);
     assertEquals(columnMetadata.getColumnMaxLength(), 4);
     assertFalse(columnMetadata.isSorted());
     assertEquals(columnMetadata.getMaxNumberOfMultiValues(), 1);
@@ -1085,8 +1096,9 @@ public class SegmentPreProcessorTest implements PinotBuffersAfterClassCheckRule 
     assertEquals(columnMetadata.getMaxValue(), (int) originalColumnMetadata.getMaxValue() + 1);
 
     columnMetadata = segmentMetadata.getColumnMetadataFor(NEW_RAW_STRING_SV_DIMENSION_COLUMN_NAME);
-    assertEquals(columnMetadata.getFieldSpec(),
-        _newColumnsSchema1.getFieldSpecFor(NEW_RAW_STRING_SV_DIMENSION_COLUMN_NAME));
+    spec = _newColumnsSchema1.getFieldSpecFor(NEW_RAW_STRING_SV_DIMENSION_COLUMN_NAME);
+    spec.setMaxLength(columnMetadata.getFieldSpec().getMaxLength());
+    assertEquals(columnMetadata.getFieldSpec(), spec);
     assertTrue(columnMetadata.isAutoGenerated());
     originalColumnMetadata = segmentMetadata.getColumnMetadataFor("column3");
     assertEquals(columnMetadata.getCardinality(), originalColumnMetadata.getCardinality());
@@ -1498,7 +1510,7 @@ public class SegmentPreProcessorTest implements PinotBuffersAfterClassCheckRule 
       throws Exception {
     try (SegmentDirectory segmentDirectory = new SegmentLocalFSDirectory(INDEX_DIR, ReadMode.mmap);
         SegmentPreProcessor processor = new SegmentPreProcessor(segmentDirectory,
-            createIndexLoadingConfig(_newColumnsSchemaWithH3Json), _newColumnsSchemaWithH3Json)) {
+            createIndexLoadingConfig(_newColumnsSchemaWithH3Json))) {
       assertTrue(processor.needProcess());
       processor.process(SEGMENT_OPERATIONS_THROTTLER);
     }
@@ -1509,7 +1521,7 @@ public class SegmentPreProcessorTest implements PinotBuffersAfterClassCheckRule 
       throws Exception {
     try (SegmentDirectory segmentDirectory = new SegmentLocalFSDirectory(INDEX_DIR, ReadMode.mmap);
         SegmentPreProcessor processor = new SegmentPreProcessor(segmentDirectory,
-            createIndexLoadingConfig(_newColumnsSchemaWithH3Json), _newColumnsSchemaWithH3Json)) {
+            createIndexLoadingConfig(_newColumnsSchemaWithH3Json))) {
       assertFalse(processor.needProcess());
     }
   }
@@ -1522,7 +1534,8 @@ public class SegmentPreProcessorTest implements PinotBuffersAfterClassCheckRule 
     long[] longValues = {1588316400000L, 1588489200000L, 1588662000000L, 1588834800000L, 1589007600000L};
     TableConfig tableConfig = new TableConfigBuilder(TableType.OFFLINE).setTableName("testTable").build();
     Schema schema = new Schema.SchemaBuilder().addSingleValueDimension("stringCol", FieldSpec.DataType.STRING)
-        .addMetric("longCol", FieldSpec.DataType.LONG).build();
+        .addMetric("longCol", FieldSpec.DataType.LONG)
+        .build();
 
     // build good segment, no needPreprocess
     buildTestSegment(tableConfig, schema, stringValuesValid, longValues);
@@ -1530,7 +1543,7 @@ public class SegmentPreProcessorTest implements PinotBuffersAfterClassCheckRule 
     indexingConfig.setColumnMinMaxValueGeneratorMode(ColumnMinMaxValueGeneratorMode.ALL.name());
     try (SegmentDirectory segmentDirectory = new SegmentLocalFSDirectory(INDEX_DIR, ReadMode.mmap);
         SegmentPreProcessor processor = new SegmentPreProcessor(segmentDirectory,
-            new IndexLoadingConfig(tableConfig, schema), schema)) {
+            new IndexLoadingConfig(tableConfig, schema))) {
       assertFalse(processor.needProcess());
     }
 
@@ -1539,13 +1552,13 @@ public class SegmentPreProcessorTest implements PinotBuffersAfterClassCheckRule 
     indexingConfig.setColumnMinMaxValueGeneratorMode(ColumnMinMaxValueGeneratorMode.NONE.name());
     try (SegmentDirectory segmentDirectory = new SegmentLocalFSDirectory(INDEX_DIR, ReadMode.mmap);
         SegmentPreProcessor processor = new SegmentPreProcessor(segmentDirectory,
-            new IndexLoadingConfig(tableConfig, schema), schema)) {
+            new IndexLoadingConfig(tableConfig, schema))) {
       assertFalse(processor.needProcess());
     }
     indexingConfig.setColumnMinMaxValueGeneratorMode(ColumnMinMaxValueGeneratorMode.ALL.name());
     try (SegmentDirectory segmentDirectory = new SegmentLocalFSDirectory(INDEX_DIR, ReadMode.mmap);
         SegmentPreProcessor processor = new SegmentPreProcessor(segmentDirectory,
-            new IndexLoadingConfig(tableConfig, schema), schema)) {
+            new IndexLoadingConfig(tableConfig, schema))) {
       assertFalse(processor.needProcess());
     }
 
@@ -1554,13 +1567,13 @@ public class SegmentPreProcessorTest implements PinotBuffersAfterClassCheckRule 
     indexingConfig.setColumnMinMaxValueGeneratorMode(ColumnMinMaxValueGeneratorMode.NONE.name());
     try (SegmentDirectory segmentDirectory = new SegmentLocalFSDirectory(INDEX_DIR, ReadMode.mmap);
         SegmentPreProcessor processor = new SegmentPreProcessor(segmentDirectory,
-            new IndexLoadingConfig(tableConfig, schema), schema)) {
+            new IndexLoadingConfig(tableConfig, schema))) {
       assertFalse(processor.needProcess());
     }
     indexingConfig.setColumnMinMaxValueGeneratorMode(ColumnMinMaxValueGeneratorMode.ALL.name());
     try (SegmentDirectory segmentDirectory = new SegmentLocalFSDirectory(INDEX_DIR, ReadMode.mmap);
         SegmentPreProcessor processor = new SegmentPreProcessor(segmentDirectory,
-            new IndexLoadingConfig(tableConfig, schema), schema)) {
+            new IndexLoadingConfig(tableConfig, schema))) {
       assertTrue(processor.needProcess());
     }
   }
@@ -1573,7 +1586,8 @@ public class SegmentPreProcessorTest implements PinotBuffersAfterClassCheckRule 
     long[] longValues = {1588316400000L, 1588489200000L, 1588662000000L, 1588834800000L, 1589007600000L};
     TableConfig tableConfig = new TableConfigBuilder(TableType.OFFLINE).setTableName("testTable").build();
     Schema schema = new Schema.SchemaBuilder().addSingleValueDimension("stringCol", FieldSpec.DataType.STRING)
-        .addMetric("longCol", FieldSpec.DataType.LONG).build();
+        .addMetric("longCol", FieldSpec.DataType.LONG)
+        .build();
 
     // build good segment, no needPreprocess
     buildTestSegment(tableConfig, schema, stringValuesValid, longValues);
@@ -1581,7 +1595,7 @@ public class SegmentPreProcessorTest implements PinotBuffersAfterClassCheckRule 
     indexingConfig.setColumnMinMaxValueGeneratorMode(ColumnMinMaxValueGeneratorMode.ALL.name());
     try (SegmentDirectory segmentDirectory = new SegmentLocalFSDirectory(INDEX_DIR, ReadMode.mmap);
         SegmentPreProcessor processor = new SegmentPreProcessor(segmentDirectory,
-            new IndexLoadingConfig(tableConfig, schema), schema)) {
+            new IndexLoadingConfig(tableConfig, schema))) {
       assertFalse(processor.needProcess());
     }
   }
@@ -1594,13 +1608,14 @@ public class SegmentPreProcessorTest implements PinotBuffersAfterClassCheckRule 
     long[] longValues = {2, 1, 2, 3, 4, 5, 3, 2};
     TableConfig tableConfig = new TableConfigBuilder(TableType.OFFLINE).setTableName("testTable").build();
     Schema schema = new Schema.SchemaBuilder().addSingleValueDimension("stringCol", FieldSpec.DataType.STRING)
-        .addMetric("longCol", DataType.LONG).build();
+        .addMetric("longCol", DataType.LONG)
+        .build();
 
     // Build good segment, no need for preprocess
     buildTestSegment(tableConfig, schema, stringValues, longValues);
     try (SegmentDirectory segmentDirectory = new SegmentLocalFSDirectory(INDEX_DIR, ReadMode.mmap);
         SegmentPreProcessor processor = new SegmentPreProcessor(segmentDirectory,
-            new IndexLoadingConfig(tableConfig, schema), schema)) {
+            new IndexLoadingConfig(tableConfig, schema))) {
       assertFalse(processor.needProcess());
     }
 
@@ -1609,7 +1624,7 @@ public class SegmentPreProcessorTest implements PinotBuffersAfterClassCheckRule 
     indexingConfig.setNoDictionaryColumns(List.of("longCol"));
     try (SegmentDirectory segmentDirectory = new SegmentLocalFSDirectory(INDEX_DIR, ReadMode.mmap);
         SegmentPreProcessor processor = new SegmentPreProcessor(segmentDirectory,
-            new IndexLoadingConfig(tableConfig, schema), schema)) {
+            new IndexLoadingConfig(tableConfig, schema))) {
       assertTrue(processor.needProcess());
       processor.process(SEGMENT_OPERATIONS_THROTTLER);
     }
@@ -1618,7 +1633,7 @@ public class SegmentPreProcessorTest implements PinotBuffersAfterClassCheckRule 
     indexingConfig.setNoDictionaryColumns(null);
     try (SegmentDirectory segmentDirectory = new SegmentLocalFSDirectory(INDEX_DIR, ReadMode.mmap);
         SegmentPreProcessor processor = new SegmentPreProcessor(segmentDirectory,
-            new IndexLoadingConfig(tableConfig, schema), schema)) {
+            new IndexLoadingConfig(tableConfig, schema))) {
       assertTrue(processor.needProcess());
       processor.process(SEGMENT_OPERATIONS_THROTTLER);
     }
@@ -1631,7 +1646,7 @@ public class SegmentPreProcessorTest implements PinotBuffersAfterClassCheckRule 
     indexingConfig.setStarTreeIndexConfigs(List.of(starTreeIndexConfig));
     try (SegmentDirectory segmentDirectory = new SegmentLocalFSDirectory(INDEX_DIR, ReadMode.mmap);
         SegmentPreProcessor processor = new SegmentPreProcessor(segmentDirectory,
-            new IndexLoadingConfig(tableConfig, schema), schema)) {
+            new IndexLoadingConfig(tableConfig, schema))) {
       assertTrue(processor.needProcess());
       processor.process(SEGMENT_OPERATIONS_THROTTLER);
     }
@@ -1640,7 +1655,7 @@ public class SegmentPreProcessorTest implements PinotBuffersAfterClassCheckRule 
     indexingConfig.setStarTreeIndexConfigs(null);
     try (SegmentDirectory segmentDirectory = new SegmentLocalFSDirectory(INDEX_DIR, ReadMode.mmap);
         SegmentPreProcessor processor = new SegmentPreProcessor(segmentDirectory,
-            new IndexLoadingConfig(tableConfig, schema), schema)) {
+            new IndexLoadingConfig(tableConfig, schema))) {
       assertTrue(processor.needProcess());
       processor.process(SEGMENT_OPERATIONS_THROTTLER);
     }
@@ -1650,7 +1665,7 @@ public class SegmentPreProcessorTest implements PinotBuffersAfterClassCheckRule 
     indexingConfig.setStarTreeIndexConfigs(List.of(starTreeIndexConfig));
     try (SegmentDirectory segmentDirectory = new SegmentLocalFSDirectory(INDEX_DIR, ReadMode.mmap);
         SegmentPreProcessor processor = new SegmentPreProcessor(segmentDirectory,
-            new IndexLoadingConfig(tableConfig, schema), schema)) {
+            new IndexLoadingConfig(tableConfig, schema))) {
       assertTrue(processor.needProcess());
       processor.process(SEGMENT_OPERATIONS_THROTTLER);
     }

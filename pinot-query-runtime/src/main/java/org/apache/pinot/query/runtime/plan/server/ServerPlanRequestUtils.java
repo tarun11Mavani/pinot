@@ -29,6 +29,7 @@ import java.util.Map;
 import java.util.concurrent.ExecutorService;
 import java.util.function.BiConsumer;
 import javax.annotation.Nullable;
+import org.apache.commons.collections4.MapUtils;
 import org.apache.commons.lang3.tuple.Pair;
 import org.apache.pinot.common.metrics.ServerMetrics;
 import org.apache.pinot.common.request.BrokerRequest;
@@ -45,7 +46,7 @@ import org.apache.pinot.core.data.manager.LogicalTableContext;
 import org.apache.pinot.core.query.executor.QueryExecutor;
 import org.apache.pinot.core.query.optimizer.QueryOptimizer;
 import org.apache.pinot.core.query.request.ServerQueryRequest;
-import org.apache.pinot.core.routing.TimeBoundaryInfo;
+import org.apache.pinot.core.routing.timeboundary.TimeBoundaryInfo;
 import org.apache.pinot.query.planner.plannode.PlanNode;
 import org.apache.pinot.query.routing.StageMetadata;
 import org.apache.pinot.query.routing.StagePlan;
@@ -67,6 +68,7 @@ import org.apache.pinot.sql.parsers.rewriter.NonAggregationGroupByToDistinctQuer
 import org.apache.pinot.sql.parsers.rewriter.PredicateComparisonRewriter;
 import org.apache.pinot.sql.parsers.rewriter.QueryRewriter;
 import org.apache.pinot.sql.parsers.rewriter.QueryRewriterFactory;
+import org.apache.pinot.sql.parsers.rewriter.RlsFiltersRewriter;
 
 
 public class ServerPlanRequestUtils {
@@ -76,10 +78,17 @@ public class ServerPlanRequestUtils {
   private static final int DEFAULT_LEAF_NODE_LIMIT = Integer.MAX_VALUE;
   private static final List<String> QUERY_REWRITERS_CLASS_NAMES =
       ImmutableList.of(PredicateComparisonRewriter.class.getName(),
-          NonAggregationGroupByToDistinctQueryRewriter.class.getName());
+          NonAggregationGroupByToDistinctQueryRewriter.class.getName(), RlsFiltersRewriter.class.getName());
   private static final List<QueryRewriter> QUERY_REWRITERS =
       new ArrayList<>(QueryRewriterFactory.getQueryRewriters(QUERY_REWRITERS_CLASS_NAMES));
   private static final QueryOptimizer QUERY_OPTIMIZER = new QueryOptimizer();
+
+  public static OpChain compileLeafStage(OpChainExecutionContext executionContext, StagePlan stagePlan,
+      QueryExecutor leafQueryExecutor, ExecutorService executorService, Map<String, String> rowFilters) {
+    return compileLeafStage(executionContext, stagePlan, leafQueryExecutor, executorService,
+        (planNode, multiStageOperator) -> {
+        }, false, rowFilters);
+  }
 
   public static OpChain compileLeafStage(
       OpChainExecutionContext executionContext,
@@ -88,7 +97,7 @@ public class ServerPlanRequestUtils {
       ExecutorService executorService) {
     return compileLeafStage(executionContext, stagePlan, leafQueryExecutor, executorService,
         (planNode, multiStageOperator) -> {
-        }, false);
+        }, false, null);
   }
 
   /**
@@ -104,7 +113,7 @@ public class ServerPlanRequestUtils {
       QueryExecutor leafQueryExecutor,
       ExecutorService executorService,
       BiConsumer<PlanNode, MultiStageOperator> relationConsumer,
-      boolean explain) {
+      boolean explain, @Nullable Map<String, String> rowFilters) {
     long queryArrivalTimeMs = System.currentTimeMillis();
 
     ServerPlanRequestContext serverContext = new ServerPlanRequestContext(stagePlan, leafQueryExecutor, executorService,
@@ -114,6 +123,11 @@ public class ServerPlanRequestUtils {
     // 2. Convert PinotQuery into InstanceRequest list (one for each physical table)
     PinotQuery pinotQuery = serverContext.getPinotQuery();
     pinotQuery.setExplain(explain);
+
+    if (MapUtils.isNotEmpty(rowFilters)) {
+      pinotQuery.setQueryOptions(rowFilters);
+    }
+
     List<InstanceRequest> instanceRequests;
     if (executionContext.getWorkerMetadata().getLogicalTableSegmentsMap() != null) {
       instanceRequests = constructLogicalTableServerQueryRequests(executionContext, pinotQuery,
@@ -253,10 +267,10 @@ public class ServerPlanRequestUtils {
     instanceRequest.setBrokerId("unknown");
     instanceRequest.setEnableTrace(executionContext.isTraceEnabled());
     /*
-      * If segmentList is not null, it means that the query is for a single table and we can directly set the segments.
-      * If segmentList is null, it means that the query is for a logical table and we need to set TableSegmentInfoList
-      *
-      * Either one of segmentList or tableRouteInfoList has to be set, but not both.
+     * If segmentList is not null, it means that the query is for a single table and we can directly set the segments.
+     * If segmentList is null, it means that the query is for a logical table and we need to set TableSegmentInfoList
+     *
+     * Either one of segmentList or tableRouteInfoList has to be set, but not both.
      */
     if (segmentList != null) {
       instanceRequest.setSearchSegments(segmentList);
@@ -280,7 +294,9 @@ public class ServerPlanRequestUtils {
       pinotQuery.setQueryOptions(queryOptions);
     }
     queryOptions.put(CommonConstants.Broker.Request.QueryOptionKey.TIMEOUT_MS,
-        Long.toString(executionContext.getDeadlineMs() - System.currentTimeMillis()));
+        Long.toString(executionContext.getActiveDeadlineMs() - System.currentTimeMillis()));
+    queryOptions.put(CommonConstants.Broker.Request.QueryOptionKey.EXTRA_PASSIVE_TIMEOUT_MS,
+        Long.toString(executionContext.getPassiveDeadlineMs() - executionContext.getActiveDeadlineMs()));
   }
 
   /**
@@ -422,7 +438,8 @@ public class ServerPlanRequestUtils {
     String logicalTableName = stageMetadata.getTableName();
     LogicalTableContext logicalTableContext = instanceDataManager.getLogicalTableContext(logicalTableName);
     Preconditions.checkNotNull(logicalTableContext,
-        "LogicalTableManager not found for logical table name: " + logicalTableName);
+        String.format("LogicalTableContext not found for logical table name: %s, query context id: %s",
+            logicalTableName, QueryThreadContext.getCid()));
 
     Map<String, List<String>> logicalTableSegmentsMap =
         executionContext.getWorkerMetadata().getLogicalTableSegmentsMap();
@@ -430,7 +447,7 @@ public class ServerPlanRequestUtils {
     List<TableSegmentsInfo> realtimeTableRouteInfoList = new ArrayList<>();
 
     Preconditions.checkNotNull(logicalTableSegmentsMap);
-    for (Map.Entry<String, List<String>> entry: logicalTableSegmentsMap.entrySet()) {
+    for (Map.Entry<String, List<String>> entry : logicalTableSegmentsMap.entrySet()) {
       String physicalTableName = entry.getKey();
       TableType tableType = TableNameBuilder.getTableTypeFromTableName(physicalTableName);
       TableSegmentsInfo tableSegmentsInfo = new TableSegmentsInfo();

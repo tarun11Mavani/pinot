@@ -29,7 +29,7 @@ import java.util.Map;
 import java.util.TreeMap;
 import java.util.concurrent.TimeUnit;
 import javax.annotation.Nullable;
-import org.apache.commons.collections.CollectionUtils;
+import org.apache.commons.collections4.CollectionUtils;
 import org.apache.pinot.segment.spi.creator.name.FixedSegmentNameGenerator;
 import org.apache.pinot.segment.spi.creator.name.NormalizedDateSegmentNameGenerator;
 import org.apache.pinot.segment.spi.creator.name.SegmentNameGenerator;
@@ -41,6 +41,7 @@ import org.apache.pinot.segment.spi.index.IndexType;
 import org.apache.pinot.segment.spi.index.StandardIndexes;
 import org.apache.pinot.spi.config.table.FieldConfig;
 import org.apache.pinot.spi.config.table.IndexingConfig;
+import org.apache.pinot.spi.config.table.MultiColumnTextIndexConfig;
 import org.apache.pinot.spi.config.table.SegmentPartitionConfig;
 import org.apache.pinot.spi.config.table.SegmentZKPropsConfig;
 import org.apache.pinot.spi.config.table.StarTreeIndexConfig;
@@ -90,6 +91,7 @@ public class SegmentGeneratorConfig implements Serializable {
   private SegmentVersion _segmentVersion = SegmentVersion.v3;
   private RecordReaderConfig _readerConfig = null;
   private List<StarTreeIndexConfig> _starTreeIndexConfigs = null;
+  private MultiColumnTextIndexConfig _multiColumnTextIndexConfig;
   private boolean _enableDefaultStarTree = false;
   private String _creatorVersion = null;
   private SegmentNameGenerator _segmentNameGenerator = null;
@@ -176,6 +178,7 @@ public class SegmentGeneratorConfig implements Serializable {
     // Star-tree configs
     setStarTreeIndexConfigs(indexingConfig.getStarTreeIndexConfigs());
     setEnableDefaultStarTree(indexingConfig.isEnableDefaultStarTree());
+    _multiColumnTextIndexConfig = indexingConfig.getMultiColumnTextIndexConfig();
 
     List<FieldConfig> fieldConfigs = tableConfig.getFieldConfigList();
     if (fieldConfigs != null) {
@@ -459,6 +462,11 @@ public class SegmentGeneratorConfig implements Serializable {
 
   public void setStarTreeIndexConfigs(List<StarTreeIndexConfig> starTreeIndexConfigs) {
     _starTreeIndexConfigs = starTreeIndexConfigs;
+  }
+
+  @Nullable
+  public MultiColumnTextIndexConfig getMultiColumnTextIndexConfig() {
+    return _multiColumnTextIndexConfig;
   }
 
   public boolean isEnableDefaultStarTree() {

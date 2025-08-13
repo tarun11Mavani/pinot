@@ -29,10 +29,11 @@ import java.util.Map;
 import java.util.concurrent.Executor;
 import java.util.concurrent.TimeUnit;
 import javax.annotation.Nullable;
+import javax.ws.rs.WebApplicationException;
 import javax.ws.rs.core.HttpHeaders;
+import javax.ws.rs.core.Response;
 import org.apache.commons.lang3.StringUtils;
 import org.apache.hc.client5.http.io.HttpClientConnectionManager;
-import org.apache.http.NameValuePair;
 import org.apache.http.client.utils.URLEncodedUtils;
 import org.apache.pinot.broker.api.AccessControl;
 import org.apache.pinot.broker.broker.AccessControlFactory;
@@ -44,7 +45,11 @@ import org.apache.pinot.common.metrics.BrokerTimer;
 import org.apache.pinot.common.response.BrokerResponse;
 import org.apache.pinot.common.response.PinotBrokerTimeSeriesResponse;
 import org.apache.pinot.common.utils.HumanReadableDuration;
+import org.apache.pinot.core.auth.Actions;
+import org.apache.pinot.core.auth.TargetType;
 import org.apache.pinot.query.service.dispatch.QueryDispatcher;
+import org.apache.pinot.spi.accounting.ThreadResourceUsageAccountant;
+import org.apache.pinot.spi.auth.AuthorizationResult;
 import org.apache.pinot.spi.auth.broker.RequesterIdentity;
 import org.apache.pinot.spi.env.PinotConfiguration;
 import org.apache.pinot.spi.trace.RequestContext;
@@ -66,8 +71,8 @@ public class TimeSeriesRequestHandler extends BaseBrokerRequestHandler {
 
   public TimeSeriesRequestHandler(PinotConfiguration config, String brokerId, BrokerRoutingManager routingManager,
       AccessControlFactory accessControlFactory, QueryQuotaManager queryQuotaManager, TableCache tableCache,
-      QueryDispatcher queryDispatcher) {
-    super(config, brokerId, routingManager, accessControlFactory, queryQuotaManager, tableCache);
+      QueryDispatcher queryDispatcher, ThreadResourceUsageAccountant accountant) {
+    super(config, brokerId, routingManager, accessControlFactory, queryQuotaManager, tableCache, accountant);
     _queryEnvironment = new TimeSeriesQueryEnvironment(config, routingManager, tableCache);
     _queryEnvironment.init(config);
     _queryDispatcher = queryDispatcher;
@@ -101,7 +106,8 @@ public class TimeSeriesRequestHandler extends BaseBrokerRequestHandler {
 
   @Override
   public PinotBrokerTimeSeriesResponse handleTimeSeriesRequest(String lang, String rawQueryParamString,
-      RequestContext requestContext) {
+      Map<String, String> queryParams, RequestContext requestContext, RequesterIdentity requesterIdentity,
+      HttpHeaders httpHeaders) {
     PinotBrokerTimeSeriesResponse timeSeriesResponse = null;
     long queryStartTime = System.currentTimeMillis();
     try {
@@ -109,14 +115,21 @@ public class TimeSeriesRequestHandler extends BaseBrokerRequestHandler {
       requestContext.setBrokerId(_brokerId);
       requestContext.setRequestId(_requestIdGenerator.get());
       RangeTimeSeriesRequest timeSeriesRequest = null;
+      firstStageAccessControlCheck(requesterIdentity);
       try {
-        timeSeriesRequest = buildRangeTimeSeriesRequest(lang, rawQueryParamString);
+        timeSeriesRequest = buildRangeTimeSeriesRequest(lang, rawQueryParamString, queryParams);
       } catch (URISyntaxException e) {
         return PinotBrokerTimeSeriesResponse.newErrorResponse("BAD_REQUEST", "Error building RangeTimeSeriesRequest");
       }
       TimeSeriesLogicalPlanResult logicalPlanResult = _queryEnvironment.buildLogicalPlan(timeSeriesRequest);
+      // If there are no buckets in the logical plan, return an empty response.
+      if (logicalPlanResult.getTimeBuckets().getNumBuckets() == 0) {
+        return PinotBrokerTimeSeriesResponse.newEmptyResponse();
+      }
       TimeSeriesDispatchablePlan dispatchablePlan =
           _queryEnvironment.buildPhysicalPlan(timeSeriesRequest, requestContext, logicalPlanResult);
+
+      tableLevelAccessControlCheck(httpHeaders, dispatchablePlan.getTableNames());
       timeSeriesResponse = _queryDispatcher.submitAndGet(requestContext, dispatchablePlan,
           timeSeriesRequest.getTimeout().toMillis(), new HashMap<>());
       return timeSeriesResponse;
@@ -156,57 +169,41 @@ public class TimeSeriesRequestHandler extends BaseBrokerRequestHandler {
     return false;
   }
 
-  private RangeTimeSeriesRequest buildRangeTimeSeriesRequest(String language, String queryParamString)
+  private RangeTimeSeriesRequest buildRangeTimeSeriesRequest(String language, String queryParamString,
+      Map<String, String> queryParams)
       throws URISyntaxException {
-    List<NameValuePair> pairs = URLEncodedUtils.parse(
-        new URI("http://localhost?" + queryParamString), "UTF-8");
-    String query = null;
-    Long startTs = null;
-    Long endTs = null;
-    String step = null;
-    String timeoutStr = null;
-    int limit = RangeTimeSeriesRequest.DEFAULT_SERIES_LIMIT;
-    int numGroupsLimit = RangeTimeSeriesRequest.DEFAULT_NUM_GROUPS_LIMIT;
-    for (NameValuePair nameValuePair : pairs) {
-      switch (nameValuePair.getName()) {
-        case "query":
-          query = nameValuePair.getValue();
-          break;
-        case "start":
-          startTs = Long.parseLong(nameValuePair.getValue());
-          break;
-        case "end":
-          endTs = Long.parseLong(nameValuePair.getValue());
-          break;
-        case "step":
-          step = nameValuePair.getValue();
-          break;
-        case "timeout":
-          timeoutStr = nameValuePair.getValue();
-          break;
-        case "limit":
-          limit = Integer.parseInt(nameValuePair.getValue());
-          break;
-        case "numGroupsLimit":
-          numGroupsLimit = Integer.parseInt(nameValuePair.getValue());
-          break;
-        default:
-          /* Okay to ignore unknown parameters since the language implementor may be using them. */
-          break;
-      }
+    Map<String, String> mergedParams = new HashMap<>(queryParams);
+    // If queryParams is empty, parse the queryParamString to extract parameters.
+    if (queryParams.isEmpty()) {
+      URLEncodedUtils.parse(new URI("http://localhost?" + queryParamString), "UTF-8")
+          .forEach(pair -> mergedParams.putIfAbsent(pair.getName(), pair.getValue()));
     }
-    Long stepSeconds = getStepSeconds(step);
+
+    String query = mergedParams.get("query");
+    Long startTs = parseLongSafe(mergedParams.get("start"));
+    Long endTs = parseLongSafe(mergedParams.get("end"));
+    Long stepSeconds = getStepSeconds(mergedParams.get("step"));
+    Duration timeout = StringUtils.isNotBlank(mergedParams.get("timeout"))
+        ? HumanReadableDuration.from(mergedParams.get("timeout")) : Duration.ofMillis(_brokerTimeoutMs);
+
     Preconditions.checkNotNull(query, "Query cannot be null");
     Preconditions.checkNotNull(startTs, "Start time cannot be null");
     Preconditions.checkNotNull(endTs, "End time cannot be null");
     Preconditions.checkState(stepSeconds != null && stepSeconds > 0, "Step must be a positive integer");
-    Duration timeout = Duration.ofMillis(_brokerTimeoutMs);
-    if (StringUtils.isNotBlank(timeoutStr)) {
-      timeout = HumanReadableDuration.from(timeoutStr);
-    }
-    // TODO: Pass full raw query param string to the request
-    return new RangeTimeSeriesRequest(language, query, startTs, endTs, stepSeconds, timeout, limit, numGroupsLimit,
-        queryParamString);
+
+    return new RangeTimeSeriesRequest(language, query, startTs, endTs, stepSeconds, timeout,
+        parseIntOrDefault(mergedParams.get("limit"), RangeTimeSeriesRequest.DEFAULT_SERIES_LIMIT),
+        parseIntOrDefault(mergedParams.get("numGroupsLimit"), RangeTimeSeriesRequest.DEFAULT_NUM_GROUPS_LIMIT),
+        queryParamString
+    );
+  }
+
+  private Long parseLongSafe(String value) {
+    return value != null ? Long.parseLong(value) : null;
+  }
+
+  private int parseIntOrDefault(String value, int defaultValue) {
+    return value != null ? Integer.parseInt(value) : defaultValue;
   }
 
   public static Long getStepSeconds(@Nullable String step) {
@@ -218,5 +215,43 @@ public class TimeSeriesRequestHandler extends BaseBrokerRequestHandler {
     } catch (NumberFormatException ignored) {
     }
     return HumanReadableDuration.from(step).getSeconds();
+  }
+
+  /**
+   * First-stage access control check for the request.
+   * This method checks if the requester has access to the broker to prevent unauthenticated requests from
+   * using up resources.
+   * Secondary table-level access control checks will be performed later.
+   *
+   * @param requesterIdentity The identity of the requester.
+   */
+  private void firstStageAccessControlCheck(RequesterIdentity requesterIdentity) {
+    AccessControl accessControl = _accessControlFactory.create();
+    AuthorizationResult authorizationResult = accessControl.authorize(requesterIdentity);
+    if (!authorizationResult.hasAccess()) {
+      _brokerMetrics.addMeteredGlobalValue(BrokerMeter.REQUEST_DROPPED_DUE_TO_ACCESS_ERROR, 1);
+      throw new WebApplicationException("Permission denied. " + authorizationResult.getFailureMessage(),
+        Response.Status.FORBIDDEN);
+    }
+  }
+
+  /**
+   * Table-level access control check for the request.
+   * This method checks if the requester has access to the tables in the request.
+   *
+   * @param httpHeaders The HTTP headers of the request.
+   * @param tableNames The list of table to check access for.
+   */
+  private void tableLevelAccessControlCheck(HttpHeaders httpHeaders, List<String> tableNames) {
+    AccessControl accessControl = _accessControlFactory.create();
+    for (String tableName : tableNames) {
+      AuthorizationResult authorizationResult = accessControl.authorize(httpHeaders, TargetType.TABLE, tableName,
+        Actions.Table.QUERY);
+      if (!authorizationResult.hasAccess()) {
+        _brokerMetrics.addMeteredGlobalValue(BrokerMeter.REQUEST_DROPPED_DUE_TO_ACCESS_ERROR, 1);
+        throw new WebApplicationException("Permission denied. " + authorizationResult.getFailureMessage(),
+          Response.Status.FORBIDDEN);
+      }
+    }
   }
 }

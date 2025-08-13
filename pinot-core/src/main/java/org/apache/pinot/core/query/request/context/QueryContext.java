@@ -128,6 +128,7 @@ public class QueryContext {
   private int _minServerGroupTrimSize = Server.DEFAULT_QUERY_EXECUTOR_MIN_SERVER_GROUP_TRIM_SIZE;
   // Trim threshold to use for server combine for SQL GROUP BY
   private int _groupTrimThreshold = Server.DEFAULT_QUERY_EXECUTOR_GROUPBY_TRIM_THRESHOLD;
+  private boolean _optimizeMaxInitialResultHolderCapacity;
   // Number of threads to use for final reduce
   private int _numThreadsExtractFinalResult = InstancePlanMakerImplV2.DEFAULT_NUM_THREADS_EXTRACT_FINAL_RESULT;
   // Parallel chunk size for final reduce
@@ -139,6 +140,7 @@ public class QueryContext {
   // Whether server returns the final result with unpartitioned group key
   private boolean _serverReturnFinalResultKeyUnpartitioned;
   private boolean _accurateGroupByWithoutOrderBy;
+  private boolean _isUnsafeTrim;
   // Collection of index types to skip per column
   private Map<String, Set<FieldConfig.IndexType>> _skipIndexes;
 
@@ -162,6 +164,22 @@ public class QueryContext {
     _queryOptions = queryOptions;
     _expressionOverrideHints = expressionOverrideHints;
     _explain = explain;
+  }
+
+  private boolean isSameOrderAndGroupByColumns(QueryContext context) {
+    List<ExpressionContext> groupByKeys = context.getGroupByExpressions();
+    List<OrderByExpressionContext> orderByKeys = context.getOrderByExpressions();
+
+    if (groupByKeys == null || groupByKeys.isEmpty()) {
+      return orderByKeys == null || orderByKeys.isEmpty();
+    } else if (orderByKeys == null || orderByKeys.isEmpty()) {
+      return false;
+    }
+
+    Set<ExpressionContext> groupByKeyIdentSet = new HashSet<>(groupByKeys);
+    Set<ExpressionContext> orderByKeyIdentSet = new HashSet<>();
+    orderByKeys.forEach(key -> orderByKeyIdentSet.add(key.getExpression()));
+    return groupByKeyIdentSet.equals(orderByKeyIdentSet);
   }
 
   /**
@@ -439,6 +457,15 @@ public class QueryContext {
     _groupTrimThreshold = groupTrimThreshold;
   }
 
+  public boolean isOptimizeMaxInitialResultHolderCapacity() {
+    return _optimizeMaxInitialResultHolderCapacity;
+  }
+
+  public void setOptimizeMaxInitialResultHolderCapacity(boolean optimizeMaxInitialResultHolderCapacity) {
+    _optimizeMaxInitialResultHolderCapacity = optimizeMaxInitialResultHolderCapacity;
+  }
+
+
   public int getNumThreadsExtractFinalResult() {
     return _numThreadsExtractFinalResult;
   }
@@ -518,6 +545,10 @@ public class QueryContext {
 
   public boolean isIndexUseAllowed(DataSource dataSource, FieldConfig.IndexType indexType) {
     return isIndexUseAllowed(dataSource.getColumnName(), indexType);
+  }
+
+  public boolean isUnsafeTrim() {
+    return _isUnsafeTrim;
   }
 
   public static class Builder {
@@ -633,6 +664,9 @@ public class QueryContext {
       // Pre-calculate the aggregation functions and columns for the query
       generateAggregationFunctions(queryContext);
       extractColumns(queryContext);
+
+      queryContext._isUnsafeTrim =
+          !queryContext.isSameOrderAndGroupByColumns(queryContext) || queryContext.getHavingFilter() != null;
 
       return queryContext;
     }

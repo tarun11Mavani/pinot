@@ -31,12 +31,17 @@ import org.apache.calcite.rel.RelCollations;
 import org.apache.calcite.rel.RelDistribution;
 import org.apache.calcite.rel.RelDistributions;
 import org.apache.calcite.rel.RelNode;
+import org.apache.calcite.rel.core.Join;
 import org.apache.calcite.rel.core.JoinInfo;
+import org.apache.calcite.rel.core.SetOp;
+import org.apache.calcite.rel.core.Union;
 import org.apache.calcite.rel.core.Window;
+import org.apache.calcite.util.ImmutableIntList;
 import org.apache.pinot.calcite.rel.hint.PinotHintOptions;
 import org.apache.pinot.query.context.PhysicalPlannerContext;
 import org.apache.pinot.query.planner.physical.v2.PRelNode;
 import org.apache.pinot.query.planner.physical.v2.nodes.PhysicalAggregate;
+import org.apache.pinot.query.planner.physical.v2.nodes.PhysicalAsOfJoin;
 import org.apache.pinot.query.planner.physical.v2.nodes.PhysicalJoin;
 import org.apache.pinot.query.planner.physical.v2.nodes.PhysicalProject;
 import org.apache.pinot.query.planner.physical.v2.nodes.PhysicalSort;
@@ -75,12 +80,35 @@ public class TraitAssignment {
       return (PRelNode) assignSort((PhysicalSort) relNode);
     } else if (relNode instanceof PhysicalJoin) {
       return (PRelNode) assignJoin((PhysicalJoin) relNode);
+    } else if (relNode instanceof PhysicalAsOfJoin) {
+      return (PRelNode) assignJoin((PhysicalAsOfJoin) relNode);
     } else if (relNode instanceof PhysicalAggregate) {
       return (PRelNode) assignAggregate((PhysicalAggregate) relNode);
     } else if (relNode instanceof PhysicalWindow) {
       return (PRelNode) assignWindow((PhysicalWindow) relNode);
+    } else if (relNode instanceof SetOp) {
+      return (PRelNode) assignSetOp((SetOp) relNode);
     }
     return (PRelNode) relNode;
+  }
+
+  RelNode assignSetOp(SetOp setOp) {
+    if (setOp instanceof Union) {
+      Union union = (Union) setOp;
+      if (union.all) {
+        // UNION ALL means we can return duplicates, so no trait required.
+        return setOp;
+      }
+    }
+    RelDistribution pushedDownDistTrait = RelDistributions.hash(ImmutableIntList.range(0,
+        setOp.getRowType().getFieldCount()));
+    List<RelNode> newInputs = new ArrayList<>();
+    for (RelNode input : setOp.getInputs()) {
+      RelTraitSet newTraitSet = input.getTraitSet().plus(pushedDownDistTrait);
+      RelNode newInput = input.copy(newTraitSet, input.getInputs());
+      newInputs.add(newInput);
+    }
+    return setOp.copy(setOp.getTraitSet(), newInputs);
   }
 
   /**
@@ -105,7 +133,7 @@ public class TraitAssignment {
    * </p>
    */
   @VisibleForTesting
-  RelNode assignJoin(PhysicalJoin join) {
+  RelNode assignJoin(Join join) {
     // Case-1: Handle lookup joins.
     if (PinotHintOptions.JoinHintOptions.useLookupJoinStrategy(join)) {
       return assignLookupJoin(join);
@@ -121,8 +149,8 @@ public class TraitAssignment {
         "Always expect left and right keys to be same size. Found: %s and %s",
         joinInfo.leftKeys, joinInfo.rightKeys);
     // Case-3: Default case.
-    RelDistribution rightDistribution = joinInfo.isEqui() && !joinInfo.rightKeys.isEmpty()
-        ? RelDistributions.hash(joinInfo.rightKeys) : RelDistributions.BROADCAST_DISTRIBUTED;
+    RelDistribution rightDistribution = !joinInfo.rightKeys.isEmpty() ? RelDistributions.hash(joinInfo.rightKeys)
+        : RelDistributions.BROADCAST_DISTRIBUTED;
     RelDistribution leftDistribution;
     if (joinInfo.leftKeys.isEmpty() || rightDistribution == RelDistributions.BROADCAST_DISTRIBUTED) {
       leftDistribution = RelDistributions.RANDOM_DISTRIBUTED;
@@ -181,7 +209,8 @@ public class TraitAssignment {
                 windowGroupCollation, null /* offset */, null /* fetch */, sort, _planIdGenerator.get(),
                 null /* pinot data distribution */, false /* leaf stage */);
           } else {
-            input = input.copy(input.getTraitSet().plus(RelDistributions.SINGLETON), input.getInputs());
+            input = input.copy(input.getTraitSet().plus(RelDistributions.SINGLETON).plus(windowGroupCollation),
+                input.getInputs());
           }
         } else {
           RelTraitSet newTraitSet = input.getTraitSet().plus(RelDistributions.SINGLETON)
@@ -216,7 +245,7 @@ public class TraitAssignment {
     return window.copy(window.getTraitSet(), ImmutableList.of(input));
   }
 
-  private RelNode assignLookupJoin(PhysicalJoin join) {
+  private RelNode assignLookupJoin(Join join) {
     /*
      * Lookup join expects right input to have project and table-scan nodes exactly. Moreover, lookup join is used
      * with Dimension tables only. Given this, we expect the entire right input to be available in all workers

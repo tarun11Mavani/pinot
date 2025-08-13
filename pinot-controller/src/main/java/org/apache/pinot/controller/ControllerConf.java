@@ -19,6 +19,7 @@
 package org.apache.pinot.controller;
 
 import com.google.common.base.Preconditions;
+import java.util.ArrayList;
 import java.util.Arrays;
 import java.util.HashMap;
 import java.util.List;
@@ -27,6 +28,7 @@ import java.util.Optional;
 import java.util.Random;
 import java.util.concurrent.ConcurrentHashMap;
 import java.util.concurrent.TimeUnit;
+import java.util.stream.Collectors;
 import org.apache.commons.configuration2.Configuration;
 import org.apache.commons.lang3.StringUtils;
 import org.apache.helix.controller.rebalancer.strategy.AutoRebalanceStrategy;
@@ -37,10 +39,12 @@ import org.apache.pinot.spi.filesystem.LocalPinotFS;
 import org.apache.pinot.spi.utils.CommonConstants;
 import org.apache.pinot.spi.utils.Enablement;
 import org.apache.pinot.spi.utils.TimeUtils;
+import org.apache.pinot.tsdb.spi.PinotTimeSeriesConfiguration;
 
 import static org.apache.pinot.spi.utils.CommonConstants.Controller.CONFIG_OF_CONTROLLER_METRICS_PREFIX;
 import static org.apache.pinot.spi.utils.CommonConstants.Controller.CONFIG_OF_INSTANCE_ID;
 import static org.apache.pinot.spi.utils.CommonConstants.Controller.DEFAULT_METRICS_PREFIX;
+import static org.apache.pinot.spi.utils.CommonConstants.ControllerJob;
 
 
 public class ControllerConf extends PinotConfiguration {
@@ -379,6 +383,11 @@ public class ControllerConf extends PinotConfiguration {
   public static final String EXIT_ON_SCHEMA_CHECK_FAILURE = "controller.startup.exitOnSchemaCheckFailure";
   public static final boolean DEFAULT_EXIT_ON_SCHEMA_CHECK_FAILURE = true;
 
+  public static final String CONFIG_OF_MAX_TABLE_REBALANCE_JOBS_IN_ZK = "controller.table.rebalance.maxJobsInZK";
+  public static final String CONFIG_OF_MAX_TENANT_REBALANCE_JOBS_IN_ZK = "controller.tenant.rebalance.maxJobsInZK";
+  public static final String CONFIG_OF_MAX_RELOAD_SEGMENT_JOBS_IN_ZK = "controller.reload.segment.maxJobsInZK";
+  public static final String CONFIG_OF_MAX_FORCE_COMMIT_JOBS_IN_ZK = "controller.force.commit.maxJobsInZK";
+
   private final Map<String, String> _invalidConfigs = new ConcurrentHashMap<>();
 
   public ControllerConf() {
@@ -476,7 +485,7 @@ public class ControllerConf extends PinotConfiguration {
   }
 
   public void setZkStr(String zkStr) {
-    setProperty(CommonConstants.Helix.CONFIG_OF_ZOOKEEPR_SERVER, zkStr);
+    setProperty(CommonConstants.Helix.CONFIG_OF_ZOOKEEPER_SERVER, zkStr);
   }
 
   public void setDimTableMaxSize(String size) {
@@ -556,8 +565,8 @@ public class ControllerConf extends PinotConfiguration {
   }
 
   public String getZkStr() {
-    String zkAddress = containsKey(CommonConstants.Helix.CONFIG_OF_ZOOKEEPR_SERVER) ? getProperty(
-        CommonConstants.Helix.CONFIG_OF_ZOOKEEPR_SERVER) : getProperty(ZK_STR);
+    String zkAddress = containsKey(CommonConstants.Helix.CONFIG_OF_ZOOKEEPER_SERVER) ? getProperty(
+        CommonConstants.Helix.CONFIG_OF_ZOOKEEPER_SERVER) : getProperty(ZK_STR);
     Preconditions.checkState(zkAddress != null,
         "ZK address is not configured. Please configure it using the config: 'pinot.zk.server'");
     return zkAddress;
@@ -1124,7 +1133,7 @@ public class ControllerConf extends PinotConfiguration {
 
 
   public boolean isAutoResetErrorSegmentsOnValidationEnabled() {
-    return getProperty(ControllerPeriodicTasksConf.AUTO_RESET_ERROR_SEGMENTS_VALIDATION, false);
+    return getProperty(ControllerPeriodicTasksConf.AUTO_RESET_ERROR_SEGMENTS_VALIDATION, true);
   }
 
   public long getStatusCheckerInitialDelayInSeconds() {
@@ -1310,5 +1319,36 @@ public class ControllerConf extends PinotConfiguration {
   public boolean isEnableSwagger() {
     String enableSwagger = getProperty(CONSOLE_SWAGGER_ENABLE);
     return enableSwagger == null || Boolean.parseBoolean(enableSwagger);
+  }
+
+  public int getMaxTableRebalanceZkJobs() {
+    return getProperty(CONFIG_OF_MAX_TABLE_REBALANCE_JOBS_IN_ZK, ControllerJob.DEFAULT_MAXIMUM_CONTROLLER_JOBS_IN_ZK);
+  }
+
+  public int getMaxTenantRebalanceZkJobs() {
+    return getProperty(CONFIG_OF_MAX_TENANT_REBALANCE_JOBS_IN_ZK, ControllerJob.DEFAULT_MAXIMUM_CONTROLLER_JOBS_IN_ZK);
+  }
+
+  public int getMaxReloadSegmentZkJobs() {
+    return getProperty(CONFIG_OF_MAX_RELOAD_SEGMENT_JOBS_IN_ZK, ControllerJob.DEFAULT_MAXIMUM_CONTROLLER_JOBS_IN_ZK);
+  }
+
+  public int getMaxForceCommitZkJobs() {
+    return getProperty(CONFIG_OF_MAX_FORCE_COMMIT_JOBS_IN_ZK, ControllerJob.DEFAULT_MAXIMUM_CONTROLLER_JOBS_IN_ZK);
+  }
+
+  /**
+   * Get the configured timeseries languages from controller configuration.
+   * @return List of enabled timeseries languages
+   */
+  public List<String> getTimeseriesLanguages() {
+    String languagesConfig = getProperty(PinotTimeSeriesConfiguration.getEnabledLanguagesConfigKey());
+    if (languagesConfig == null) {
+      return new ArrayList<>();
+    }
+    return Arrays.stream(languagesConfig.split(","))
+        .map(String::trim)
+        .filter(lang -> !lang.isEmpty())
+        .collect(Collectors.toList());
   }
 }

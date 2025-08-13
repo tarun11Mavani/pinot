@@ -21,6 +21,7 @@ package org.apache.pinot.query.planner.physical.v2.opt.rules;
 import com.google.common.base.Preconditions;
 import java.util.List;
 import org.apache.calcite.plan.RelTraitSet;
+import org.apache.calcite.rel.RelCollation;
 import org.apache.calcite.rel.RelCollations;
 import org.apache.calcite.rex.RexBuilder;
 import org.apache.calcite.rex.RexNode;
@@ -29,6 +30,7 @@ import org.apache.pinot.query.context.PhysicalPlannerContext;
 import org.apache.pinot.query.planner.logical.RexExpressionUtils;
 import org.apache.pinot.query.planner.physical.v2.PRelNode;
 import org.apache.pinot.query.planner.physical.v2.nodes.PhysicalAggregate;
+import org.apache.pinot.query.planner.physical.v2.nodes.PhysicalExchange;
 import org.apache.pinot.query.planner.physical.v2.nodes.PhysicalSort;
 import org.apache.pinot.query.planner.physical.v2.opt.PRelOptRule;
 import org.apache.pinot.query.planner.physical.v2.opt.PRelOptRuleCall;
@@ -50,8 +52,6 @@ import org.apache.pinot.query.type.TypeFactory;
 public class LiteModeSortInsertRule extends PRelOptRule {
   private static final TypeFactory TYPE_FACTORY = new TypeFactory();
   private static final RexBuilder REX_BUILDER = new RexBuilder(TYPE_FACTORY);
-  // TODO: This should be configurable at broker and via SET statements.
-  private static final int DEFAULT_SERVER_STAGE_LIMIT = 100_000;
   private final PhysicalPlannerContext _context;
 
   public LiteModeSortInsertRule(PhysicalPlannerContext context) {
@@ -65,7 +65,8 @@ public class LiteModeSortInsertRule extends PRelOptRule {
 
   @Override
   public PRelNode onMatch(PRelOptRuleCall call) {
-    RexNode newFetch = REX_BUILDER.makeLiteral(DEFAULT_SERVER_STAGE_LIMIT, TYPE_FACTORY.createSqlType(
+    int serverStageLimit = _context.getLiteModeServerStageLimit();
+    RexNode newFetch = REX_BUILDER.makeLiteral(serverStageLimit, TYPE_FACTORY.createSqlType(
         SqlTypeName.INTEGER));
     if (call._currentNode instanceof PhysicalSort) {
       // When current node is a Sort, if it has a fetch already, verify it is less than the hard limit. Otherwise,
@@ -73,9 +74,9 @@ public class LiteModeSortInsertRule extends PRelOptRule {
       PhysicalSort sort = (PhysicalSort) call._currentNode;
       if (sort.fetch != null) {
         int currentFetch = RexExpressionUtils.getValueAsInt(sort.fetch);
-        Preconditions.checkState(currentFetch <= DEFAULT_SERVER_STAGE_LIMIT,
+        Preconditions.checkState(currentFetch <= serverStageLimit,
             "Attempted to stream %s records from server which exceed limit %s", currentFetch,
-            DEFAULT_SERVER_STAGE_LIMIT);
+            serverStageLimit);
         return sort;
       }
       return sort.withFetch(newFetch);
@@ -83,14 +84,25 @@ public class LiteModeSortInsertRule extends PRelOptRule {
     if (call._currentNode instanceof PhysicalAggregate) {
       // When current node is aggregate, add the limit to the Aggregate itself and skip adding the Sort.
       PhysicalAggregate aggregate = (PhysicalAggregate) call._currentNode;
-      Preconditions.checkState(aggregate.getLimit() <= DEFAULT_SERVER_STAGE_LIMIT,
-          "Group trim limit={} exceeds server stage limit={}", aggregate.getLimit(), DEFAULT_SERVER_STAGE_LIMIT);
-      // TODO(mse-physical): This resets the limit to server stage limit. Should we stick with group-trim limit?
-      return aggregate.withLimit(DEFAULT_SERVER_STAGE_LIMIT);
+      Preconditions.checkState(aggregate.getLimit() <= serverStageLimit,
+          "Group trim limit={} exceeds server stage limit={}", aggregate.getLimit(), serverStageLimit);
+      int limit = aggregate.getLimit() > 0 ? aggregate.getLimit() : serverStageLimit;
+      return aggregate.withLimit(limit);
+    }
+    RelCollation relCollation = RelCollations.EMPTY;
+    if (!call._parents.isEmpty()) {
+      // Pass collation from the Exchange above if it exists.
+      PRelNode parent = call._parents.getLast();
+      if (parent.unwrap() instanceof PhysicalExchange) {
+        PhysicalExchange physicalExchange = (PhysicalExchange) parent.unwrap();
+        if (physicalExchange.getRelCollation() != null) {
+          relCollation = physicalExchange.getRelCollation();
+        }
+      }
     }
     PRelNode input = call._currentNode;
     return new PhysicalSort(input.unwrap().getCluster(), RelTraitSet.createEmpty(), List.of(),
-        RelCollations.EMPTY, null /* offset */, newFetch, input, nodeId(), input.getPinotDataDistributionOrThrow(),
+        relCollation, null /* offset */, newFetch, input, nodeId(), input.getPinotDataDistributionOrThrow(),
         true);
   }
 

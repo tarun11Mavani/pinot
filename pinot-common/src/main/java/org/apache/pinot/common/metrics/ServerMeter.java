@@ -68,6 +68,7 @@ public enum ServerMeter implements AbstractMetrics.Meter {
   DELETED_TTL_KEYS_IN_MULTIPLE_SEGMENTS("rows", false),
   METADATA_TTL_PRIMARY_KEYS_REMOVED("rows", false),
   UPSERT_MISSED_VALID_DOC_ID_SNAPSHOT_COUNT("segments", false),
+  UPSERT_MISSED_QUERYABLE_DOC_ID_SNAPSHOT_COUNT("segments", false),
   UPSERT_PRELOAD_FAILURE("count", false),
   ROWS_WITH_ERRORS("rows", false),
   LLC_CONTROLLER_RESPONSE_NOT_SENT("messages", true),
@@ -140,6 +141,8 @@ public enum ServerMeter implements AbstractMetrics.Meter {
 
   DIRECT_MEMORY_OOM("directMemoryOOMCount", true),
 
+  TABLE_CONFIG_AND_SCHEMA_REFRESH_FAILURES("tables", true, "Number of failures to refresh table config and schema"),
+
   // Multi-stage
   /**
    * Number of times the max number of rows in the hash table has been reached.
@@ -148,6 +151,12 @@ public enum ServerMeter implements AbstractMetrics.Meter {
    * But if a single query has 2 different join operators and each one reaches the limit, this will be increased by 2.
    */
   HASH_JOIN_TIMES_MAX_ROWS_REACHED("times", true),
+  /**
+   * Number of times group by results were trimmed.
+   * It is increased in one by each worker that reaches the limit within the stage.
+   * That means that if a stage has 10 workers and all of them reach the limit, this will be increased by 10.
+   */
+  AGGREGATE_TIMES_GROUPS_TRIMMED("times", true),
   /**
    * Number of times the max number of groups has been reached.
    * It is increased in one by each worker that reaches the limit within the stage.
@@ -199,7 +208,14 @@ public enum ServerMeter implements AbstractMetrics.Meter {
   PREDOWNLOAD_FAILED("predownloadFailed", true),
 
   // reingestion metrics
-  SEGMENT_REINGESTION_FAILURE("segments", false);
+  SEGMENT_REINGESTION_FAILURE("segments", false),
+
+  /**
+   * Approximate heap bytes used by the mutable JSON index at the time of index close.
+   */
+  MUTABLE_JSON_INDEX_MEMORY_USAGE("bytes", false),
+  // Workload Budget exceeded counter
+  WORKLOAD_BUDGET_EXCEEDED("workloadBudgetExceeded", false, "Number of times workload budget exceeded");
 
   private final String _meterName;
   private final String _unit;

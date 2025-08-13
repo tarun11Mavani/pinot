@@ -51,6 +51,8 @@ import { sortBytes, sortNumberOfSegments } from '../utils/SortFunctions'
 import Utils from '../utils/Utils';
 import TableToolbar from './TableToolbar';
 import SimpleAccordion from './SimpleAccordion';
+import clsx from 'clsx';
+import { getStatusChipClass } from './StatusFilter';
 
 type Props = {
   title?: string,
@@ -72,7 +74,8 @@ type Props = {
     toggleName: string;
     toggleValue: boolean;
   },
-  tooltipData?: string[]
+  tooltipData?: string[],
+  additionalControls?: React.ReactNode
 };
 
 // These sort functions are applied to any columns with these names. Otherwise, we just
@@ -164,6 +167,14 @@ const useStyles = makeStyles((theme) => ({
   },
   spacer: {
     flex: '0 1 auto',
+  },
+  chip: {
+    height: 24,
+    '& span': {
+      paddingLeft: 8,
+      paddingRight: 8,
+      fontWeight: 600,
+    },
   },
   cellStatusGood: {
     color: '#4CAF50',
@@ -281,7 +292,8 @@ export default function CustomizedTables({
   inAccordionFormat,
   regexReplace,
   accordionToggleObject,
-  tooltipData
+  tooltipData,
+  additionalControls
 }: Props) {
   // Separate the initial and final data into two separated state variables.
   // This way we can filter and sort the data without affecting the original data.
@@ -291,6 +303,8 @@ export default function CustomizedTables({
   const [finalData, setFinalData] = React.useState(Utils.tableFormat(data));
   React.useEffect( () => {
     setInitialData(data);
+    // Reset pagination when data changes
+    setPage(0);
   }, [data]);
   // We do not use data.isLoading directly in the renderer because there's a gap between data
   // changing and finalData being set. Without this, there's a flicker where we go from
@@ -356,6 +370,8 @@ export default function CustomizedTables({
       // Table.tsx currently doesn't support sorting after filtering. So for now, we just
       // remove the visual indicator of the sorted column until users sort again.
       setColumnClicked('')
+      // Reset pagination to first page when search changes
+      setPage(0);
     }, 200);
 
     return () => {
@@ -365,14 +381,14 @@ export default function CustomizedTables({
 
   const styleCell = (str: string) => {
     if (str.toLowerCase() === 'good' || str.toLowerCase() === 'online' || str.toLowerCase() === 'alive' || str.toLowerCase() === 'true') {
-      return (
-        <StyledChip
-          label={str}
-          className={classes.cellStatusGood}
-          variant="outlined"
-        />
-      );
-    }
+          return (
+            <StyledChip
+              label={str}
+              className={classes.cellStatusGood}
+              variant="outlined"
+            />
+          );
+        }
     if (str.toLocaleLowerCase() === 'bad' || str.toLowerCase() === 'offline' || str.toLowerCase() === 'dead' || str.toLowerCase() === 'false') {
       return (
         <StyledChip
@@ -509,6 +525,8 @@ export default function CustomizedTables({
                       }
                       setOrder(!order);
                       setColumnClicked(column);
+                      // Reset pagination when sorting
+                      setPage(0);
                     }}
                   >
                     <>
@@ -579,7 +597,7 @@ export default function CustomizedTables({
         </TableContainer>
         {finalData.length > 10 ? (
           <TablePagination
-            rowsPerPageOptions={[5, 10, 25]}
+            rowsPerPageOptions={[5, 10, 25, 50, 100]}
             component="div"
             count={finalData.length}
             rowsPerPage={rowsPerPage}
@@ -604,6 +622,17 @@ export default function CustomizedTables({
           handleSearch={(val: string) => setSearch(val)}
           recordCount={recordsCount}
         />
+        {additionalControls && (
+          <div
+            style={{
+              marginTop: 8,
+              paddingTop: 8,
+              borderTop: '1px solid #BDCCD9',
+            }}
+          >
+            {additionalControls}
+          </div>
+        )}
         {renderTableComponent()}
       </>
     );
@@ -619,6 +648,7 @@ export default function CustomizedTables({
           handleSearch={(val: string) => setSearch(val)}
           recordCount={recordsCount}
           accordionToggleObject={accordionToggleObject}
+          additionalControls={additionalControls}
         >
           {renderTableComponent()}
         </SimpleAccordion>

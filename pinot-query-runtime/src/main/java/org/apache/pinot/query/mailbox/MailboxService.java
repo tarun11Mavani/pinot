@@ -30,6 +30,7 @@ import org.apache.pinot.query.mailbox.channel.ChannelManager;
 import org.apache.pinot.query.mailbox.channel.GrpcMailboxServer;
 import org.apache.pinot.query.runtime.operator.MailboxSendOperator;
 import org.apache.pinot.spi.env.PinotConfiguration;
+import org.apache.pinot.spi.utils.CommonConstants;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
 
@@ -64,6 +65,7 @@ public class MailboxService {
   private final PinotConfiguration _config;
   private final ChannelManager _channelManager;
   @Nullable private final TlsConfig _tlsConfig;
+  private final int _maxByteStringSize;
 
   private GrpcMailboxServer _grpcMailboxServer;
 
@@ -76,7 +78,20 @@ public class MailboxService {
     _port = port;
     _config = config;
     _tlsConfig = tlsConfig;
-    _channelManager = new ChannelManager(tlsConfig);
+    int maxInboundMessageSize = config.getProperty(
+        CommonConstants.MultiStageQueryRunner.KEY_OF_MAX_INBOUND_QUERY_DATA_BLOCK_SIZE_BYTES,
+        CommonConstants.MultiStageQueryRunner.DEFAULT_MAX_INBOUND_QUERY_DATA_BLOCK_SIZE_BYTES
+    );
+    _channelManager = new ChannelManager(tlsConfig, maxInboundMessageSize);
+    boolean splitBlocks = config.getProperty(
+        CommonConstants.MultiStageQueryRunner.KEY_OF_ENABLE_DATA_BLOCK_PAYLOAD_SPLIT,
+        CommonConstants.MultiStageQueryRunner.DEFAULT_ENABLE_DATA_BLOCK_PAYLOAD_SPLIT);
+    if (splitBlocks) {
+      // so far we ensure payload is not bigger than maxBlockSize/2, we can fine tune this later
+      _maxByteStringSize = Math.max(maxInboundMessageSize / 2, 1);
+    } else {
+      _maxByteStringSize = 0;
+    }
     LOGGER.info("Initialized MailboxService with hostname: {}, port: {}", hostname, port);
   }
 
@@ -115,7 +130,8 @@ public class MailboxService {
     if (_hostname.equals(hostname) && _port == port) {
       return new InMemorySendingMailbox(mailboxId, this, deadlineMs, statMap);
     } else {
-      return new GrpcSendingMailbox(_config, mailboxId, _channelManager, hostname, port, deadlineMs, statMap);
+      return new GrpcSendingMailbox(
+          _config, mailboxId, _channelManager, hostname, port, deadlineMs, statMap, _maxByteStringSize);
     }
   }
 

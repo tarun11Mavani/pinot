@@ -27,7 +27,6 @@ import java.util.List;
 import java.util.Map;
 import java.util.Set;
 import javax.annotation.Nullable;
-import javax.validation.constraints.NotNull;
 import org.apache.pinot.common.datatable.StatMap;
 import org.apache.pinot.common.response.BrokerResponse;
 import org.apache.pinot.common.response.ProcessingException;
@@ -50,7 +49,8 @@ import org.apache.pinot.common.response.ProcessingException;
     "realtimeResponseSerializationCpuTimeNs", "offlineTotalCpuTimeNs", "realtimeTotalCpuTimeNs",
     "explainPlanNumEmptyFilterSegments", "explainPlanNumMatchAllFilterSegments", "traceInfo", "tablesQueried",
     "offlineThreadMemAllocatedBytes", "realtimeThreadMemAllocatedBytes", "offlineResponseSerMemAllocatedBytes",
-    "realtimeResponseSerMemAllocatedBytes", "offlineTotalMemAllocatedBytes", "realtimeTotalMemAllocatedBytes"
+    "realtimeResponseSerMemAllocatedBytes", "offlineTotalMemAllocatedBytes", "realtimeTotalMemAllocatedBytes",
+    "pools", "rlsFiltersApplied", "groupsTrimmed"
 })
 public class BrokerResponseNativeV2 implements BrokerResponse {
   private final StatMap<StatKey> _brokerStats = new StatMap<>(StatKey.class);
@@ -80,6 +80,9 @@ public class BrokerResponseNativeV2 implements BrokerResponse {
   private int _numServersResponded;
   private long _brokerReduceTimeMs;
   private Set<String> _tablesQueried = Set.of();
+
+  private Set<Integer> _pools = Set.of();
+  private boolean _rlsFiltersApplied = false;
 
   @JsonInclude(JsonInclude.Include.NON_NULL)
   @Nullable
@@ -123,8 +126,17 @@ public class BrokerResponseNativeV2 implements BrokerResponse {
   }
 
   @Override
+  public boolean isGroupsTrimmed() {
+    return _brokerStats.getBoolean(StatKey.GROUPS_TRIMMED);
+  }
+
+  @Override
   public boolean isNumGroupsLimitReached() {
     return _brokerStats.getBoolean(StatKey.NUM_GROUPS_LIMIT_REACHED);
+  }
+
+  public void mergeGroupsTrimmed(boolean groupsTrimmed) {
+    _brokerStats.merge(StatKey.GROUPS_TRIMMED, groupsTrimmed);
   }
 
   public void mergeNumGroupsLimitReached(boolean numGroupsLimitReached) {
@@ -391,6 +403,28 @@ public class BrokerResponseNativeV2 implements BrokerResponse {
     return Map.of();
   }
 
+  @Override
+  public void setPools(Set<Integer> pools) {
+    _pools = pools;
+  }
+
+  @Override
+  public Set<Integer> getPools() {
+    return _pools;
+  }
+
+  @JsonProperty("rlsFiltersApplied")
+  @Override
+  public void setRLSFiltersApplied(boolean rlsFiltersApplied) {
+    _rlsFiltersApplied = rlsFiltersApplied;
+  }
+
+  @JsonProperty("rlsFiltersApplied")
+  @Override
+  public boolean getRLSFiltersApplied() {
+    return _rlsFiltersApplied;
+  }
+
   public void addBrokerStats(StatMap<StatKey> brokerStats) {
     _brokerStats.merge(brokerStats);
   }
@@ -417,6 +451,7 @@ public class BrokerResponseNativeV2 implements BrokerResponse {
     NUM_SEGMENTS_PRUNED_INVALID(StatMap.Type.INT),
     NUM_SEGMENTS_PRUNED_BY_LIMIT(StatMap.Type.INT),
     NUM_SEGMENTS_PRUNED_BY_VALUE(StatMap.Type.INT),
+    GROUPS_TRIMMED(StatMap.Type.BOOLEAN),
     NUM_GROUPS_LIMIT_REACHED(StatMap.Type.BOOLEAN),
     NUM_GROUPS_WARNING_LIMIT_REACHED(StatMap.Type.BOOLEAN);
 
@@ -433,12 +468,11 @@ public class BrokerResponseNativeV2 implements BrokerResponse {
   }
 
   @Override
-  public void setTablesQueried(@NotNull Set<String> tablesQueried) {
+  public void setTablesQueried(Set<String> tablesQueried) {
     _tablesQueried = tablesQueried;
   }
 
   @Override
-  @NotNull
   public Set<String> getTablesQueried() {
     return _tablesQueried;
   }

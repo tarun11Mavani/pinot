@@ -23,6 +23,7 @@ import com.google.common.cache.Cache;
 import com.google.common.cache.CacheBuilder;
 import java.time.Clock;
 import java.util.ArrayList;
+import java.util.HashSet;
 import java.util.List;
 import java.util.Map;
 import java.util.Set;
@@ -38,7 +39,7 @@ import org.apache.pinot.common.metrics.ServerGauge;
 import org.apache.pinot.common.metrics.ServerMetrics;
 import org.apache.pinot.common.utils.LLCSegmentName;
 import org.apache.pinot.spi.stream.LongMsgOffset;
-import org.apache.pinot.spi.stream.RowMetadata;
+import org.apache.pinot.spi.stream.StreamMessageMetadata;
 import org.apache.pinot.spi.stream.StreamMetadataProvider;
 import org.apache.pinot.spi.stream.StreamPartitionMsgOffset;
 import org.apache.pinot.spi.utils.builder.TableNameBuilder;
@@ -212,6 +213,7 @@ public class IngestionDelayTracker {
         _serverMetrics.removePartitionGauge(_metricName, partitionId, ServerGauge.REALTIME_INGESTION_OFFSET_LAG);
         _serverMetrics.removePartitionGauge(_metricName, partitionId, ServerGauge.REALTIME_INGESTION_UPSTREAM_OFFSET);
         _serverMetrics.removePartitionGauge(_metricName, partitionId, ServerGauge.REALTIME_INGESTION_CONSUMING_OFFSET);
+        LOGGER.info("Successfully removed ingestion metrics for partition id: {}", partitionId);
       }
       return null;
     });
@@ -251,10 +253,10 @@ public class IngestionDelayTracker {
    *
    * @param segmentName name of the consuming segment
    * @param partitionId partition id of the consuming segment (directly passed in to avoid parsing the segment name)
-   * @param ingestionTimeMs ingestion time of the last consumed message (from {@link RowMetadata})
+   * @param ingestionTimeMs ingestion time of the last consumed message (from {@link StreamMessageMetadata})
    * @param firstStreamIngestionTimeMs ingestion time of the last consumed message in the first stream (from
-   *                                   {@link RowMetadata})
-   * @param currentOffset offset of the last consumed message (from {@link RowMetadata})
+   *                                   {@link StreamMessageMetadata})
+   * @param currentOffset offset of the last consumed message (from {@link StreamMessageMetadata})
    * @param latestOffset offset of the latest message in the partition (from {@link StreamMetadataProvider})
    */
   public void updateIngestionMetrics(String segmentName, int partitionId, long ingestionTimeMs,
@@ -317,6 +319,20 @@ public class IngestionDelayTracker {
    */
   public void stopTrackingPartitionIngestionDelay(int partitionId) {
     removePartitionId(partitionId);
+  }
+
+  /**
+   * Handles all partition removal event. This must be invoked when we stop serving partitions for this table in the
+   * current server.
+   *
+   * @return Set of partitionIds for which ingestion metrics were removed.
+   */
+  public Set<Integer> stopTrackingIngestionDelayForAllPartitions() {
+    Set<Integer> removedPartitionIds = new HashSet<>(_ingestionInfoMap.keySet());
+    for (Integer partitionId : _ingestionInfoMap.keySet()) {
+      removePartitionId(partitionId);
+    }
+    return removedPartitionIds;
   }
 
   /**

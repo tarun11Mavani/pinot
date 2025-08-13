@@ -127,6 +127,11 @@ public interface BrokerResponse {
   }
 
   /**
+   * Returns whether groups were trimmed (reduced in size after sorting).
+   */
+  boolean isGroupsTrimmed();
+
+  /**
    * Returns whether the number of groups limit has been reached.
    */
   boolean isNumGroupsLimitReached();
@@ -394,4 +399,28 @@ public interface BrokerResponse {
    * @return Set of tables queried
    */
   Set<String> getTablesQueried();
+
+  /**
+   * Set the pools queried in the request
+   * @param pools
+   */
+  void setPools(Set<Integer> pools);
+
+  /**
+   * Get the pools queried in the request
+   * @return
+   */
+  Set<Integer> getPools();
+
+  /**
+   * Set whether RLS (row level security) filters were applied to the query.
+   * @param rlsFiltersApplied true if RLS filters were applied, false otherwise
+   */
+  void setRLSFiltersApplied(boolean rlsFiltersApplied);
+
+  /**
+   * Get whether RLS (row level security) filters were applied to the query.
+   * @return true if RLS filters were applied, false otherwise
+   */
+  boolean getRLSFiltersApplied();
 }

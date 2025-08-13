@@ -34,6 +34,7 @@ import org.apache.pinot.common.exception.InvalidConfigException;
 import org.apache.pinot.common.metadata.segment.SegmentZKMetadata;
 import org.apache.pinot.common.restlet.resources.ValidDocIdsMetadataInfo;
 import org.apache.pinot.common.restlet.resources.ValidDocIdsType;
+import org.apache.pinot.common.utils.ServiceStatus;
 import org.apache.pinot.controller.helix.core.PinotHelixResourceManager;
 import org.apache.pinot.controller.helix.core.minion.generator.BaseTaskGenerator;
 import org.apache.pinot.controller.helix.core.minion.generator.TaskGeneratorUtils;
@@ -124,7 +125,8 @@ public class UpsertCompactionTaskGenerator extends BaseTaskGenerator {
 
       // get server to segment mappings
       PinotHelixResourceManager pinotHelixResourceManager = _clusterInfoAccessor.getPinotHelixResourceManager();
-      Map<String, List<String>> serverToSegments = pinotHelixResourceManager.getServerToSegmentsMap(tableNameWithType);
+      Map<String, List<String>> serverToSegments =
+          pinotHelixResourceManager.getServerToOnlineSegmentsMapFromEV(tableNameWithType, true);
       BiMap<String, String> serverToEndpoints;
       try {
         serverToEndpoints = pinotHelixResourceManager.getDataInstanceAdminEndpoints(serverToSegments.keySet());
@@ -173,7 +175,7 @@ public class UpsertCompactionTaskGenerator extends BaseTaskGenerator {
       }
 
       int numTasks = 0;
-      int maxTasks = getMaxTasks(taskType, tableNameWithType, taskConfigs);
+      int maxTasks = getAndUpdateMaxNumSubTasks(taskConfigs, Integer.MAX_VALUE, tableNameWithType);
       for (SegmentZKMetadata segment : segmentSelectionResult.getSegmentsForCompaction()) {
         if (numTasks == maxTasks) {
           break;
@@ -226,6 +228,17 @@ public class UpsertCompactionTaskGenerator extends BaseTaskGenerator {
               segment.getCrc(), validDocIdsMetadata.getSegmentCrc());
           continue;
         }
+
+        // skipping segments for which their servers are not in READY state. The bitmaps would be inconsistent when
+        // server is NOT READY as UPDATING segments might be updating the ONLINE segments
+        if (validDocIdsMetadata.getServerStatus() != null && !validDocIdsMetadata.getServerStatus()
+            .equals(ServiceStatus.Status.GOOD)) {
+          LOGGER.warn("Server {} is in {} state, skipping {} generation for segment: {}",
+              validDocIdsMetadata.getInstanceId(), validDocIdsMetadata.getServerStatus(),
+              MinionConstants.UpsertCompactionTask.TASK_TYPE, segmentName);
+          continue;
+        }
+
         long totalDocs = validDocIdsMetadata.getTotalDocs();
         double invalidRecordPercent = ((double) totalInvalidDocs / totalDocs) * 100;
         if (totalInvalidDocs == totalDocs) {
@@ -234,15 +247,13 @@ public class UpsertCompactionTaskGenerator extends BaseTaskGenerator {
         } else if (invalidRecordPercent >= invalidRecordsThresholdPercent
             && totalInvalidDocs >= invalidRecordsThresholdCount) {
           LOGGER.debug("Segment {} contains {} invalid records out of {} total records "
-                          + "(count threshold: {}, percent threshold: {}), adding it to the compaction list",
-                  segmentName, totalInvalidDocs, totalDocs, invalidRecordsThresholdCount,
-                  invalidRecordsThresholdPercent);
+                  + "(count threshold: {}, percent threshold: {}), adding it to the compaction list", segmentName,
+              totalInvalidDocs, totalDocs, invalidRecordsThresholdCount, invalidRecordsThresholdPercent);
           segmentsForCompaction.add(Pair.of(segment, totalInvalidDocs));
         } else {
           LOGGER.debug("Segment {} contains {} invalid records out of {} total records "
-                          + "(count threshold: {}, percent threshold: {}), skipping it for compaction",
-                  segmentName, totalInvalidDocs, totalDocs, invalidRecordsThresholdCount,
-                  invalidRecordsThresholdPercent);
+                  + "(count threshold: {}, percent threshold: {}), skipping it for compaction", segmentName,
+              totalInvalidDocs, totalDocs, invalidRecordsThresholdCount, invalidRecordsThresholdPercent);
         }
         break;
       }
@@ -274,20 +285,6 @@ public class UpsertCompactionTaskGenerator extends BaseTaskGenerator {
       }
     }
     return completedSegments;
-  }
-
-  @VisibleForTesting
-  public static int getMaxTasks(String taskType, String tableNameWithType, Map<String, String> taskConfigs) {
-    int maxTasks = Integer.MAX_VALUE;
-    String tableMaxNumTasksConfig = taskConfigs.get(MinionConstants.TABLE_MAX_NUM_TASKS_KEY);
-    if (tableMaxNumTasksConfig != null) {
-      try {
-        maxTasks = Integer.parseInt(tableMaxNumTasksConfig);
-      } catch (Exception e) {
-        LOGGER.warn("MaxNumTasks have been wrongly set for table : {}, and task {}", tableNameWithType, taskType);
-      }
-    }
-    return maxTasks;
   }
 
   @Override

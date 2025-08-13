@@ -41,6 +41,7 @@ import java.util.Objects;
 import java.util.concurrent.CompletableFuture;
 import java.util.concurrent.Executor;
 import javax.inject.Inject;
+import javax.inject.Named;
 import javax.ws.rs.DELETE;
 import javax.ws.rs.DefaultValue;
 import javax.ws.rs.GET;
@@ -59,6 +60,7 @@ import javax.ws.rs.core.Response;
 import javax.ws.rs.core.StreamingOutput;
 import org.apache.hc.client5.http.io.HttpClientConnectionManager;
 import org.apache.pinot.broker.api.HttpRequesterIdentity;
+import org.apache.pinot.broker.broker.BrokerAdminApiApplication;
 import org.apache.pinot.broker.requesthandler.BrokerRequestHandler;
 import org.apache.pinot.common.metrics.BrokerMeter;
 import org.apache.pinot.common.metrics.BrokerMetrics;
@@ -76,6 +78,7 @@ import org.apache.pinot.core.query.executor.sql.SqlQueryExecutor;
 import org.apache.pinot.core.query.request.context.QueryContext;
 import org.apache.pinot.core.query.request.context.utils.QueryContextConverterUtils;
 import org.apache.pinot.core.query.request.context.utils.QueryContextUtils;
+import org.apache.pinot.spi.auth.broker.RequesterIdentity;
 import org.apache.pinot.spi.env.PinotConfiguration;
 import org.apache.pinot.spi.exception.QueryErrorCode;
 import org.apache.pinot.spi.query.QueryThreadContext;
@@ -124,6 +127,10 @@ public class PinotClientRequest {
 
   @Inject
   private HttpClientConnectionManager _httpConnMgr;
+
+  @Inject
+  @Named(BrokerAdminApiApplication.BROKER_INSTANCE_ID)
+  private String _instanceId;
 
   @GET
   @ManagedAsync
@@ -273,6 +280,33 @@ public class PinotClientRequest {
     }
   }
 
+  @POST
+  @ManagedAsync
+  @Produces(MediaType.APPLICATION_JSON)
+  @Path("query/timeseries")
+  @ApiOperation(value = "Query Pinot using the Time Series Engine")
+  @ManualAuthorization
+  public void processTimeSeriesQueryEngine(Map<String, String> queryParams, @Suspended AsyncResponse asyncResponse,
+      @Context org.glassfish.grizzly.http.server.Request requestCtx, @Context HttpHeaders httpHeaders) {
+    try {
+      if (!queryParams.containsKey(Request.QUERY)) {
+        throw new IllegalStateException("Payload is missing the query string field 'query'");
+      }
+      String language = queryParams.get(Request.LANGUAGE);
+      String queryString = queryParams.get(Request.QUERY);
+      try (RequestScope requestContext = Tracing.getTracer().createRequestScope()) {
+        PinotBrokerTimeSeriesResponse response = executeTimeSeriesQuery(language, queryString, queryParams,
+            requestContext, makeHttpIdentity(requestCtx), httpHeaders);
+        asyncResponse.resume(response.toBrokerResponse());
+      }
+    } catch (Exception e) {
+      LOGGER.error("Caught exception while processing POST timeseries request", e);
+      _brokerMetrics.addMeteredGlobalValue(BrokerMeter.UNCAUGHT_POST_EXCEPTIONS, 1L);
+      asyncResponse.resume(new WebApplicationException(e,
+          Response.status(Response.Status.INTERNAL_SERVER_ERROR).entity(e.getMessage()).build()));
+    }
+  }
+
   @GET
   @ManagedAsync
   @Produces(MediaType.APPLICATION_JSON)
@@ -286,7 +320,8 @@ public class PinotClientRequest {
     try {
       try (RequestScope requestContext = Tracing.getTracer().createRequestScope()) {
         String queryString = requestCtx.getQueryString();
-        PinotBrokerTimeSeriesResponse response = executeTimeSeriesQuery(language, queryString, requestContext);
+        PinotBrokerTimeSeriesResponse response = executeTimeSeriesQuery(language, queryString, Map.of(), requestContext,
+          makeHttpIdentity(requestCtx), httpHeaders);
         if (response.getErrorType() != null && !response.getErrorType().isEmpty()) {
           asyncResponse.resume(Response.serverError().entity(response).build());
           return;
@@ -411,7 +446,7 @@ public class PinotClientRequest {
       @DefaultValue("3000") int timeoutMs,
       @ApiParam(value = "Return server responses for troubleshooting") @QueryParam("verbose") @DefaultValue("false")
       boolean verbose) {
-    try (QueryThreadContext.CloseableContext closeMe = QueryThreadContext.open()) {
+    try (QueryThreadContext.CloseableContext closeMe = QueryThreadContext.open(_instanceId)) {
       Map<String, Integer> serverResponses = verbose ? new HashMap<>() : null;
       if (isClient) {
         long reqId = _requestHandler.getRequestIdByClientId(id).orElse(-1L);
@@ -530,8 +565,10 @@ public class PinotClientRequest {
   }
 
   private PinotBrokerTimeSeriesResponse executeTimeSeriesQuery(String language, String queryString,
-      RequestContext requestContext) {
-    return _requestHandler.handleTimeSeriesRequest(language, queryString, requestContext);
+      Map<String, String> queryParams, RequestContext requestContext, RequesterIdentity requesterIdentity,
+      HttpHeaders httpHeaders) {
+    return _requestHandler.handleTimeSeriesRequest(language, queryString, queryParams, requestContext,
+        requesterIdentity, httpHeaders);
   }
 
   public static HttpRequesterIdentity makeHttpIdentity(org.glassfish.grizzly.http.server.Request context) {

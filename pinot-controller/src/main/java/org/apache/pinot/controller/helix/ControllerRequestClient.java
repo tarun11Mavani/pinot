@@ -198,6 +198,17 @@ public class ControllerRequestClient {
     }
   }
 
+  public void deleteLogicalTable(String logicalTableName)
+      throws IOException {
+    try {
+      HttpClient.wrapAndThrowHttpException(
+          _httpClient.sendDeleteRequest(new URI(_controllerRequestURLBuilder.forLogicalTableDelete(logicalTableName)),
+              _headers));
+    } catch (HttpErrorStatusException | URISyntaxException e) {
+      throw new IOException(e);
+    }
+  }
+
   public TableConfig getTableConfig(String tableName, TableType tableType)
       throws IOException {
     try {
@@ -461,5 +472,26 @@ public class ControllerRequestClient {
       int numRealtimeServers) {
     return new Tenant(TenantRole.SERVER, tenantName, numOfflineServers + numRealtimeServers, numOfflineServers,
         numRealtimeServers).toJsonString();
+  }
+
+  public void updateClusterConfig(Map<String, String> newConfigs)
+      throws IOException {
+    try {
+      HttpClient.wrapAndThrowHttpException(_httpClient.sendJsonPostRequest(
+          new URI(_controllerRequestURLBuilder.forClusterConfigUpdate()),
+          JsonUtils.objectToString(newConfigs), _headers));
+    } catch (HttpErrorStatusException | URISyntaxException e) {
+      throw new IOException(e);
+    }
+  }
+
+  public void deleteClusterConfig(String config)
+      throws IOException {
+    try {
+      HttpClient.wrapAndThrowHttpException(_httpClient.sendDeleteRequest(
+          new URI(_controllerRequestURLBuilder.forClusterConfigDelete(config)), _headers));
+    } catch (HttpErrorStatusException | URISyntaxException e) {
+      throw new IOException(e);
+    }
   }
 }

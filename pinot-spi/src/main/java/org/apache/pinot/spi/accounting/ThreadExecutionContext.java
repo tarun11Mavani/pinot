@@ -28,7 +28,7 @@ public interface ThreadExecutionContext {
     * MSE: Multi Stage Engine
     * UNKNOWN: Default
     */
-   public enum TaskType {
+   enum TaskType {
       SSE,
       MSE,
       UNKNOWN
@@ -47,4 +47,6 @@ public interface ThreadExecutionContext {
    Thread getAnchorThread();
 
    TaskType getTaskType();
+
+   String getWorkloadName();
 }

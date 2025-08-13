@@ -55,7 +55,9 @@ import org.apache.pinot.spi.data.Schema;
 import org.apache.pinot.spi.data.readers.FileFormat;
 import org.apache.pinot.spi.exception.QueryErrorCode;
 import org.apache.pinot.spi.utils.CommonConstants;
+import org.apache.pinot.spi.utils.JsonUtils;
 import org.apache.pinot.util.TestUtils;
+import org.assertj.core.api.Assertions;
 import org.joda.time.DateTime;
 import org.joda.time.DateTimeZone;
 import org.testng.Assert;
@@ -66,10 +68,7 @@ import org.testng.annotations.DataProvider;
 import org.testng.annotations.Test;
 
 import static org.apache.pinot.common.function.scalar.StringFunctions.*;
-import static org.testng.Assert.assertEquals;
-import static org.testng.Assert.assertFalse;
-import static org.testng.Assert.assertNotNull;
-import static org.testng.Assert.assertTrue;
+import static org.testng.Assert.*;
 
 
 public class MultiStageEngineIntegrationTest extends BaseClusterIntegrationTestSet {
@@ -373,6 +372,31 @@ public class MultiStageEngineIntegrationTest extends BaseClusterIntegrationTestS
     String expectedOneHourAgoTodayStr = Instant.now().minus(Duration.parse("PT1H")).atZone(ZoneId.of("UTC"))
         .format(DateTimeFormatter.ofPattern("yyyy-MM-dd z"));
     assertEquals(oneHourAgoTodayStr, expectedOneHourAgoTodayStr);
+  }
+
+  @Test
+  public void testUnsupportedUdfOnIntermediateStage()
+      throws Exception {
+    String sqlQuery = ""
+        + "SET timeoutMs=10000;\n" // In older versions we timeout in this case, but we should fail fast now
+        + "WITH fakeTable AS (\n" // this table is used to make sure the call is made on an intermediate stage
+        + "  SELECT \n"
+        + "    t1.DaysSinceEpoch + t2.DaysSinceEpoch as DaysSinceEpoch"
+        + "  FROM (select * from mytable limit 1) AS t1 \n"
+        + "  CROSS JOIN (select * from mytable limit 1) AS t2 \n"
+        + ")\n"
+        + "SELECT \n"
+        // arrayMax is not supported on intermediate stages. Broker doesn't know that, so this produces an error
+        // when the query is received on the server
+        + "  arrayMax(ARRAY[DaysSinceEpoch]) \n"
+        + "FROM fakeTable \n";
+    JsonNode response = postQuery(sqlQuery);
+    Assertions.assertThat(response.get("exceptions"))
+        .describedAs("Expected exception for unsupported projection")
+        .isNotEmpty();
+    Assertions.assertThat(response.get("exceptions").get(0).get("message").asText())
+        .describedAs("Expected exception message for unsupported projection")
+        .contains("Unsupported function: ARRAYMAX");
   }
 
   @Test
@@ -1592,7 +1616,7 @@ public class MultiStageEngineIntegrationTest extends BaseClusterIntegrationTestS
     TenantConfig tenantConfig = new TenantConfig(getBrokerTenant(), getServerTenant(), null);
     tableConfig.setTenantConfig(tenantConfig);
     addTableConfig(tableConfig);
-    createAndUploadSegmentFromFile(tableConfig, lookupTableSchema, DIM_TABLE_DATA_PATH, FileFormat.CSV,
+    createAndUploadSegmentFromClasspath(tableConfig, lookupTableSchema, DIM_TABLE_DATA_PATH, FileFormat.CSV,
         DIM_NUMBER_OF_RECORDS, 60_000);
 
     // Compare total rows in the primary table with number of rows in the result of the join with lookup table
@@ -1656,6 +1680,35 @@ public class MultiStageEngineIntegrationTest extends BaseClusterIntegrationTestS
     jsonNode = postQuery(query);
     assertNoError(jsonNode);
     assertEquals(jsonNode.get("resultTable").get("rows").get(0).get(0).asInt(), 2);
+  }
+
+  @Test
+  public void testValidateQueryApiSuccess()
+      throws Exception {
+    JsonNode result = JsonUtils.stringToJsonNode(
+        sendPostRequest(getControllerBaseApiUrl() + "/validateMultiStageQuery",
+            "{\"sql\": \"SELECT * FROM mytable\"}", null));
+    assertTrue(result.get("compiledSuccessfully").asBoolean());
+    assertTrue(result.get("errorCode").isNull());
+    assertTrue(result.get("errorMessage").isNull());
+  }
+
+  @Test
+  public void testValidateQueryApiError()
+      throws Exception {
+    JsonNode result = JsonUtils.stringToJsonNode(
+        sendPostRequest(getControllerBaseApiUrl() + "/validateMultiStageQuery",
+            "{\"sql\": \"SELECT invalidColumn FROM invalidTable\"}", null));
+    assertFalse(result.get("compiledSuccessfully").asBoolean());
+    assertEquals(result.get("errorCode").asText(), QueryErrorCode.TABLE_DOES_NOT_EXIST.name());
+    assertFalse(result.get("errorMessage").isNull());
+
+    result = JsonUtils.stringToJsonNode(
+        sendPostRequest(getControllerBaseApiUrl() + "/validateMultiStageQuery",
+            "{\"sql\": \"SELECT CAST('abc' AS INT)\"}", null));
+    assertFalse(result.get("compiledSuccessfully").asBoolean());
+    assertEquals(result.get("errorCode").asText(), QueryErrorCode.QUERY_PLANNING.name());
+    assertFalse(result.get("errorMessage").isNull());
   }
 
   private void checkQueryResultForDBTest(String column, String tableName)

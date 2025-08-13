@@ -216,6 +216,10 @@ public interface TableDataManager {
    */
   boolean isSegmentDeletedRecently(String segmentName);
 
+  boolean isDeleted();
+
+  void setDeleted(boolean deleted);
+
   /**
    * Acquires all segments of the table.
    * <p>It is the caller's responsibility to return the segments by calling {@link #releaseSegment(SegmentDataManager)}.
@@ -330,14 +334,6 @@ public interface TableDataManager {
    * @param segmentNameStr name of segment for which the state change is being handled
    */
   default void onConsumingToDropped(String segmentNameStr) {
-  }
-
-  /**
-   * Interface to handle segment state transitions from CONSUMING to ONLINE
-   *
-   * @param segmentNameStr name of segment for which the state change is being handled
-   */
-  default void onConsumingToOnline(String segmentNameStr) {
   }
 
   /**

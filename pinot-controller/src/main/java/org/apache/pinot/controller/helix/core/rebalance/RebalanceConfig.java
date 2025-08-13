@@ -22,6 +22,7 @@ import com.fasterxml.jackson.annotation.JsonProperty;
 import com.google.common.base.Preconditions;
 import io.swagger.annotations.ApiModel;
 import io.swagger.annotations.ApiModelProperty;
+import org.apache.pinot.controller.api.resources.ForceCommitBatchConfig;
 import org.apache.pinot.spi.utils.Enablement;
 
 
@@ -32,9 +33,9 @@ public class RebalanceConfig {
   public static final long DEFAULT_EXTERNAL_VIEW_CHECK_INTERVAL_IN_MS = 1000L; // 1 second
   public static final long DEFAULT_EXTERNAL_VIEW_STABILIZATION_TIMEOUT_IN_MS = 3600000L; // 1 hour
 
-  // Whether to rebalance table in dry-run mode
+  // Whether to rebalance table in dry-run mode.
   @JsonProperty("dryRun")
-  @ApiModelProperty(example = "false")
+  @ApiModelProperty(example = "true")
   private boolean _dryRun = false;
 
   // Whether to perform pre-checks for rebalance. This only returns the status of each pre-check and does not fail
@@ -63,6 +64,15 @@ public class RebalanceConfig {
   @JsonProperty("downtime")
   @ApiModelProperty(example = "false")
   private boolean _downtime = false;
+
+  // This flag only applies to peer-download enabled tables undergoing downtime=true or minAvailableReplicas=0
+  // rebalance (both of which can result in possible data loss scenarios). If enabled, this flag will allow the
+  // rebalance to continue even in cases where data loss scenarios have been detected, otherwise the rebalance will
+  // be failed and user action will be required to rebalance again. This flag should be used with caution and only
+  // used in scenarios where data loss is acceptable.
+  @JsonProperty("allowPeerDownloadDataLoss")
+  @ApiModelProperty(example = "false")
+  private boolean _allowPeerDownloadDataLoss = false;
 
   // For no-downtime rebalance, minimum number of replicas to keep alive during rebalance, or maximum number of replicas
   // allowed to be unavailable if value is negative
@@ -136,6 +146,30 @@ public class RebalanceConfig {
   @ApiModelProperty(example = "300000")
   private long _retryInitialDelayInMs = 300000L;
 
+  // Disk utilization threshold override. If set, this will override the default disk utilization threshold
+  // configured at the controller level. Value should be between 0.0 and 1.0 (e.g., 0.85 for 85%) or -1.0, which means
+  // no override. In the latter case the pre-checker will use the default disk utilization threshold from the controller
+  // config.
+  @JsonProperty("diskUtilizationThreshold")
+  @ApiModelProperty(example = "0.85")
+  private double _diskUtilizationThreshold = -1.0;
+
+  @JsonProperty("forceCommit")
+  @ApiModelProperty(example = "false")
+  private boolean _forceCommit = false;
+
+  @JsonProperty("forceCommitBatchSize")
+  @ApiModelProperty(example = ForceCommitBatchConfig.DEFAULT_BATCH_SIZE + "")
+  private int _forceCommitBatchSize = ForceCommitBatchConfig.DEFAULT_BATCH_SIZE;
+
+  @JsonProperty("forceCommitBatchStatusCheckIntervalMs")
+  @ApiModelProperty(example = ForceCommitBatchConfig.DEFAULT_STATUS_CHECK_INTERVAL_SEC * 1000 + "")
+  private int _forceCommitBatchStatusCheckIntervalMs = ForceCommitBatchConfig.DEFAULT_STATUS_CHECK_INTERVAL_SEC * 1000;
+
+  @JsonProperty("forceCommitBatchStatusCheckTimeoutMs")
+  @ApiModelProperty(example = ForceCommitBatchConfig.DEFAULT_STATUS_CHECK_TIMEOUT_SEC * 1000 + "")
+  private int _forceCommitBatchStatusCheckTimeoutMs = ForceCommitBatchConfig.DEFAULT_STATUS_CHECK_TIMEOUT_SEC * 1000;
+
   public boolean isDryRun() {
     return _dryRun;
   }
@@ -182,6 +216,14 @@ public class RebalanceConfig {
 
   public void setDowntime(boolean downtime) {
     _downtime = downtime;
+  }
+
+  public boolean isAllowPeerDownloadDataLoss() {
+    return _allowPeerDownloadDataLoss;
+  }
+
+  public void setAllowPeerDownloadDataLoss(boolean allowPeerDownloadDataLoss) {
+    _allowPeerDownloadDataLoss = allowPeerDownloadDataLoss;
   }
 
   public int getMinAvailableReplicas() {
@@ -272,6 +314,38 @@ public class RebalanceConfig {
     _retryInitialDelayInMs = retryInitialDelayInMs;
   }
 
+  public boolean isForceCommit() {
+    return _forceCommit;
+  }
+
+  public void setForceCommit(boolean forceCommit) {
+    _forceCommit = forceCommit;
+  }
+
+  public int getForceCommitBatchSize() {
+    return _forceCommitBatchSize;
+  }
+
+  public void setForceCommitBatchSize(int forceCommitBatchSize) {
+    _forceCommitBatchSize = forceCommitBatchSize;
+  }
+
+  public int getForceCommitBatchStatusCheckIntervalMs() {
+    return _forceCommitBatchStatusCheckIntervalMs;
+  }
+
+  public void setForceCommitBatchStatusCheckIntervalMs(int forceCommitBatchStatusCheckIntervalMs) {
+    _forceCommitBatchStatusCheckIntervalMs = forceCommitBatchStatusCheckIntervalMs;
+  }
+
+  public int getForceCommitBatchStatusCheckTimeoutMs() {
+    return _forceCommitBatchStatusCheckTimeoutMs;
+  }
+
+  public void setForceCommitBatchStatusCheckTimeoutMs(int forceCommitBatchStatusCheckTimeoutMs) {
+    _forceCommitBatchStatusCheckTimeoutMs = forceCommitBatchStatusCheckTimeoutMs;
+  }
+
   public Enablement getMinimizeDataMovement() {
     return _minimizeDataMovement;
   }
@@ -282,17 +356,46 @@ public class RebalanceConfig {
     _minimizeDataMovement = minimizeDataMovement;
   }
 
+  public double getDiskUtilizationThreshold() {
+    return _diskUtilizationThreshold;
+  }
+
+  public void setDiskUtilizationThreshold(double diskUtilizationThreshold) {
+    _diskUtilizationThreshold = diskUtilizationThreshold;
+  }
+
   @Override
   public String toString() {
     return "RebalanceConfig{" + "_dryRun=" + _dryRun + ", preChecks=" + _preChecks + ", _reassignInstances="
         + _reassignInstances + ", _includeConsuming=" + _includeConsuming + ", _minimizeDataMovement="
-        + _minimizeDataMovement + ", _bootstrap=" + _bootstrap + ", _downtime=" + _downtime + ", _minAvailableReplicas="
-        + _minAvailableReplicas + ", _bestEfforts=" + _bestEfforts + ", batchSizePerServer=" + _batchSizePerServer
-        + ", _externalViewCheckIntervalInMs=" + _externalViewCheckIntervalInMs
-        + ", _externalViewStabilizationTimeoutInMs=" + _externalViewStabilizationTimeoutInMs
-        + ", _updateTargetTier=" + _updateTargetTier + ", _heartbeatIntervalInMs=" + _heartbeatIntervalInMs
-        + ", _heartbeatTimeoutInMs=" + _heartbeatTimeoutInMs + ", _maxAttempts=" + _maxAttempts
-        + ", _retryInitialDelayInMs=" + _retryInitialDelayInMs + '}';
+        + _minimizeDataMovement + ", _bootstrap=" + _bootstrap + ", _downtime=" + _downtime
+        + ", _allowPeerDownloadDataLoss=" + _allowPeerDownloadDataLoss + ", _minAvailableReplicas="
+        + _minAvailableReplicas + ", _bestEfforts=" + _bestEfforts + ", batchSizePerServer="
+        + _batchSizePerServer + ", _externalViewCheckIntervalInMs=" + _externalViewCheckIntervalInMs
+        + ", _externalViewStabilizationTimeoutInMs=" + _externalViewStabilizationTimeoutInMs + ", _updateTargetTier="
+        + _updateTargetTier + ", _heartbeatIntervalInMs=" + _heartbeatIntervalInMs + ", _heartbeatTimeoutInMs="
+        + _heartbeatTimeoutInMs + ", _maxAttempts=" + _maxAttempts + ", _retryInitialDelayInMs="
+        + _retryInitialDelayInMs + ", _diskUtilizationThreshold=" + _diskUtilizationThreshold + ", _forceCommit="
+        + _forceCommit + ", _forceCommitBatchSize=" + _forceCommitBatchSize
+        + ", _forceCommitBatchStatusCheckIntervalMs=" + _forceCommitBatchStatusCheckIntervalMs
+        + ", _forceCommitBatchStatusCheckTimeoutMs=" + _forceCommitBatchStatusCheckTimeoutMs + '}';
+  }
+
+  public String toQueryString() {
+    return "dryRun=" + _dryRun + "&preChecks=" + _preChecks + "&reassignInstances=" + _reassignInstances
+        + "&includeConsuming=" + _includeConsuming + "&bootstrap=" + _bootstrap + "&downtime=" + _downtime
+        + "&allowPeerDownloadDataLoss=" + _allowPeerDownloadDataLoss + "&minAvailableReplicas=" + _minAvailableReplicas
+        + "&bestEfforts=" + _bestEfforts + "&minimizeDataMovement=" + _minimizeDataMovement.name()
+        + "&batchSizePerServer=" + _batchSizePerServer
+        + "&externalViewCheckIntervalInMs=" + _externalViewCheckIntervalInMs
+        + "&externalViewStabilizationTimeoutInMs=" + _externalViewStabilizationTimeoutInMs
+        + "&updateTargetTier=" + _updateTargetTier + "&heartbeatIntervalInMs=" + _heartbeatIntervalInMs
+        + "&heartbeatTimeoutInMs=" + _heartbeatTimeoutInMs + "&maxAttempts=" + _maxAttempts
+        + "&retryInitialDelayInMs=" + _retryInitialDelayInMs
+        + "&forceCommit=" + _forceCommit
+        + "&forceCommitBatchSize=" + _forceCommitBatchSize
+        + "&forceCommitBatchStatusCheckIntervalMs=" + _forceCommitBatchStatusCheckIntervalMs
+        + "&forceCommitBatchStatusCheckTimeoutMs=" + _forceCommitBatchStatusCheckTimeoutMs;
   }
 
   public static RebalanceConfig copy(RebalanceConfig cfg) {
@@ -303,6 +406,7 @@ public class RebalanceConfig {
     rc._includeConsuming = cfg._includeConsuming;
     rc._bootstrap = cfg._bootstrap;
     rc._downtime = cfg._downtime;
+    rc._allowPeerDownloadDataLoss = cfg._allowPeerDownloadDataLoss;
     rc._minAvailableReplicas = cfg._minAvailableReplicas;
     rc._bestEfforts = cfg._bestEfforts;
     rc._minimizeDataMovement = cfg._minimizeDataMovement;
@@ -314,6 +418,11 @@ public class RebalanceConfig {
     rc._heartbeatTimeoutInMs = cfg._heartbeatTimeoutInMs;
     rc._maxAttempts = cfg._maxAttempts;
     rc._retryInitialDelayInMs = cfg._retryInitialDelayInMs;
+    rc._diskUtilizationThreshold = cfg._diskUtilizationThreshold;
+    rc._forceCommit = cfg._forceCommit;
+    rc._forceCommitBatchSize = cfg._forceCommitBatchSize;
+    rc._forceCommitBatchStatusCheckIntervalMs = cfg._forceCommitBatchStatusCheckIntervalMs;
+    rc._forceCommitBatchStatusCheckTimeoutMs = cfg._forceCommitBatchStatusCheckTimeoutMs;
     return rc;
   }
 }

@@ -59,6 +59,8 @@ import org.apache.pinot.spi.env.PinotConfiguration;
 import org.apache.pinot.spi.utils.CommonConstants;
 import org.apache.pinot.spi.utils.JsonUtils;
 import org.apache.pinot.spi.utils.builder.TableNameBuilder;
+import org.slf4j.Logger;
+import org.slf4j.LoggerFactory;
 import org.testng.Assert;
 import org.testng.annotations.AfterClass;
 import org.testng.annotations.BeforeClass;
@@ -67,6 +69,7 @@ import org.testng.annotations.Test;
 
 
 public class ResourceBasedQueriesTest extends QueryRunnerTestBase {
+  private static final Logger LOGGER = LoggerFactory.getLogger(ResourceBasedQueriesTest.class);
   private static final ObjectMapper MAPPER = new ObjectMapper();
   private static final Pattern TABLE_NAME_REPLACE_PATTERN = Pattern.compile("\\{([\\w\\d]+)\\}");
   private static final String QUERY_TEST_RESOURCE_FOLDER = "queries";
@@ -265,9 +268,29 @@ public class ResourceBasedQueriesTest extends QueryRunnerTestBase {
   // TODO: name the test using testCaseName for testng reports
   @Test(dataProvider = "testResourceQueryTestCaseProviderInputOnly")
   public void testQueryTestCasesWithH2(String testCaseName, boolean isIgnored, String sql, String h2Sql, String expect,
-      boolean keepOutputRowOrder)
+      boolean keepOutputRowOrder, boolean ignoreV2Optimizer)
       throws Exception {
     // query pinot
+    runQuery(sql, expect, false).ifPresent(queryResult -> {
+      try {
+        compareRowEquals(queryResult.getResultTable(), queryH2(h2Sql), keepOutputRowOrder);
+      } catch (Exception e) {
+        Assert.fail(e.getMessage(), e);
+      }
+    });
+  }
+
+  // TODO: name the test using testCaseName for testng reports
+  @Test(dataProvider = "testResourceQueryTestCaseProviderInputOnly")
+  public void testQueryTestCasesWithH2WithNewOptimizer(String testCaseName, boolean isIgnored, String sql, String h2Sql,
+      String expect, boolean keepOutputRowOrder, boolean ignoreV2Optimizer)
+      throws Exception {
+    // query pinot
+    if (ignoreV2Optimizer) {
+      LOGGER.warn("Ignoring query for test-case ({}): with v2 optimizer: {}", testCaseName, sql);
+      return;
+    }
+    sql = String.format("SET usePhysicalOptimizer=true; %s", sql);
     runQuery(sql, expect, false).ifPresent(queryResult -> {
       try {
         compareRowEquals(queryResult.getResultTable(), queryH2(h2Sql), keepOutputRowOrder);
@@ -282,6 +305,24 @@ public class ResourceBasedQueriesTest extends QueryRunnerTestBase {
       List<Object[]> expectedRows, String expect, boolean keepOutputRowOrder)
       throws Exception {
     runQuery(sql, expect, false).ifPresent(
+        queryResult -> compareRowEquals(queryResult.getResultTable(), expectedRows, keepOutputRowOrder));
+  }
+
+  @Test(dataProvider = "testResourceQueryTestCaseProviderBoth")
+  public void testQueryTestCasesWithNewOptimizerWithOutput(String testCaseName, boolean isIgnored, String sql,
+      String h2Sql, List<Object[]> expectedRows, String expect, boolean keepOutputRowOrder)
+      throws Exception {
+    final String finalSql = String.format("SET usePhysicalOptimizer=true; %s", sql);
+    runQuery(finalSql, expect, false).ifPresent(
+        queryResult -> compareRowEquals(queryResult.getResultTable(), expectedRows, keepOutputRowOrder));
+  }
+
+  @Test(dataProvider = "testResourceQueryTestCaseProviderBoth")
+  public void testQueryTestCasesWithLiteModeWithOutput(String testCaseName, boolean isIgnored, String sql,
+      String h2Sql, List<Object[]> expectedRows, String expect, boolean keepOutputRowOrder)
+      throws Exception {
+    final String finalSql = String.format("SET usePhysicalOptimizer=true; SET useLiteMode=true; %s", sql);
+    runQuery(finalSql, expect, false).ifPresent(
         queryResult -> compareRowEquals(queryResult.getResultTable(), expectedRows, keepOutputRowOrder));
   }
 
@@ -356,7 +397,7 @@ public class ResourceBasedQueriesTest extends QueryRunnerTestBase {
       if (except == null) {
         throw e;
       } else {
-        Pattern pattern = Pattern.compile(except);
+        Pattern pattern = Pattern.compile(except, Pattern.DOTALL);
         Assert.assertTrue(pattern.matcher(e.getMessage()).matches(),
             String.format("Caught exception '%s', but it did not match the expected pattern '%s'.", e.getMessage(),
                 except));
@@ -471,7 +512,8 @@ public class ResourceBasedQueriesTest extends QueryRunnerTestBase {
           String h2Sql = queryCase._h2Sql != null ? replaceTableName(testCaseName, queryCase._h2Sql)
               : replaceTableName(testCaseName, queryCase._sql);
           Object[] testEntry = new Object[]{
-              testCaseName, queryCase._ignored, sql, h2Sql, queryCase._expectedException, queryCase._keepOutputRowOrder
+              testCaseName, queryCase._ignored, sql, h2Sql, queryCase._expectedException, queryCase._keepOutputRowOrder,
+              queryCase._ignoreV2Optimizer
           };
           providerContent.add(testEntry);
         }

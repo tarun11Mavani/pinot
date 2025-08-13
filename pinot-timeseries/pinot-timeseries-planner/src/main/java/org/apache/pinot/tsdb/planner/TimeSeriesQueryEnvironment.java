@@ -27,6 +27,7 @@ import java.util.List;
 import java.util.Map;
 import java.util.Set;
 import org.apache.pinot.common.config.provider.TableCache;
+import org.apache.pinot.core.routing.ImplicitHybridTableRouteProvider;
 import org.apache.pinot.core.routing.RoutingManager;
 import org.apache.pinot.spi.env.PinotConfiguration;
 import org.apache.pinot.spi.trace.RequestContext;
@@ -60,22 +61,32 @@ public class TimeSeriesQueryEnvironment {
         .split(",");
     LOGGER.info("Found {} configured time series languages. List: {}", languages.length, languages);
     for (String language : languages) {
-      String configPrefix = PinotTimeSeriesConfiguration.getLogicalPlannerConfigKey(language);
-      String klassName =
-          config.getProperty(PinotTimeSeriesConfiguration.getLogicalPlannerConfigKey(language));
-      Preconditions.checkNotNull(klassName, "Logical planner class not found for language: " + language);
-      // Create the planner with empty constructor
       try {
-        Class<?> klass = TimeSeriesQueryEnvironment.class.getClassLoader().loadClass(klassName);
-        Constructor<?> constructor = klass.getConstructor();
-        TimeSeriesLogicalPlanner planner = (TimeSeriesLogicalPlanner) constructor.newInstance();
-        planner.init(config.subset(configPrefix));
+        TimeSeriesLogicalPlanner planner = buildLogicalPlanner(language, config);
         _plannerMap.put(language, planner);
       } catch (Exception e) {
         throw new RuntimeException("Failed to instantiate logical planner for language: " + language, e);
       }
     }
-    TableScanVisitor.INSTANCE.init(_routingManager);
+    // TODO(timeseries): Add support for logical tables in the future.
+    TableScanVisitor.INSTANCE.init(_routingManager, new ImplicitHybridTableRouteProvider(), _tableCache);
+  }
+
+  public static TimeSeriesLogicalPlanner buildLogicalPlanner(String language, PinotConfiguration config)
+      throws RuntimeException {
+    String configPrefix = PinotTimeSeriesConfiguration.getLogicalPlannerConfigKey(language);
+    String klassName = config.getProperty(configPrefix);
+    Preconditions.checkNotNull(klassName, "Logical planner class not found for language: " + language);
+    // Create the planner with empty constructor
+    try {
+      Class<?> klass = TimeSeriesQueryEnvironment.class.getClassLoader().loadClass(klassName);
+      Constructor<?> constructor = klass.getConstructor();
+      TimeSeriesLogicalPlanner planner = (TimeSeriesLogicalPlanner) constructor.newInstance();
+      planner.init(config.subset(configPrefix));
+      return planner;
+    } catch (Exception e) {
+      throw new RuntimeException("Failed to instantiate logical planner for language: " + language, e);
+    }
   }
 
   public TimeSeriesLogicalPlanResult buildLogicalPlan(RangeTimeSeriesRequest request) {
@@ -87,6 +98,9 @@ public class TimeSeriesQueryEnvironment {
 
   public TimeSeriesDispatchablePlan buildPhysicalPlan(RangeTimeSeriesRequest timeSeriesRequest,
       RequestContext requestContext, TimeSeriesLogicalPlanResult logicalPlan) {
+    // Step-0: Add table type info to the logical plan.
+    logicalPlan = new TimeSeriesLogicalPlanResult(TableScanVisitor.INSTANCE.addTableTypeInfoToPlan(
+      logicalPlan.getPlanNode()), logicalPlan.getTimeBuckets());
     // Step-1: Assign segments to servers for each leaf node.
     TableScanVisitor.Context scanVisitorContext = TableScanVisitor.createContext(requestContext.getRequestId());
     TableScanVisitor.INSTANCE.assignSegmentsToPlan(logicalPlan.getPlanNode(), logicalPlan.getTimeBuckets(),
@@ -100,7 +114,8 @@ public class TimeSeriesQueryEnvironment {
         fragments, scanVisitorContext.getLeafIdToSegmentsByInstanceId());
     return new TimeSeriesDispatchablePlan(timeSeriesRequest.getLanguage(), serverInstances, fragments.get(0),
         fragments.subList(1, fragments.size()), logicalPlan.getTimeBuckets(),
-        scanVisitorContext.getLeafIdToSegmentsByInstanceId(), numServersForExchangePlanNode);
+        scanVisitorContext.getLeafIdToSegmentsByInstanceId(), numServersForExchangePlanNode,
+      scanVisitorContext.getTableNames());
   }
 
   private Map<String, Integer> computeNumServersForExchangePlanNode(List<TimeSeriesQueryServerInstance> serverInstances,

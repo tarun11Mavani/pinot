@@ -87,7 +87,7 @@ public class QueryLoggerTest {
     // Given:
     Mockito.when(_logRateLimiter.tryAcquire()).thenReturn(true);
     QueryLogger.QueryLogParams params = generateParams(false, false, 0, 456);
-    QueryLogger queryLogger = new QueryLogger(_logRateLimiter, 100, true, _logger, _droppedRateLimiter);
+    QueryLogger queryLogger = new QueryLogger(_logRateLimiter, 100, true, true, _logger, _droppedRateLimiter);
 
     // When:
     queryLogger.log(params);
@@ -104,6 +104,7 @@ public class QueryLoggerTest {
         + ":5/6/7/8/9/10/21,"
         + "consumingFreshnessTimeMs=11,"
         + "servers=12/13,"
+        + "groupsTrimmed=false,"
         + "groupLimitReached=false,"
         + "groupWarningLimitReached=false,"
         + "brokerReduceTimeMs=20,"
@@ -115,6 +116,8 @@ public class QueryLoggerTest {
         + "queryEngine=singleStage,"
         + "offlineMemAllocatedBytes(total/thread/resSer):0/0/0,"
         + "realtimeMemAllocatedBytes(total/thread/resSer):0/0/0,"
+        + "pools=[],"
+        + "rlsFiltersApplied=true,"
         + "query=SELECT * FROM foo");
     //@formatter:on
   }
@@ -124,7 +127,7 @@ public class QueryLoggerTest {
     // Given:
     Mockito.when(_logRateLimiter.tryAcquire()).thenReturn(true);
     QueryLogger.QueryLogParams params = generateParams(false, false, 0, 456);
-    QueryLogger queryLogger = new QueryLogger(_logRateLimiter, 100, false, _logger, _droppedRateLimiter);
+    QueryLogger queryLogger = new QueryLogger(_logRateLimiter, 100, false, true, _logger, _droppedRateLimiter);
 
     // When:
     queryLogger.log(params);
@@ -140,7 +143,7 @@ public class QueryLoggerTest {
     // Given:
     Mockito.when(_logRateLimiter.tryAcquire()).thenReturn(false);
     QueryLogger.QueryLogParams params = generateParams(false, false, 0, 456);
-    QueryLogger queryLogger = new QueryLogger(_logRateLimiter, 100, true, _logger, _droppedRateLimiter);
+    QueryLogger queryLogger = new QueryLogger(_logRateLimiter, 100, true, true, _logger, _droppedRateLimiter);
 
     // When:
     queryLogger.log(params);
@@ -154,7 +157,7 @@ public class QueryLoggerTest {
     // Given:
     Mockito.when(_logRateLimiter.tryAcquire()).thenReturn(false);
     QueryLogger.QueryLogParams params = generateParams(true, true, 0, 456);
-    QueryLogger queryLogger = new QueryLogger(_logRateLimiter, 100, true, _logger, _droppedRateLimiter);
+    QueryLogger queryLogger = new QueryLogger(_logRateLimiter, 100, true, true, _logger, _droppedRateLimiter);
 
     // When:
     queryLogger.log(params);
@@ -168,7 +171,7 @@ public class QueryLoggerTest {
     // Given:
     Mockito.when(_logRateLimiter.tryAcquire()).thenReturn(false);
     QueryLogger.QueryLogParams params = generateParams(false, false, 1, 456);
-    QueryLogger queryLogger = new QueryLogger(_logRateLimiter, 100, true, _logger, _droppedRateLimiter);
+    QueryLogger queryLogger = new QueryLogger(_logRateLimiter, 100, true, true, _logger, _droppedRateLimiter);
 
     // When:
     queryLogger.log(params);
@@ -182,7 +185,7 @@ public class QueryLoggerTest {
     // Given:
     Mockito.when(_logRateLimiter.tryAcquire()).thenReturn(false);
     QueryLogger.QueryLogParams params = generateParams(false, false, 0, 1456);
-    QueryLogger queryLogger = new QueryLogger(_logRateLimiter, 100, true, _logger, _droppedRateLimiter);
+    QueryLogger queryLogger = new QueryLogger(_logRateLimiter, 100, true, true, _logger, _droppedRateLimiter);
 
     // When:
     queryLogger.log(params);
@@ -216,7 +219,7 @@ public class QueryLoggerTest {
     }).thenReturn(true);
 
     QueryLogger.QueryLogParams params = generateParams(false, false, 0, 456);
-    QueryLogger queryLogger = new QueryLogger(_logRateLimiter, 100, true, _logger, _droppedRateLimiter);
+    QueryLogger queryLogger = new QueryLogger(_logRateLimiter, 100, true, true, _logger, _droppedRateLimiter);
 
     ExecutorService executorService = Executors.newFixedThreadPool(4);
 
@@ -277,6 +280,7 @@ public class QueryLoggerTest {
     response.setRealtimeSystemActivitiesCpuTimeNs(18);
     response.setRealtimeResponseSerializationCpuTimeNs(19);
     response.setBrokerReduceTimeMs(20);
+    response.setRLSFiltersApplied(true);
 
     RequesterIdentity identity = new RequesterIdentity() {
       @Override

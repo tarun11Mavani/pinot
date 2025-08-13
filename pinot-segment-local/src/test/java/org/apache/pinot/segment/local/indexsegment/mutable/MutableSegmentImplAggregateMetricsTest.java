@@ -36,6 +36,8 @@ import org.apache.pinot.spi.stream.StreamMessageMetadata;
 import org.testng.Assert;
 import org.testng.annotations.Test;
 
+import static org.mockito.Mockito.mock;
+
 
 public class MutableSegmentImplAggregateMetricsTest {
   private static final String DIMENSION_1 = "dim1";
@@ -46,6 +48,7 @@ public class MutableSegmentImplAggregateMetricsTest {
   private static final String TIME_COLUMN2 = "time2";
   private static final String KEY_SEPARATOR = "\t\t";
   private static final int NUM_ROWS = 10001;
+  private static final StreamMessageMetadata METADATA = mock(StreamMessageMetadata.class);
 
   @Test
   public void testAggregateMetrics()
@@ -99,22 +102,21 @@ public class MutableSegmentImplAggregateMetricsTest {
 
     Map<String, Long> expectedValues = new HashMap<>();
     Map<String, Float> expectedValuesFloat = new HashMap<>();
-    StreamMessageMetadata defaultMetadata = new StreamMessageMetadata(System.currentTimeMillis(), new GenericRow());
     for (int i = 0; i < NUM_ROWS; i++) {
       int hoursSinceEpoch = random.nextInt(10);
       int daysSinceEpoch = random.nextInt(5);
       GenericRow row = new GenericRow();
-      row.putField(DIMENSION_1, random.nextInt(10));
-      row.putField(DIMENSION_2, stringValues[random.nextInt(stringValues.length)]);
-      row.putField(TIME_COLUMN1, daysSinceEpoch);
-      row.putField(TIME_COLUMN2, hoursSinceEpoch);
+      row.putValue(DIMENSION_1, random.nextInt(10));
+      row.putValue(DIMENSION_2, stringValues[random.nextInt(stringValues.length)]);
+      row.putValue(TIME_COLUMN1, daysSinceEpoch);
+      row.putValue(TIME_COLUMN2, hoursSinceEpoch);
       // Generate random int to prevent overflow
       long metricValue = random.nextInt();
-      row.putField(METRIC, metricValue);
+      row.putValue(METRIC, metricValue);
       float metricValueFloat = floatValues[random.nextInt(floatValues.length)];
-      row.putField(METRIC_2, metricValueFloat);
+      row.putValue(METRIC_2, metricValueFloat);
 
-      mutableSegmentImpl.index(row, defaultMetadata);
+      mutableSegmentImpl.index(row, METADATA);
 
       // Update expected values
       String key = buildKey(row);

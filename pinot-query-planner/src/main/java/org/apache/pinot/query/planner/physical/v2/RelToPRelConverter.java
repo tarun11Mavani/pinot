@@ -23,7 +23,9 @@ import java.util.ArrayList;
 import java.util.List;
 import java.util.function.Supplier;
 import org.apache.calcite.rel.RelNode;
+import org.apache.calcite.rel.core.AsofJoin;
 import org.apache.calcite.rel.core.Filter;
+import org.apache.calcite.rel.core.Intersect;
 import org.apache.calcite.rel.core.Join;
 import org.apache.calcite.rel.core.Minus;
 import org.apache.calcite.rel.core.Project;
@@ -33,12 +35,16 @@ import org.apache.calcite.rel.core.Union;
 import org.apache.calcite.rel.core.Values;
 import org.apache.calcite.rel.core.Window;
 import org.apache.pinot.calcite.rel.logical.PinotLogicalAggregate;
+import org.apache.pinot.calcite.rel.rules.PinotRuleUtils;
 import org.apache.pinot.calcite.rel.traits.TraitAssignment;
 import org.apache.pinot.common.config.provider.TableCache;
 import org.apache.pinot.query.context.PhysicalPlannerContext;
 import org.apache.pinot.query.planner.physical.v2.nodes.PhysicalAggregate;
+import org.apache.pinot.query.planner.physical.v2.nodes.PhysicalAsOfJoin;
 import org.apache.pinot.query.planner.physical.v2.nodes.PhysicalFilter;
+import org.apache.pinot.query.planner.physical.v2.nodes.PhysicalIntersect;
 import org.apache.pinot.query.planner.physical.v2.nodes.PhysicalJoin;
+import org.apache.pinot.query.planner.physical.v2.nodes.PhysicalMinus;
 import org.apache.pinot.query.planner.physical.v2.nodes.PhysicalProject;
 import org.apache.pinot.query.planner.physical.v2.nodes.PhysicalSort;
 import org.apache.pinot.query.planner.physical.v2.nodes.PhysicalTableScan;
@@ -97,8 +103,14 @@ public class RelToPRelConverter {
       // Use AggType.DIRECT here because at this point aggregation split hasn't happened yet.
       AggregateNode.AggType aggType = AggregateNode.AggType.DIRECT;
       return new PhysicalAggregate(aggRel.getCluster(), aggRel.getTraitSet(), aggRel.getHints(), aggRel.getGroupSet(),
-          aggRel.getGroupSets(), aggRel.getAggCallList(), nodeIdGenerator.get(), inputs.get(0), null, false,
-          aggType, aggRel.isLeafReturnFinalResult(), aggRel.getCollations(), aggRel.getLimit());
+          aggRel.getGroupSets(), aggRel.getAggCallList(), nodeIdGenerator.get(), inputs.get(0), null, false, aggType,
+          aggRel.isLeafReturnFinalResult(), aggRel.getCollations(), aggRel.getLimit());
+    } else if (relNode instanceof AsofJoin) {
+      Preconditions.checkState(relNode.getInputs().size() == 2, "Expected exactly 2 inputs to join. Found: %s", inputs);
+      AsofJoin asofJoin = (AsofJoin) relNode;
+      return new PhysicalAsOfJoin(asofJoin.getCluster(), asofJoin.getTraitSet(), asofJoin.getHints(),
+          asofJoin.getCondition(), asofJoin.getMatchCondition(), asofJoin.getVariablesSet(), asofJoin.getJoinType(),
+          nodeIdGenerator.get(), inputs.get(0), inputs.get(1), null);
     } else if (relNode instanceof Join) {
       Preconditions.checkState(relNode.getInputs().size() == 2, "Expected exactly 2 inputs to join. Found: %s", inputs);
       Join join = (Join) relNode;
@@ -110,8 +122,12 @@ public class RelToPRelConverter {
           nodeIdGenerator.get(), null);
     } else if (relNode instanceof Minus) {
       Minus minus = (Minus) relNode;
-      return new PhysicalUnion(minus.getCluster(), minus.getTraitSet(), minus.getHints(), minus.all, inputs,
+      return new PhysicalMinus(minus.getCluster(), minus.getTraitSet(), minus.getHints(), inputs, minus.all,
           nodeIdGenerator.get(), null);
+    } else if (relNode instanceof Intersect) {
+      Intersect intersect = (Intersect) relNode;
+      return new PhysicalIntersect(intersect.getCluster(), intersect.getTraitSet(), intersect.getHints(), inputs,
+          intersect.all, nodeIdGenerator.get(), null);
     } else if (relNode instanceof Sort) {
       Preconditions.checkState(inputs.size() == 1, "Expected exactly 1 input of sort. Found: %s", inputs);
       Sort sort = (Sort) relNode;
@@ -125,8 +141,10 @@ public class RelToPRelConverter {
     } else if (relNode instanceof Window) {
       Preconditions.checkState(inputs.size() == 1, "Expected exactly 1 input of window. Found: %s", inputs);
       Window window = (Window) relNode;
+      PinotRuleUtils.WindowUtils.validateWindows(window);
+      Window.Group updatedGroup = PinotRuleUtils.WindowUtils.updateLiteralArgumentsInWindowGroup(window);
       return new PhysicalWindow(window.getCluster(), window.getTraitSet(), window.getHints(), window.getConstants(),
-          window.getRowType(), window.groups, nodeIdGenerator.get(), inputs.get(0), null);
+          window.getRowType(), List.of(updatedGroup), nodeIdGenerator.get(), inputs.get(0), null);
     }
     throw new IllegalStateException("Unexpected relNode type: " + relNode.getClass().getName());
   }

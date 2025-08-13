@@ -42,7 +42,6 @@ import org.apache.pinot.broker.api.AccessControl;
 import org.apache.pinot.broker.broker.AccessControlFactory;
 import org.apache.pinot.broker.querylog.QueryLogger;
 import org.apache.pinot.broker.queryquota.QueryQuotaManager;
-import org.apache.pinot.broker.routing.BrokerRoutingManager;
 import org.apache.pinot.common.config.provider.TableCache;
 import org.apache.pinot.common.metrics.BrokerMeter;
 import org.apache.pinot.common.metrics.BrokerMetrics;
@@ -53,6 +52,8 @@ import org.apache.pinot.common.response.broker.QueryProcessingException;
 import org.apache.pinot.common.utils.request.RequestUtils;
 import org.apache.pinot.core.auth.Actions;
 import org.apache.pinot.core.auth.TargetType;
+import org.apache.pinot.core.routing.RoutingManager;
+import org.apache.pinot.spi.accounting.ThreadResourceUsageAccountant;
 import org.apache.pinot.spi.auth.AuthorizationResult;
 import org.apache.pinot.spi.auth.TableAuthorizationResult;
 import org.apache.pinot.spi.auth.broker.RequesterIdentity;
@@ -76,7 +77,7 @@ public abstract class BaseBrokerRequestHandler implements BrokerRequestHandler {
   private static final Logger LOGGER = LoggerFactory.getLogger(BaseBrokerRequestHandler.class);
   protected final PinotConfiguration _config;
   protected final String _brokerId;
-  protected final BrokerRoutingManager _routingManager;
+  protected final RoutingManager _routingManager;
   protected final AccessControlFactory _accessControlFactory;
   protected final QueryQuotaManager _queryQuotaManager;
   protected final TableCache _tableCache;
@@ -85,9 +86,12 @@ public abstract class BaseBrokerRequestHandler implements BrokerRequestHandler {
   protected final Set<String> _trackedHeaders;
   protected final BrokerRequestIdGenerator _requestIdGenerator;
   protected final long _brokerTimeoutMs;
+  protected final boolean _enableRowColumnLevelAuth;
   protected final QueryLogger _queryLogger;
   @Nullable
   protected final String _enableNullHandling;
+  protected final ThreadResourceUsageAccountant _resourceUsageAccountant;
+
   /**
    * Maps broker-generated query id to the query string.
    */
@@ -97,8 +101,9 @@ public abstract class BaseBrokerRequestHandler implements BrokerRequestHandler {
    */
   protected final Map<Long, String> _clientQueryIds;
 
-  public BaseBrokerRequestHandler(PinotConfiguration config, String brokerId, BrokerRoutingManager routingManager,
-      AccessControlFactory accessControlFactory, QueryQuotaManager queryQuotaManager, TableCache tableCache) {
+  public BaseBrokerRequestHandler(PinotConfiguration config, String brokerId, RoutingManager routingManager,
+      AccessControlFactory accessControlFactory, QueryQuotaManager queryQuotaManager, TableCache tableCache,
+      ThreadResourceUsageAccountant resourceUsageAccountant) {
     _config = config;
     _brokerId = brokerId;
     _routingManager = routingManager;
@@ -110,6 +115,8 @@ public abstract class BaseBrokerRequestHandler implements BrokerRequestHandler {
     _trackedHeaders = BrokerQueryEventListenerFactory.getTrackedHeaders();
     _requestIdGenerator = new BrokerRequestIdGenerator(brokerId);
     _brokerTimeoutMs = config.getProperty(Broker.CONFIG_OF_BROKER_TIMEOUT_MS, Broker.DEFAULT_BROKER_TIMEOUT_MS);
+    _enableRowColumnLevelAuth = config.getProperty(Broker.CONFIG_OF_BROKER_ENABLE_ROW_COLUMN_LEVEL_AUTH,
+        Broker.DEFAULT_BROKER_ENABLE_ROW_COLUMN_LEVEL_AUTH);
     _queryLogger = new QueryLogger(config);
     _enableNullHandling = config.getProperty(Broker.CONFIG_OF_BROKER_QUERY_ENABLE_NULL_HANDLING);
 
@@ -122,13 +129,14 @@ public abstract class BaseBrokerRequestHandler implements BrokerRequestHandler {
       _queriesById = null;
       _clientQueryIds = null;
     }
+    _resourceUsageAccountant = resourceUsageAccountant;
   }
 
   @Override
   public BrokerResponse handleRequest(JsonNode request, @Nullable SqlNodeAndOptions sqlNodeAndOptions,
       @Nullable RequesterIdentity requesterIdentity, RequestContext requestContext, @Nullable HttpHeaders httpHeaders)
       throws Exception {
-    try (QueryThreadContext.CloseableContext closeMe = QueryThreadContext.open()) {
+    try (QueryThreadContext.CloseableContext closeMe = QueryThreadContext.open(_brokerId)) {
       QueryThreadContext.setStartTimeMs(requestContext.getRequestArrivalTimeMillis());
       requestContext.setBrokerId(_brokerId);
       QueryThreadContext.setBrokerId(_brokerId);
@@ -299,6 +307,7 @@ public abstract class BaseBrokerRequestHandler implements BrokerRequestHandler {
     }
     statistics.setProcessingExceptions(processingExceptions);
     statistics.setNumExceptions(numExceptions);
+    statistics.setGroupsTrimmed(response.isGroupsTrimmed());
     statistics.setNumGroupsLimitReached(response.isNumGroupsLimitReached());
     statistics.setProcessingTimeMillis(response.getTimeUsedMs());
     statistics.setNumDocsScanned(response.getNumDocsScanned());
@@ -385,6 +394,12 @@ public abstract class BaseBrokerRequestHandler implements BrokerRequestHandler {
         ? sqlNodeAndOptions.getOptions().get(Broker.Request.QueryOptionKey.CLIENT_QUERY_ID) : null;
   }
 
+  /**
+   * Called when a query starts
+   * TODO: This method was created to keep track of running queries for cancellation, but it is useful for other uses.
+   *   But right now the semantics are not clear. For example, while MSE calls this method once, SSE calls it once per
+   *   query AND subquery, which means this method is called multiple times for the same query.
+   */
   protected void onQueryStart(long requestId, String clientRequestId, String query, Object... extras) {
     if (isQueryCancellationEnabled()) {
       _queriesById.put(requestId, query);

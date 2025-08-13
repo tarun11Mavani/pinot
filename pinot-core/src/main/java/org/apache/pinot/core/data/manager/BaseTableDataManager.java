@@ -44,7 +44,7 @@ import java.util.concurrent.atomic.AtomicReference;
 import java.util.concurrent.locks.Lock;
 import javax.annotation.Nullable;
 import javax.annotation.concurrent.ThreadSafe;
-import org.apache.commons.collections.CollectionUtils;
+import org.apache.commons.collections4.CollectionUtils;
 import org.apache.commons.io.FileUtils;
 import org.apache.commons.lang3.StringUtils;
 import org.apache.commons.lang3.tuple.Pair;
@@ -57,6 +57,7 @@ import org.apache.pinot.common.metadata.segment.SegmentZKMetadata;
 import org.apache.pinot.common.metrics.ServerGauge;
 import org.apache.pinot.common.metrics.ServerMeter;
 import org.apache.pinot.common.metrics.ServerMetrics;
+import org.apache.pinot.common.metrics.ServerTimer;
 import org.apache.pinot.common.restlet.resources.SegmentErrorInfo;
 import org.apache.pinot.common.utils.TarCompressionUtils;
 import org.apache.pinot.common.utils.config.TierConfigUtils;
@@ -72,6 +73,7 @@ import org.apache.pinot.segment.local.indexsegment.immutable.ImmutableSegmentLoa
 import org.apache.pinot.segment.local.segment.index.dictionary.DictionaryIndexType;
 import org.apache.pinot.segment.local.segment.index.loader.IndexLoadingConfig;
 import org.apache.pinot.segment.local.segment.index.loader.LoaderUtils;
+import org.apache.pinot.segment.local.segment.index.loader.invertedindex.MultiColumnTextIndexHandler;
 import org.apache.pinot.segment.local.startree.StarTreeBuilderUtils;
 import org.apache.pinot.segment.local.startree.v2.builder.StarTreeV2BuilderConfig;
 import org.apache.pinot.segment.local.utils.SegmentDownloadThrottler;
@@ -88,6 +90,7 @@ import org.apache.pinot.segment.spi.index.FieldIndexConfigs;
 import org.apache.pinot.segment.spi.index.FieldIndexConfigsUtil;
 import org.apache.pinot.segment.spi.index.StandardIndexes;
 import org.apache.pinot.segment.spi.index.metadata.SegmentMetadataImpl;
+import org.apache.pinot.segment.spi.index.multicolumntext.MultiColumnTextMetadata;
 import org.apache.pinot.segment.spi.index.startree.StarTreeV2;
 import org.apache.pinot.segment.spi.loader.SegmentDirectoryLoader;
 import org.apache.pinot.segment.spi.loader.SegmentDirectoryLoaderContext;
@@ -97,6 +100,7 @@ import org.apache.pinot.segment.spi.store.SegmentDirectory;
 import org.apache.pinot.spi.auth.AuthProvider;
 import org.apache.pinot.spi.config.instance.InstanceDataManagerConfig;
 import org.apache.pinot.spi.config.table.ColumnPartitionConfig;
+import org.apache.pinot.spi.config.table.MultiColumnTextIndexConfig;
 import org.apache.pinot.spi.config.table.SegmentPartitionConfig;
 import org.apache.pinot.spi.config.table.StarTreeIndexConfig;
 import org.apache.pinot.spi.config.table.TableConfig;
@@ -150,6 +154,7 @@ public abstract class BaseTableDataManager implements TableDataManager {
   protected volatile Pair<TableConfig, Schema> _cachedTableConfigAndSchema;
 
   protected volatile boolean _shutDown;
+  protected volatile boolean _isDeleted;
 
   @Override
   public void init(InstanceDataManagerConfig instanceDataManagerConfig, HelixManager helixManager,
@@ -213,18 +218,17 @@ public abstract class BaseTableDataManager implements TableDataManager {
           _streamSegmentDownloadUntarRateLimitBytesPerSec);
     }
     int maxParallelSegmentDownloads = instanceDataManagerConfig.getMaxParallelSegmentDownloads();
+    _numSegmentsAcquiredDownloadSemaphore = new AtomicInteger(0);
+    _serverMetrics.setValueOfTableGauge(_tableNameWithType, ServerGauge.SEGMENT_TABLE_DOWNLOAD_COUNT, 0);
     if (maxParallelSegmentDownloads > 0) {
       LOGGER.info(
           "Construct segment download semaphore for Table: {}. Maximum number of parallel segment downloads: {}",
           _tableNameWithType, maxParallelSegmentDownloads);
       _segmentDownloadSemaphore = new Semaphore(maxParallelSegmentDownloads, true);
-      _numSegmentsAcquiredDownloadSemaphore = new AtomicInteger(0);
       _serverMetrics.setValueOfTableGauge(_tableNameWithType, ServerGauge.SEGMENT_TABLE_DOWNLOAD_THROTTLE_THRESHOLD,
           maxParallelSegmentDownloads);
-      _serverMetrics.setValueOfTableGauge(_tableNameWithType, ServerGauge.SEGMENT_TABLE_DOWNLOAD_COUNT, 0);
     } else {
       _segmentDownloadSemaphore = null;
-      _numSegmentsAcquiredDownloadSemaphore = null;
     }
     _logger = LoggerFactory.getLogger(_tableNameWithType + "-" + getClass().getSimpleName());
 
@@ -690,6 +694,16 @@ public abstract class BaseTableDataManager implements TableDataManager {
   }
 
   @Override
+  public boolean isDeleted() {
+    return _isDeleted;
+  }
+
+  @Override
+  public void setDeleted(boolean deleted) {
+    _isDeleted = deleted;
+  }
+
+  @Override
   public void addSegmentError(String segmentName, SegmentErrorInfo segmentErrorInfo) {
     if (_errorCache != null) {
       _errorCache.put(Pair.of(_tableNameWithType, segmentName), segmentErrorInfo);
@@ -943,8 +957,6 @@ public abstract class BaseTableDataManager implements TableDataManager {
       _logger.info("Acquiring table level segment download semaphore for segment: {}, queue-length: {} ", segmentName,
           _segmentDownloadSemaphore.getQueueLength());
       _segmentDownloadSemaphore.acquire();
-      _serverMetrics.setValueOfTableGauge(_tableNameWithType, ServerGauge.SEGMENT_TABLE_DOWNLOAD_COUNT,
-          _numSegmentsAcquiredDownloadSemaphore.incrementAndGet());
       _logger.info("Acquired table level segment download semaphore for segment: {} (lock-time={}ms, queue-length={}).",
           segmentName, System.currentTimeMillis() - startTime, _segmentDownloadSemaphore.getQueueLength());
     }
@@ -959,6 +971,9 @@ public abstract class BaseTableDataManager implements TableDataManager {
                 + "queue-length={}).", segmentName, System.currentTimeMillis() - startTime,
             segmentDownloadThrottler.getQueueLength());
       }
+      _serverMetrics.setValueOfTableGauge(_tableNameWithType, ServerGauge.SEGMENT_TABLE_DOWNLOAD_COUNT,
+          _numSegmentsAcquiredDownloadSemaphore.incrementAndGet());
+      long downloadStartTime = System.currentTimeMillis();
       try {
         File untarredSegmentDir;
         if (_isStreamSegmentDownloadUntar && zkMetadata.getCrypterName() == null) {
@@ -991,14 +1006,17 @@ public abstract class BaseTableDataManager implements TableDataManager {
         if (_segmentOperationsThrottler != null) {
           _segmentOperationsThrottler.getSegmentDownloadThrottler().release();
         }
+        long downloadDuration = System.currentTimeMillis() - downloadStartTime;
+        _serverMetrics.addTimedTableValue(_tableNameWithType, ServerTimer.SEGMENT_DOWNLOAD_FROM_DEEP_STORE_TIME_MS,
+            downloadDuration, TimeUnit.MILLISECONDS);
         FileUtils.deleteQuietly(tempRootDir);
       }
     } finally {
       if (_segmentDownloadSemaphore != null) {
         _segmentDownloadSemaphore.release();
-        _serverMetrics.setValueOfTableGauge(_tableNameWithType, ServerGauge.SEGMENT_TABLE_DOWNLOAD_COUNT,
-            _numSegmentsAcquiredDownloadSemaphore.decrementAndGet());
       }
+      _serverMetrics.setValueOfTableGauge(_tableNameWithType, ServerGauge.SEGMENT_TABLE_DOWNLOAD_COUNT,
+          _numSegmentsAcquiredDownloadSemaphore.decrementAndGet());
     }
   }
 
@@ -1020,6 +1038,7 @@ public abstract class BaseTableDataManager implements TableDataManager {
               + "(lock-time={}ms, queue-length={}).", segmentName, System.currentTimeMillis() - startTime,
           segmentDownloadThrottler.getQueueLength());
     }
+    long downloadStartTime = System.currentTimeMillis();
     try {
       SegmentFetcherFactory.fetchAndDecryptSegmentToLocal(segmentName, _peerDownloadScheme, () -> {
         List<URI> peerServerURIs =
@@ -1040,6 +1059,9 @@ public abstract class BaseTableDataManager implements TableDataManager {
       if (_segmentOperationsThrottler != null) {
         _segmentOperationsThrottler.getSegmentDownloadThrottler().release();
       }
+      long downloadDuration = System.currentTimeMillis() - downloadStartTime;
+      _serverMetrics.addTimedTableValue(_tableNameWithType, ServerTimer.SEGMENT_DOWNLOAD_FROM_PEERS_TIME_MS,
+          downloadDuration, TimeUnit.MILLISECONDS);
       FileUtils.deleteQuietly(tempRootDir);
     }
   }
@@ -1344,6 +1366,13 @@ public abstract class BaseTableDataManager implements TableDataManager {
     Set<String> h3Indexes = FieldIndexConfigsUtil.columnsWithIndexEnabled(StandardIndexes.h3(), indexConfigsMap);
     Set<String> fstIndexes = FieldIndexConfigsUtil.columnsWithIndexEnabled(StandardIndexes.fst(), indexConfigsMap);
     Set<String> textIndexes = FieldIndexConfigsUtil.columnsWithIndexEnabled(StandardIndexes.text(), indexConfigsMap);
+
+    MultiColumnTextIndexConfig multiColumnTextIndex = tableConfig.getIndexingConfig().getMultiColumnTextIndexConfig();
+    MultiColumnTextMetadata multiColumnTextMeta = segmentMetadata.getMultiColumnTextMetadata();
+    if (MultiColumnTextIndexHandler.shouldModifyMultiColTextIndex(multiColumnTextIndex, multiColumnTextMeta)) {
+      return new StaleSegment(segmentName, true, "multi-column text index");
+    }
+
     List<StarTreeIndexConfig> starTreeIndexConfigsFromTableConfig =
         tableConfig.getIndexingConfig().getStarTreeIndexConfigs();
 
@@ -1372,10 +1401,9 @@ public abstract class BaseTableDataManager implements TableDataManager {
 
     for (String columnName : segmentPhysicalColumns) {
       ColumnMetadata columnMetadata = segmentMetadata.getColumnMetadataFor(columnName);
-      FieldSpec fieldSpecInSchema = schema.getFieldSpecFor(columnName);
       DataSource source = segment.getDataSource(columnName);
-      Preconditions.checkNotNull(columnMetadata);
-      Preconditions.checkNotNull(source);
+      assert columnMetadata != null && source != null;
+      FieldSpec fieldSpecInSchema = schema.getFieldSpecFor(columnName);
 
       // Column is deleted
       if (fieldSpecInSchema == null) {

@@ -177,6 +177,14 @@
       <groupId>org.apache.pinot</groupId>
       <artifactId>pinot-segment-writer-file-based</artifactId>
     </dependency>
+    <dependency>
+      <groupId>org.apache.pinot</groupId>
+      <artifactId>pinot-timeseries-m3ql</artifactId>
+    </dependency>
+    <dependency>
+      <groupId>org.apache.pinot</groupId>
+      <artifactId>pinot-timeseries-planner</artifactId>
+    </dependency>
 
     <dependency>
       <groupId>org.apache.pinot</groupId>
@@ -212,6 +220,11 @@
       <groupId>org.apache.pinot</groupId>
       <artifactId>pinot-integration-test-base</artifactId>
       <type>test-jar</type>
+      <scope>test</scope>
+    </dependency>
+    <dependency>
+      <groupId>org.apache.pinot</groupId>
+      <artifactId>pinot-udf-test</artifactId>
       <scope>test</scope>
     </dependency>
 

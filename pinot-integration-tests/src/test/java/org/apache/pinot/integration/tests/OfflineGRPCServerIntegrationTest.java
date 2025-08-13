@@ -45,6 +45,7 @@ import org.apache.pinot.core.query.request.context.utils.QueryContextConverterUt
 import org.apache.pinot.core.transport.ServerRoutingInstance;
 import org.apache.pinot.spi.config.table.TableConfig;
 import org.apache.pinot.spi.data.Schema;
+import org.apache.pinot.spi.trace.Tracing;
 import org.apache.pinot.spi.utils.CommonConstants;
 import org.apache.pinot.sql.parsers.CalciteSqlCompiler;
 import org.apache.pinot.util.TestUtils;
@@ -201,7 +202,8 @@ public class OfflineGRPCServerIntegrationTest extends BaseClusterIntegrationTest
         // compare result dataTable against nonStreamingResultDataTable
         // Process server response.
         QueryContext queryContext = QueryContextConverterUtils.getQueryContext(sql);
-        DataTableReducer reducer = ResultReducerFactory.getResultReducer(queryContext);
+        DataTableReducer reducer =
+            ResultReducerFactory.getResultReducer(queryContext, new Tracing.DefaultThreadResourceUsageAccountant());
         BrokerResponseNative streamingBrokerResponse = new BrokerResponseNative();
         reducer.reduceAndSetResults("mytable_OFFLINE", cachedDataSchema, dataTableMap, streamingBrokerResponse,
             DATATABLE_REDUCER_CONTEXT, mock(BrokerMetrics.class));
@@ -244,7 +246,7 @@ public class OfflineGRPCServerIntegrationTest extends BaseClusterIntegrationTest
       if (responseType.equals(CommonConstants.Query.Response.ResponseType.DATA)) {
         // verify the returned data table metadata only contains "responseSerializationCpuTimeNs".
         Map<String, String> metadata = dataTable.getMetadata();
-        assertTrue(metadata.size() == 1 && metadata.containsKey(MetadataKey.RESPONSE_SER_CPU_TIME_NS.getName()));
+        assertTrue(metadata.containsKey(MetadataKey.RESPONSE_SER_CPU_TIME_NS.getName()));
         assertNotNull(dataTable.getDataSchema());
         numTotalDocs += dataTable.getNumberOfRows();
       } else {

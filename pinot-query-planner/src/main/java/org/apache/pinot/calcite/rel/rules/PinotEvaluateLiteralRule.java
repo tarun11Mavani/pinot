@@ -59,10 +59,14 @@ import org.apache.pinot.sql.parsers.SqlCompilationException;
 public class PinotEvaluateLiteralRule {
 
   public static class Project extends RelOptRule {
-    public static final Project INSTANCE = new Project(PinotRuleUtils.PINOT_REL_FACTORY);
+    public static final Project INSTANCE = new Project(PinotRuleUtils.PINOT_REL_FACTORY, null);
 
-    private Project(RelBuilderFactory factory) {
-      super(operand(LogicalProject.class, any()), factory, null);
+    public static Project instanceWithDescription(String description) {
+      return new Project(PinotRuleUtils.PINOT_REL_FACTORY, description);
+    }
+
+    private Project(RelBuilderFactory factory, @Nullable String description) {
+      super(operand(LogicalProject.class, any()), factory, description);
     }
 
     @Override
@@ -103,10 +107,14 @@ public class PinotEvaluateLiteralRule {
   }
 
   public static class Filter extends RelOptRule {
-    public static final Filter INSTANCE = new Filter(PinotRuleUtils.PINOT_REL_FACTORY);
+    public static final Filter INSTANCE = new Filter(PinotRuleUtils.PINOT_REL_FACTORY, null);
 
-    private Filter(RelBuilderFactory factory) {
-      super(operand(LogicalFilter.class, any()), factory, null);
+    public static Filter instanceWithDescription(String description) {
+      return new Filter(PinotRuleUtils.PINOT_REL_FACTORY, description);
+    }
+
+    private Filter(RelBuilderFactory factory, @Nullable String description) {
+      super(operand(LogicalFilter.class, any()), factory, description);
     }
 
     @Override
@@ -153,15 +161,14 @@ public class PinotEvaluateLiteralRule {
     assert operands.stream().allMatch(
         operand -> operand instanceof RexLiteral || (operand instanceof RexCall && ((RexCall) operand).getOperands()
             .stream().allMatch(op -> op instanceof RexLiteral)));
+
     int numArguments = operands.size();
     ColumnDataType[] argumentTypes = new ColumnDataType[numArguments];
     Object[] arguments = new Object[numArguments];
     for (int i = 0; i < numArguments; i++) {
       RexNode rexNode = operands.get(i);
       RexLiteral rexLiteral;
-      if (rexNode instanceof RexCall && ((RexCall) rexNode).getOperator().getKind() == SqlKind.CAST) {
-        rexLiteral = (RexLiteral) ((RexCall) rexNode).getOperands().get(0);
-      } else if (rexNode instanceof RexLiteral) {
+      if (rexNode instanceof RexLiteral) {
         rexLiteral = (RexLiteral) rexNode;
       } else {
         // Function operands cannot be evaluated, skip
@@ -169,6 +176,14 @@ public class PinotEvaluateLiteralRule {
       }
       argumentTypes[i] = RelToPlanNodeConverter.convertToColumnDataType(rexLiteral.getType());
       arguments[i] = getLiteralValue(rexLiteral);
+    }
+
+    if (rexCall.getKind() == SqlKind.CAST) {
+      // Handle separately because the CAST operator only has one operand (the value to be cast) and the type to be cast
+      // to is determined by the operator's return type. Pinot's CAST function implementation requires two arguments:
+      // the value to be cast and the target type.
+      argumentTypes = new ColumnDataType[]{argumentTypes[0], ColumnDataType.STRING};
+      arguments = new Object[]{arguments[0], RelToPlanNodeConverter.convertToColumnDataType(rexCall.getType()).name()};
     }
     String canonicalName = FunctionRegistry.canonicalize(PinotRuleUtils.extractFunctionName(rexCall));
     FunctionInfo functionInfo = FunctionRegistry.lookupFunctionInfo(canonicalName, argumentTypes);

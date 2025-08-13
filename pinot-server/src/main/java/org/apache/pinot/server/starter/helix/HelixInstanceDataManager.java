@@ -18,6 +18,7 @@
  */
 package org.apache.pinot.server.starter.helix;
 
+import com.google.common.annotations.VisibleForTesting;
 import com.google.common.base.Preconditions;
 import com.google.common.cache.Cache;
 import com.google.common.cache.CacheBuilder;
@@ -43,6 +44,7 @@ import org.apache.commons.lang3.tuple.Pair;
 import org.apache.helix.HelixManager;
 import org.apache.helix.store.zk.ZkHelixPropertyStore;
 import org.apache.helix.zookeeper.datamodel.ZNRecord;
+import org.apache.pinot.common.config.provider.LogicalTableMetadataCache;
 import org.apache.pinot.common.metadata.ZKMetadataProvider;
 import org.apache.pinot.common.metrics.ServerMetrics;
 import org.apache.pinot.common.restlet.resources.SegmentErrorInfo;
@@ -84,6 +86,10 @@ public class HelixInstanceDataManager implements InstanceDataManager {
   private static final Logger LOGGER = LoggerFactory.getLogger(HelixInstanceDataManager.class);
 
   private final Map<String, TableDataManager> _tableDataManagerMap = new ConcurrentHashMap<>();
+
+  // Logical table metadata cache to cache logical table configs, schemas, and offline/realtime table configs.
+  private final LogicalTableMetadataCache _logicalTableMetadataCache = new LogicalTableMetadataCache();
+
   // TODO: Consider making segment locks per table instead of per instance
   private final SegmentLocks _segmentLocks = new SegmentLocks();
 
@@ -134,9 +140,7 @@ public class HelixInstanceDataManager implements InstanceDataManager {
     initInstanceDataDir(instanceDataDir);
 
     File instanceSegmentTarDir = new File(_instanceDataManagerConfig.getInstanceSegmentTarDir());
-    if (!instanceSegmentTarDir.exists()) {
-      Preconditions.checkState(instanceSegmentTarDir.mkdirs());
-    }
+    initInstanceSegmentTarDir(instanceSegmentTarDir);
 
     // Initialize segment build time lease extender executor
     SegmentBuildTimeLeaseExtender.initExecutor();
@@ -164,7 +168,8 @@ public class HelixInstanceDataManager implements InstanceDataManager {
         .expireAfterWrite(_instanceDataManagerConfig.getDeletedTablesCacheTtlMinutes(), TimeUnit.MINUTES).build();
   }
 
-  private void initInstanceDataDir(File instanceDataDir) {
+  @VisibleForTesting
+  void initInstanceDataDir(File instanceDataDir) {
     if (!instanceDataDir.exists()) {
       Preconditions.checkState(instanceDataDir.mkdirs(), "Failed to create instance data dir: %s", instanceDataDir);
     } else {
@@ -188,6 +193,19 @@ public class HelixInstanceDataManager implements InstanceDataManager {
         }
       }
     }
+    // Ensure we can write to the instance data dir
+    Preconditions.checkState(instanceDataDir.canWrite(), "Cannot write to the instance data dir: %s", instanceDataDir);
+  }
+
+  @VisibleForTesting
+  void initInstanceSegmentTarDir(File instanceSegmentTarDir) {
+    if (!instanceSegmentTarDir.exists()) {
+      Preconditions.checkState(instanceSegmentTarDir.mkdirs(), "Failed to create instance segment tar dir: %s",
+          instanceSegmentTarDir);
+    }
+    // Ensure we can write to the instance segment tar dir
+    Preconditions.checkState(instanceSegmentTarDir.canWrite(), "Cannot write to the instance segment tar dir: %s",
+        instanceSegmentTarDir);
   }
 
   @Override
@@ -215,6 +233,9 @@ public class HelixInstanceDataManager implements InstanceDataManager {
   @Override
   public synchronized void start() {
     _propertyStore = _helixManager.getHelixPropertyStore();
+    // Initialize logical table metadata cache
+    _logicalTableMetadataCache.init(_propertyStore);
+
     LOGGER.info("Helix instance data manager started");
   }
 
@@ -242,6 +263,8 @@ public class HelixInstanceDataManager implements InstanceDataManager {
       }
     }
     SegmentBuildTimeLeaseExtender.shutdownExecutor();
+    // shutdown logical table metadata cache
+    _logicalTableMetadataCache.shutdown();
     LOGGER.info("Helix instance data manager shut down");
   }
 
@@ -260,6 +283,7 @@ public class HelixInstanceDataManager implements InstanceDataManager {
       return;
     }
     LOGGER.info("Shutting down table data manager for table: {}", tableNameWithType);
+    tableDataManager.setDeleted(true);
     tableDataManager.shutDown();
     LOGGER.info("Finished shutting down table data manager for table: {}", tableNameWithType);
   }
@@ -520,17 +544,15 @@ public class HelixInstanceDataManager implements InstanceDataManager {
     }
   }
 
-  // TODO: LogicalTableContext has to be cached. https://github.com/apache/pinot/issues/15859
   @Nullable
   @Override
   public LogicalTableContext getLogicalTableContext(String logicalTableName) {
-    Schema schema = ZKMetadataProvider.getSchema(getPropertyStore(), logicalTableName);
+    Schema schema = _logicalTableMetadataCache.getSchema(logicalTableName);
     if (schema == null) {
       LOGGER.warn("Failed to find schema for logical table: {}, skipping", logicalTableName);
       return null;
     }
-    LogicalTableConfig logicalTableConfig = ZKMetadataProvider.getLogicalTableConfig(getPropertyStore(),
-        logicalTableName);
+    LogicalTableConfig logicalTableConfig = _logicalTableMetadataCache.getLogicalTableConfig(logicalTableName);
     if (logicalTableConfig == null) {
       LOGGER.warn("Failed to find logical table config for logical table: {}, skipping", logicalTableName);
       return null;
@@ -538,8 +560,7 @@ public class HelixInstanceDataManager implements InstanceDataManager {
 
     TableConfig offlineTableConfig = null;
     if (logicalTableConfig.getRefOfflineTableName() != null) {
-      offlineTableConfig = ZKMetadataProvider.getOfflineTableConfig(getPropertyStore(),
-          logicalTableConfig.getRefOfflineTableName());
+      offlineTableConfig = _logicalTableMetadataCache.getTableConfig(logicalTableConfig.getRefOfflineTableName());
       if (offlineTableConfig == null) {
         LOGGER.warn("Failed to find offline table config for logical table: {}, skipping", logicalTableName);
         return null;
@@ -548,8 +569,7 @@ public class HelixInstanceDataManager implements InstanceDataManager {
 
     TableConfig realtimeTableConfig = null;
     if (logicalTableConfig.getRefRealtimeTableName() != null) {
-      realtimeTableConfig = ZKMetadataProvider.getRealtimeTableConfig(getPropertyStore(),
-          logicalTableConfig.getRefRealtimeTableName());
+      realtimeTableConfig = _logicalTableMetadataCache.getTableConfig(logicalTableConfig.getRefRealtimeTableName());
       if (realtimeTableConfig == null) {
         LOGGER.warn("Failed to find realtime table config for logical table: {}, skipping", logicalTableName);
         return null;
