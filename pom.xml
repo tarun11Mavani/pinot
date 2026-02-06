@@ -25,7 +25,7 @@
   <parent>
     <groupId>org.apache</groupId>
     <artifactId>apache</artifactId>
-    <version>37</version>
+    <version>35</version>
     <relativePath/>
   </parent>
 
@@ -100,9 +100,20 @@
   </mailingLists>
 
   <scm>
-    <developerConnection>scm:git:git@github.com:apache/pinot.git</developerConnection>
-    <tag>HEAD</tag>
+    <developerConnection>scm:git:gitolite@code.uber.internal:data/pinot</developerConnection>
+    <tag>uber-release-1.5.0-rc0</tag>
   </scm>
+
+  <distributionManagement>
+    <repository>
+      <id>central</id>
+      <url>http://artifactory.uber.internal:4587/artifactory/libs-release-local/</url>
+    </repository>
+    <snapshotRepository>
+      <id>snapshots</id>
+      <url>http://artifactory.uber.internal:4587/artifactory/libs-snapshot-local/</url>
+    </snapshotRepository>
+  </distributionManagement>
 
   <!-- Apache project inception year for generating correct NOTICE file for jar bundle. -->
   <inceptionYear>2018</inceptionYear>
@@ -263,7 +274,7 @@
     <woodstox.version>7.1.1</woodstox.version>
     <curator.version>5.9.0</curator.version>
     <javassist.version>3.30.2-GA</javassist.version>
-    <bouncycastle.version>1.83</bouncycastle.version>
+    <bouncycastle.version>1.78</bouncycastle.version>
     <aircompressor.version>0.27</aircompressor.version>
     <jna.version>5.18.1</jna.version>
     <jnr-ffi.version>2.2.18</jnr-ffi.version>
@@ -2723,6 +2734,10 @@
 
                 <!-- specific files -->
                 <exclude>**/src/test/resources/*version-header.properties</exclude>
+                <!-- Uber internal files (not exported to upstream) -->
+                <exclude>.arcconfig</exclude>
+                <exclude>METADATA</exclude>
+                <exclude>.buildkite/**</exclude>
               </excludes>
             </licenseSet>
           </licenseSets>
