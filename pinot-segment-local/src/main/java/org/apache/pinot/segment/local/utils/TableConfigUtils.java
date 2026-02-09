@@ -1877,7 +1877,9 @@ public final class TableConfigUtils {
   }
 
   private static void overwriteConfig(JsonNode oldCfg, JsonNode newCfg) {
-    for (Map.Entry<String, JsonNode> cfgEntry : newCfg.properties()) {
+    Iterator<Map.Entry<String, JsonNode>> fields = newCfg.fields();
+    while (fields.hasNext()) {
+      Map.Entry<String, JsonNode> cfgEntry = fields.next();
       ((ObjectNode) oldCfg).set(cfgEntry.getKey(), cfgEntry.getValue());
     }
   }

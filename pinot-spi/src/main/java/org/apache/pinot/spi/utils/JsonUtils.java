@@ -44,6 +44,7 @@ import java.util.AbstractMap;
 import java.util.ArrayList;
 import java.util.Collections;
 import java.util.HashMap;
+import java.util.Iterator;
 import java.util.LinkedHashMap;
 import java.util.List;
 import java.util.Map;
@@ -469,7 +470,9 @@ public class JsonUtils {
     // Put all nested results (from array) into a list to be processed later
     List<List<Map<String, String>>> nestedResultsList = new ArrayList<>();
 
-    for (Map.Entry<String, JsonNode> fieldEntry : node.properties()) {
+    Iterator<Map.Entry<String, JsonNode>> fields = node.fields();
+    while (fields.hasNext()) {
+      Map.Entry<String, JsonNode> fieldEntry = fields.next();
       String field = fieldEntry.getKey();
       Set<String> excludeFields = jsonIndexConfig.getExcludeFields();
       if (excludeFields != null && excludeFields.contains(field)) {
@@ -634,7 +637,9 @@ public class JsonUtils {
       @Nullable Map<String, FieldSpec.FieldType> fieldTypeMap, @Nullable TimeUnit timeUnit, List<String> fieldsToUnnest,
       String delimiter, ComplexTypeConfig.CollectionNotUnnestedToJson collectionNotUnnestedToJson) {
     Schema pinotSchema = new Schema();
-    for (Map.Entry<String, JsonNode> fieldEntry : jsonNode.properties()) {
+    Iterator<Map.Entry<String, JsonNode>> fields = jsonNode.fields();
+    while (fields.hasNext()) {
+      Map.Entry<String, JsonNode> fieldEntry = fields.next();
       JsonNode childNode = fieldEntry.getValue();
       inferPinotSchemaFromJsonNode(childNode, pinotSchema, fieldEntry.getKey(), fieldTypeMap, timeUnit, fieldsToUnnest,
           delimiter, collectionNotUnnestedToJson);
@@ -670,7 +675,9 @@ public class JsonUtils {
       }
       // do not include the node for other cases
     } else if (jsonNode.isObject()) {
-      for (Map.Entry<String, JsonNode> fieldEntry : jsonNode.properties()) {
+      Iterator<Map.Entry<String, JsonNode>> fields = jsonNode.fields();
+      while (fields.hasNext()) {
+        Map.Entry<String, JsonNode> fieldEntry = fields.next();
         JsonNode childNode = fieldEntry.getValue();
         inferPinotSchemaFromJsonNode(childNode, pinotSchema, String.join(delimiter, path, fieldEntry.getKey()),
             fieldTypeMap, timeUnit, fieldsToUnnest, delimiter, collectionNotUnnestedToJson);

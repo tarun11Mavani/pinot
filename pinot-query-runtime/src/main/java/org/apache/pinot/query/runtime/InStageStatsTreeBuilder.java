@@ -22,6 +22,7 @@ import com.fasterxml.jackson.databind.JsonNode;
 import com.fasterxml.jackson.databind.node.ArrayNode;
 import com.fasterxml.jackson.databind.node.ObjectNode;
 import java.util.Arrays;
+import java.util.Iterator;
 import java.util.List;
 import java.util.Map;
 import java.util.function.IntFunction;
@@ -73,7 +74,14 @@ public class InStageStatsTreeBuilder implements PlanNodeVisitor<ObjectNode, InSt
   private ObjectNode selfNode(MultiStageOperator.Type type, Context context, int index, JsonNode[] childrenArr) {
     ObjectNode json = JsonUtils.newObjectNode();
     json.put("type", type.toString());
-    for (Map.Entry<String, JsonNode> entry : _stageStats.getOperatorStats(index).asJson().properties()) {
+
+    // Get the JsonNode representing operator stats
+    JsonNode operatorStatsJson = _stageStats.getOperatorStats(index).asJson();
+
+    // Use .fields() for Jackson 2.13.5 compatibility (.properties() is deprecated)
+    Iterator<Map.Entry<String, JsonNode>> fields = operatorStatsJson.fields();
+    while (fields.hasNext()) {
+      Map.Entry<String, JsonNode> entry = fields.next();
       json.set(entry.getKey(), entry.getValue());
     }
 

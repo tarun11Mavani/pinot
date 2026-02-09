@@ -257,7 +257,9 @@ public class RealtimeKinesisIntegrationTest extends BaseKinesisIntegrationTest {
     if (StringUtils.isNotBlank(line)) {
       JsonNode dataObject = JsonUtils.stringToJsonNode(line);
 
-      for (Map.Entry<String, JsonNode> field : dataObject.properties()) {
+      var fields = dataObject.fields();
+      while (fields.hasNext()) {
+        var field = fields.next();
         String fieldName = field.getKey();
         JsonNodeType fieldDataType = field.getValue().getNodeType();
 

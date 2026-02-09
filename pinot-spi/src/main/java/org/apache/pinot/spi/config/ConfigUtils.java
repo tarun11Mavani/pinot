@@ -24,6 +24,7 @@ import com.fasterxml.jackson.databind.node.JsonNodeFactory;
 import com.fasterxml.jackson.databind.node.JsonNodeType;
 import java.io.IOException;
 import java.util.HashMap;
+import java.util.Iterator;
 import java.util.Map;
 import org.apache.pinot.spi.utils.JsonUtils;
 
@@ -80,7 +81,9 @@ public class ConfigUtils {
     switch (nodeType) {
       case OBJECT:
         if (!jsonNode.isEmpty()) {
-          for (Map.Entry<String, JsonNode> next : jsonNode.properties()) {
+          Iterator<Map.Entry<String, JsonNode>> fields = jsonNode.fields();
+          while (fields.hasNext()) {
+            Map.Entry<String, JsonNode> next = fields.next();
             next.setValue(applyConfigWithEnvVariablesAndSystemProperties(configValues, next.getValue()));
           }
         }

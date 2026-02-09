@@ -26,6 +26,7 @@ import java.net.URISyntaxException;
 import java.util.ArrayList;
 import java.util.Collections;
 import java.util.HashMap;
+import java.util.Iterator;
 import java.util.List;
 import java.util.Map;
 import javax.annotation.Nullable;
@@ -325,7 +326,9 @@ public class ControllerRequestClient {
       }
 
       HashMap<String, List<String>> result = new HashMap<>();
-      for (Map.Entry<String, JsonNode> field : serversMap.properties()) {
+      Iterator<Map.Entry<String, JsonNode>> fields = serversMap.fields();
+      while (fields.hasNext()) {
+        Map.Entry<String, JsonNode> field = fields.next();
         List<String> segments = new ArrayList<>();
 
         ArrayNode value = (ArrayNode) field.getValue();
