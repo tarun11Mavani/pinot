@@ -114,7 +114,7 @@ public class SegmentGeneratorConfig implements Serializable {
   private boolean _failOnEmptySegment = false;
   private boolean _optimizeDictionary = false;
   private boolean _optimizeDictionaryForMetrics = false;
-  private boolean _optimizeDictionaryType = false;
+  private boolean _optimizeDictionaryType = true;
   private double _noDictionarySizeRatioThreshold = IndexingConfig.DEFAULT_NO_DICTIONARY_SIZE_RATIO_THRESHOLD;
   private Double _noDictionaryCardinalityRatioThreshold;
   private boolean _realtimeConversion = false;

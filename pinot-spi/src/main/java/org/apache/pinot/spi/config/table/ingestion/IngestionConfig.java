@@ -69,7 +69,7 @@ public class IngestionConfig extends BaseJsonConfig {
 
   @JsonPropertyDescription(
       "Configs related to retry segment build on reduced size when previous build fails on Preconditions check")
-  private boolean _retryOnSegmentBuildPrecheckFailure;
+  private boolean _retryOnSegmentBuildPrecheckFailure = true;
 
   @JsonPropertyDescription("Configs related to validate time value for each record during ingestion")
   private boolean _rowTimeValueCheck;

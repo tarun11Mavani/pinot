@@ -86,7 +86,7 @@ public class IndexingConfig extends BaseJsonConfig {
    * Optimize the dictionary type for var width columns, if values are all the same length then use a fixed-width
    * dictionary. Else, use a var-width dictionary.
    */
-  private boolean _optimizeDictionaryType;
+  private boolean _optimizeDictionaryType = true;
 
   private double _noDictionarySizeRatioThreshold = DEFAULT_NO_DICTIONARY_SIZE_RATIO_THRESHOLD;
 

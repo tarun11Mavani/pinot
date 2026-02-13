@@ -37,7 +37,7 @@ public class TextIndexConfig extends IndexConfig {
   private static final int LUCENE_INDEX_DEFAULT_MAX_BUFFER_SIZE_MB = 500;
   private static final boolean LUCENE_INDEX_DEFAULT_USE_COMPOUND_FILE = true;
   private static final boolean LUCENE_INDEX_ENABLE_PREFIX_SUFFIX_MATCH_IN_PHRASE_SEARCH = false;
-  private static final boolean LUCENE_INDEX_REUSE_MUTABLE_INDEX = false;
+  private static final boolean LUCENE_INDEX_REUSE_MUTABLE_INDEX = true;
   private static final int LUCENE_INDEX_NRT_CACHING_DIRECTORY_MAX_BUFFER_SIZE_MB = 0;
   private static final boolean LUCENE_INDEX_DEFAULT_USE_AND_FOR_MULTI_TERM_QUERIES = false;
   private static final boolean LUCENE_USE_LOG_BYTE_SIZE_MERGE_POLICY = false;

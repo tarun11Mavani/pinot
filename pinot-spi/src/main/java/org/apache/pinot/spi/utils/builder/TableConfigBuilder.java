@@ -116,7 +116,7 @@ public class TableConfigBuilder {
   private boolean _optimizeDictionaryForMetrics;
   // This threshold determines if dictionary should be enabled or not for a metric column and is relevant
   // only when _optimizeDictionaryForMetrics is set to true.
-  private boolean _optimizeDictionaryType;
+  private boolean _optimizeDictionaryType = true;
   private double _noDictionarySizeRatioThreshold;
   private double _noDictionaryCardinalityRatioThreshold;
 

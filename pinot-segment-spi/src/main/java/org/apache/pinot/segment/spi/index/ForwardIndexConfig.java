@@ -36,8 +36,8 @@ import org.apache.pinot.spi.utils.DataSizeUtils;
 
 public class ForwardIndexConfig extends IndexConfig {
   private static int _defaultRawIndexWriterVersion = 4;
-  private static String _defaultTargetMaxChunkSize = "1MB";
-  private static int _defaultTargetMaxChunkSizeBytes = 1024 * 1024;
+  private static String _defaultTargetMaxChunkSize = "1280KB";
+  private static int _defaultTargetMaxChunkSizeBytes = 1280 * 1024;
   private static int _defaultTargetDocsPerChunk = 1000;
 
   public static int getDefaultRawWriterVersion() {
