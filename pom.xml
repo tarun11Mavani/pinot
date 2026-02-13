@@ -25,7 +25,7 @@
   <parent>
     <groupId>org.apache</groupId>
     <artifactId>apache</artifactId>
-    <version>35</version>
+    <version>37</version>
     <relativePath/>
   </parent>
 
@@ -2434,6 +2434,7 @@
               -Xshare:off
               -XX:+EnableDynamicAgentLoading
             </argLine>
+            <skipTests>${skipTests}</skipTests>
           </configuration>
           <!-- Explicitly select the test provider, instead of relying on the classpath -->
           <dependencies>
@@ -2510,6 +2511,12 @@
           </dependencies>
           <configuration>
             <autoVersionSubmodules>true</autoVersionSubmodules>
+            <!-- Override parent POM's hardcoded <arguments> so release.sh can
+                 inject skip-test flags via -Drelease.arguments=... on the CLI.
+                 The parent (apache-37) sets <arguments> to a fixed string which
+                 prevents -Darguments from taking effect. Using a property here
+                 restores command-line control over the forked Maven arguments. -->
+            <arguments>${release.arguments}</arguments>
           </configuration>
         </plugin>
         <plugin>
@@ -2720,6 +2727,7 @@
           See also: properties section and profiles section.
         -->
         <configuration>
+          <skipTests>${skipTests}</skipTests>
           <testFailureIgnore>false</testFailureIgnore>
           <!-- Excludes integration tests when unit tests are run. -->
           <excludes>
@@ -2988,6 +2996,11 @@
 
             <!-- MISC -->
             <exclude>**/.factorypath</exclude>
+
+            <!-- Uber internal files (not exported to upstream) -->
+            <exclude>.arcconfig</exclude>
+            <exclude>METADATA</exclude>
+            <exclude>.buildkite/**</exclude>
 
             <!-- specific files -->
             <exclude>**/src/test/resources/*version-header.properties</exclude>

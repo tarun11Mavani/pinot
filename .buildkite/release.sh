@@ -19,48 +19,9 @@ set -ex
 # under the License.
 #
 
-# Setup the JAVA path
-setup_env () {
-    export JAVA_HOME=$JAVA_HOME_PATH
-    export PATH=$JAVA_HOME/bin:$PATH
-    echo java --version
-}
-
-# Download the JAVA 11
-setup_java () {
-	rm -rf $JAVA_HOME_PATH || true
-    if [[ ! -d $JAVA_HOME_PATH ]]; then
-        mkdir -p $JAVA_HOME_PATH
-    fi
-
-    BINARY_ARCHIVE_NAME="$(echo $JAVA_JDK_NUMBER | sed 's/-//g').tar.gz"
-    ARCHIVE_INSTALL_PATH="$JAVA_HOME_PATH/$BINARY_ARCHIVE_NAME"
-    DOWNLOAD_SUCCEEDED=false
-
-    wget "http://artifactory.uber.internal:4587/artifactory/libs-release-local/com/uber/devxp/jdk-linux/${JAVA_JDK_NUMBER}/jdk-linux-${JAVA_JDK_NUMBER}.tar.gz" -P ${ARCHIVE_INSTALL_PATH}
-    if [[ "$?" -eq 0 ]]; then
-        DOWNLOAD_SUCCEEDED=true
-    fi
-
-    if [[ $DOWNLOAD_SUCCEEDED == "false" ]]; then
-        echo "Unable to download JDK $JAVA_JDK_NUMBER"
-        return
-    else
-        echo "Download JDK $JAVA_JDK_NUMBER succeeded"
-    fi
-    tar -xvzf $ARCHIVE_INSTALL_PATH/*.tar.gz -C $JAVA_HOME_PATH --strip 1 1>/dev/null 2>&1
-}
-
-JAVA_JDK_NUMBER="11.0.11_9"
-JAVA_HOME_PATH="$HOME/java_home/$JAVA_JDK_NUMBER"
-
-if [[ -f "$JAVA_HOME_PATH/bin/java" ]]; then
-    echo "JDK 11 was already downloaded"
-else
-    echo "JDK 11 will be downloaded"
-    setup_java
-fi
-setup_env
+# Source common Java and Maven setup
+SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
+source "$SCRIPT_DIR/init.sh"
 
 TOKEN=$(echo -n "ignored:$UNPM_TOKEN" | base64 -w 0)
 echo -e "\n" >> ~/.npmrc
@@ -77,6 +38,54 @@ fi
 if [ -n "$NEXT_VERSION" ]; then
 release_opts="$release_opts -DdevelopmentVersion=$NEXT_VERSION"
 fi
+
 # This step also push the merged change to the Uber pinot
-mvn -e -B release:clean release:prepare release:perform -Darguments="-Dgpg.skip=true -Drat.skip=true -Dlicense.skip=true -DskipTests -Dmaven.javadoc.skip=true -P build-shaded-jar" $release_opts
+# Common arguments for skipping tests, GPG, etc.
+# NOTE: Do NOT add -Dmaven.test.skip=true here. That flag skips test compilation
+# AND prevents maven-jar-plugin:test-jar from producing test-jars. Several modules
+# (e.g. pinot-input-format) depend on pinot-spi's test-jar, so it must be built.
+# -DskipTests=true alone is sufficient to skip test execution while still compiling
+# test sources and packaging test-jars.
+# -T1C massively speeds up builds by parallelizing 1 thread per CPU core but messes up output logs.
+# Remove it if you want to see logs in order.
+SKIP_ARGS=(
+  -Dgpg.skip=true
+  -Drat.skip=true
+  -Dlicense.skip=true
+  -DskipTests=true
+  -Dsurefire.skip=true
+  -Dfailsafe.skip=true
+  -Dmaven.javadoc.skip=true
+  -Denforcer.skip=true
+  -T1C
+  -Dmaven.artifact.threads=16
+)
+
+# Build the arguments string that will be passed to the FORKED Maven process.
+# The parent POM (apache-37) hardcodes <arguments> in the release plugin config,
+# which causes -Darguments=... on the CLI to be ignored. We override <arguments>
+# in pinot's pom.xml to use ${release.arguments}, so we pass the value via that
+# property instead.
+RELEASE_ARGUMENTS="$(printf '%s ' "${SKIP_ARGS[@]}") -Daether.connector.basic.parallelPut=false -P build-shaded-jar"
+
+# Skip GPG signing - run prepare only
+$MVN_CMD -e -B release:clean release:prepare \
+-Dgpg.skip=true \
+-Denforcer.skip=true \
+-DsignTag=false \
+-DsignCommit=false \
+-DpreparationGoals="clean validate" \
+-Drelease.arguments="$RELEASE_ARGUMENTS" \
+$release_opts
+
+
+# Perform: checkout the tag and run deploy
+# Use useReleaseProfile=false to avoid apache-release profile GPG signing
+# -Drelease.arguments passes skip flags to the FORKED Maven that release:perform spawns.
+# -Dgoals must only contain goal names (not -D properties).
+# Top-level SKIP_ARGS affect only the outer Maven running release:perform itself.
+$MVN_CMD -e -B release:perform \
+-DuseReleaseProfile=false \
+-Drelease.arguments="$RELEASE_ARGUMENTS" \
+-Dgoals=deploy
 
