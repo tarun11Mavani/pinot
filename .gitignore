@@ -29,6 +29,7 @@ docs/_build
 **/.docker/
 **/.env
 **/.factorypath
+.claude/
 
 # Misc
 .envrc
