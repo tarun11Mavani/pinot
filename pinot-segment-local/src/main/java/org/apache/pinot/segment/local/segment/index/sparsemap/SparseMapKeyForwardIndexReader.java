@@ -1,0 +1,105 @@
+/**
+ * Licensed to the Apache Software Foundation (ASF) under one
+ * or more contributor license agreements.  See the NOTICE file
+ * distributed with this work for additional information
+ * regarding copyright ownership.  The ASF licenses this file
+ * to you under the Apache License, Version 2.0 (the
+ * "License"); you may not use this file except in compliance
+ * with the License.  You may obtain a copy of the License at
+ *
+ *   http://www.apache.org/licenses/LICENSE-2.0
+ *
+ * Unless required by applicable law or agreed to in writing,
+ * software distributed under the License is distributed on an
+ * "AS IS" BASIS, WITHOUT WARRANTIES OR CONDITIONS OF ANY
+ * KIND, either express or implied.  See the License for the
+ * specific language governing permissions and limitations
+ * under the License.
+ */
+package org.apache.pinot.segment.local.segment.index.sparsemap;
+
+import java.io.IOException;
+import org.apache.pinot.segment.spi.index.reader.ForwardIndexReader;
+import org.apache.pinot.segment.spi.index.reader.ForwardIndexReaderContext;
+import org.apache.pinot.segment.spi.index.reader.SparseMapIndexReader;
+import org.apache.pinot.spi.data.FieldSpec.DataType;
+
+
+/**
+ * A per-key {@link ForwardIndexReader} backed by a {@link SparseMapIndexReader}.
+ *
+ * <p>Each instance is bound to a single key within a SPARSE_MAP column. Reads for document IDs
+ * that do not contain the key return the type-appropriate zero/empty default value; the caller can
+ * combine this with the presence bitmap ({@link SparseMapIndexReader#getPresenceBitmap}) when null
+ * semantics are required.
+ *
+ * <p>No context is needed because the {@link SparseMapIndexReader} implementations maintain their
+ * own internal state; {@link #createContext()} therefore returns {@code null}.
+ *
+ * <p>Lifecycle: this reader does NOT own the underlying {@link SparseMapIndexReader}—closing this
+ * reader is a no-op. The owning {@link SparseMapDataSource} is responsible for closing the reader.
+ */
+public class SparseMapKeyForwardIndexReader implements ForwardIndexReader<ForwardIndexReaderContext> {
+
+  private final SparseMapIndexReader _sparseMapIndexReader;
+  private final String _key;
+  private final DataType _storedType;
+
+  public SparseMapKeyForwardIndexReader(SparseMapIndexReader sparseMapIndexReader, String key,
+      DataType storedType) {
+    _sparseMapIndexReader = sparseMapIndexReader;
+    _key = key;
+    _storedType = storedType;
+  }
+
+  @Override
+  public boolean isDictionaryEncoded() {
+    return false;
+  }
+
+  @Override
+  public boolean isSingleValue() {
+    return true;
+  }
+
+  @Override
+  public DataType getStoredType() {
+    return _storedType;
+  }
+
+  @Override
+  public int getInt(int docId, ForwardIndexReaderContext context) {
+    return _sparseMapIndexReader.getInt(docId, _key);
+  }
+
+  @Override
+  public long getLong(int docId, ForwardIndexReaderContext context) {
+    return _sparseMapIndexReader.getLong(docId, _key);
+  }
+
+  @Override
+  public float getFloat(int docId, ForwardIndexReaderContext context) {
+    return _sparseMapIndexReader.getFloat(docId, _key);
+  }
+
+  @Override
+  public double getDouble(int docId, ForwardIndexReaderContext context) {
+    return _sparseMapIndexReader.getDouble(docId, _key);
+  }
+
+  @Override
+  public String getString(int docId, ForwardIndexReaderContext context) {
+    return _sparseMapIndexReader.getString(docId, _key);
+  }
+
+  @Override
+  public byte[] getBytes(int docId, ForwardIndexReaderContext context) {
+    return _sparseMapIndexReader.getBytes(docId, _key);
+  }
+
+  @Override
+  public void close()
+      throws IOException {
+    // no-op: the underlying reader is owned by SparseMapDataSource
+  }
+}

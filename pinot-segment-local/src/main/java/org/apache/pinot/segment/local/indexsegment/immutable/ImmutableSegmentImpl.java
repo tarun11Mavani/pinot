@@ -36,6 +36,7 @@ import org.apache.pinot.segment.local.segment.index.datasource.ImmutableDataSour
 import org.apache.pinot.segment.local.segment.index.loader.IndexLoadingConfig;
 import org.apache.pinot.segment.local.segment.index.map.ImmutableMapDataSource;
 import org.apache.pinot.segment.local.segment.index.readers.text.MultiColumnLuceneTextIndexReader;
+import org.apache.pinot.segment.local.segment.index.sparsemap.SparseMapDataSource;
 import org.apache.pinot.segment.local.segment.readers.PinotSegmentColumnReader;
 import org.apache.pinot.segment.local.segment.readers.PinotSegmentRecordReader;
 import org.apache.pinot.segment.local.segment.virtualcolumn.VirtualColumnContext;
@@ -54,6 +55,7 @@ import org.apache.pinot.segment.spi.index.mutable.ThreadSafeMutableRoaringBitmap
 import org.apache.pinot.segment.spi.index.reader.Dictionary;
 import org.apache.pinot.segment.spi.index.reader.ForwardIndexReader;
 import org.apache.pinot.segment.spi.index.reader.InvertedIndexReader;
+import org.apache.pinot.segment.spi.index.reader.SparseMapIndexReader;
 import org.apache.pinot.segment.spi.index.reader.TextIndexReader;
 import org.apache.pinot.segment.spi.index.startree.StarTreeV2;
 import org.apache.pinot.segment.spi.store.SegmentDirectory;
@@ -101,8 +103,14 @@ public class ImmutableSegmentImpl implements ImmutableSegment {
     for (Map.Entry<String, ColumnMetadata> entry : segmentMetadata.getColumnMetadataMap().entrySet()) {
       String colName = entry.getKey();
       ColumnMetadata columnMetadata = entry.getValue();
-      if (columnMetadata.getFieldSpec().getDataType() == FieldSpec.DataType.MAP) {
+      FieldSpec.DataType dataType = columnMetadata.getFieldSpec().getDataType();
+      if (dataType == FieldSpec.DataType.MAP) {
         _dataSources.put(colName, new ImmutableMapDataSource(entry.getValue(), _indexContainerMap.get(colName)));
+      } else if (dataType == FieldSpec.DataType.SPARSE_MAP) {
+        ColumnIndexContainer indexContainer = _indexContainerMap.get(colName);
+        SparseMapIndexReader sparseMapReader =
+            (SparseMapIndexReader) indexContainer.getIndex(StandardIndexes.sparseMap());
+        _dataSources.put(colName, new SparseMapDataSource(columnMetadata, sparseMapReader));
       } else {
         _dataSources.put(colName, new ImmutableDataSource(entry.getValue(), _indexContainerMap.get(colName)));
       }

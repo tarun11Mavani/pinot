@@ -556,7 +556,7 @@ public class MutableSegmentImpl implements MutableSegment {
    */
   private boolean isNoDictionaryColumn(FieldIndexConfigs indexConfigs, FieldSpec fieldSpec, String column) {
     DataType dataType = fieldSpec.getDataType();
-    if (dataType == DataType.MAP) {
+    if (dataType == DataType.MAP || dataType == DataType.SPARSE_MAP) {
       return true;
     }
     if (indexConfigs == null) {
@@ -925,7 +925,7 @@ public class MutableSegmentImpl implements MutableSegment {
           }
         }
 
-        if (dictId < 0) {
+        if (dictId < 0 && dataType != DataType.SPARSE_MAP) {
           // Update min/max value from raw value
           // NOTE: Skip updating min/max value for aggregated metrics because the value will change over time.
           if (!isAggregateMetricsEnabled() || fieldSpec.getFieldType() != FieldSpec.FieldType.METRIC) {
@@ -1587,7 +1587,9 @@ public class MutableSegmentImpl implements MutableSegment {
         @Nullable Set<Integer> partitions, ValuesInfo valuesInfo, Map<IndexType, MutableIndex> mutableIndexes,
         @Nullable MutableDictionary dictionary, @Nullable MutableNullValueVector nullValueVector,
         @Nullable String sourceColumn, @Nullable ValueAggregator valueAggregator) {
-      Preconditions.checkArgument(mutableIndexes.containsKey(StandardIndexes.forward()), "Forward index is required");
+      Preconditions.checkArgument(
+          fieldSpec.getDataType() == DataType.SPARSE_MAP || mutableIndexes.containsKey(StandardIndexes.forward()),
+          "Forward index is required");
       _fieldSpec = fieldSpec;
       _mutableIndexes = mutableIndexes;
       _dictionary = dictionary;
@@ -1600,6 +1602,14 @@ public class MutableSegmentImpl implements MutableSegment {
     }
 
     DataSource toDataSource() {
+      if (_fieldSpec.getDataType() == DataType.SPARSE_MAP) {
+        MutableIndex sparseMapIdx = _mutableIndexes.get(StandardIndexes.sparseMap());
+        if (sparseMapIdx instanceof org.apache.pinot.segment.spi.index.reader.SparseMapIndexReader) {
+          return new org.apache.pinot.segment.local.segment.index.sparsemap.SparseMapDataSource(
+              _fieldSpec, _numDocsIndexed,
+              (org.apache.pinot.segment.spi.index.reader.SparseMapIndexReader) sparseMapIdx);
+        }
+      }
       if (_fieldSpec.getDataType() == MAP) {
         return new MutableMapDataSource(_fieldSpec, _numDocsIndexed, _valuesInfo._numValues,
             _valuesInfo._maxNumValuesPerMVEntry, _dictionary == null ? -1 : _dictionary.length(), _partitionFunction,

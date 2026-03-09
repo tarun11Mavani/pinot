@@ -1,0 +1,581 @@
+/**
+ * Licensed to the Apache Software Foundation (ASF) under one
+ * or more contributor license agreements.  See the NOTICE file
+ * distributed with this work for additional information
+ * regarding copyright ownership.  The ASF licenses this file
+ * to you under the Apache License, Version 2.0 (the
+ * "License"); you may not use this file except in compliance
+ * with the License.  You may obtain a copy of the License at
+ *
+ *   http://www.apache.org/licenses/LICENSE-2.0
+ *
+ * Unless required by applicable law or agreed to in writing,
+ * software distributed under the License is distributed on an
+ * "AS IS" BASIS, WITHOUT WARRANTIES OR CONDITIONS OF ANY
+ * KIND, either express or implied.  See the License for the
+ * specific language governing permissions and limitations
+ * under the License.
+ */
+package org.apache.pinot.segment.local.segment.index.sparsemap;
+
+import java.io.File;
+import java.io.IOException;
+import java.io.RandomAccessFile;
+import java.util.Collections;
+import java.util.HashMap;
+import java.util.Map;
+import java.util.concurrent.ExecutorService;
+import java.util.concurrent.Executors;
+import java.util.concurrent.TimeUnit;
+import java.util.concurrent.atomic.AtomicBoolean;
+import org.apache.commons.io.FileUtils;
+import org.apache.pinot.segment.spi.V1Constants;
+import org.apache.pinot.segment.spi.index.reader.SparseMapIndexReader;
+import org.apache.pinot.segment.spi.memory.PinotDataBuffer;
+import org.apache.pinot.spi.config.table.SparseMapIndexConfig;
+import org.apache.pinot.spi.data.FieldSpec;
+import org.apache.pinot.spi.data.SparseMapFieldSpec;
+import org.roaringbitmap.buffer.ImmutableRoaringBitmap;
+import org.testng.annotations.AfterMethod;
+import org.testng.annotations.BeforeMethod;
+import org.testng.annotations.Test;
+
+import static org.testng.Assert.*;
+
+
+/**
+ * Unit tests for {@link OnHeapSparseMapIndexCreator} and {@link ImmutableSparseMapIndexReader}.
+ */
+public class SparseMapIndexTest {
+
+  private static final File INDEX_DIR =
+      new File(FileUtils.getTempDirectory(), "SparseMapIndexTest");
+  private static final String COLUMN_NAME = "sparseCol";
+
+  @BeforeMethod
+  public void setUp()
+      throws IOException {
+    FileUtils.forceMkdir(INDEX_DIR);
+  }
+
+  @AfterMethod
+  public void tearDown()
+      throws IOException {
+    FileUtils.deleteDirectory(INDEX_DIR);
+  }
+
+  // ---- Helper to build a FieldSpec for SPARSE_MAP ----
+
+  private static SparseMapFieldSpec buildFieldSpec(Map<String, FieldSpec.DataType> keyTypes) {
+    SparseMapFieldSpec spec = new SparseMapFieldSpec(COLUMN_NAME, keyTypes);
+    spec.setDefaultValueType(FieldSpec.DataType.STRING);
+    return spec;
+  }
+
+  // ---- Helper to create index file ----
+
+  private File createIndex(Map<String, FieldSpec.DataType> keyTypes, Map<String, Object>[] docs)
+      throws IOException {
+    SparseMapFieldSpec fieldSpec = buildFieldSpec(keyTypes);
+    SparseMapIndexConfig config = new SparseMapIndexConfig(true, null, false, 1000);
+
+    File indexFile =
+        new File(INDEX_DIR, COLUMN_NAME + V1Constants.Indexes.SPARSE_MAP_INDEX_FILE_EXTENSION);
+
+    try (OnHeapSparseMapIndexCreator creator =
+        new OnHeapSparseMapIndexCreator(INDEX_DIR, COLUMN_NAME, fieldSpec, config)) {
+      for (Map<String, Object> doc : docs) {
+        creator.add(doc);
+      }
+      creator.seal();
+    }
+
+    assertTrue(indexFile.exists(), "Index file should exist after sealing");
+    return indexFile;
+  }
+
+  @Test
+  public void testBasicIntAndStringKeys()
+      throws IOException {
+    Map<String, FieldSpec.DataType> keyTypes = new HashMap<>();
+    keyTypes.put("age", FieldSpec.DataType.INT);
+    keyTypes.put("name", FieldSpec.DataType.STRING);
+
+    @SuppressWarnings("unchecked")
+    Map<String, Object>[] docs = new Map[]{
+        Map.of("age", 25, "name", "alice"),
+        Map.of("age", 30),
+        Map.of("name", "charlie"),
+        Map.of("age", 25, "name", "dave")
+    };
+
+    File indexFile = createIndex(keyTypes, docs);
+
+    try (PinotDataBuffer buffer = PinotDataBuffer.mapReadOnlyBigEndianFile(indexFile);
+        SparseMapIndexReader reader = new ImmutableSparseMapIndexReader(buffer, null)) {
+
+      // Verify keys
+      assertTrue(reader.getKeys().contains("age"));
+      assertTrue(reader.getKeys().contains("name"));
+
+      // Verify key types
+      assertEquals(reader.getKeyValueType("age"), FieldSpec.DataType.INT);
+      assertEquals(reader.getKeyValueType("name"), FieldSpec.DataType.STRING);
+
+      // Verify presence bitmaps
+      ImmutableRoaringBitmap ageBitmap = reader.getPresenceBitmap("age");
+      assertTrue(ageBitmap.contains(0));
+      assertTrue(ageBitmap.contains(1));
+      assertFalse(ageBitmap.contains(2));
+      assertTrue(ageBitmap.contains(3));
+
+      ImmutableRoaringBitmap nameBitmap = reader.getPresenceBitmap("name");
+      assertTrue(nameBitmap.contains(0));
+      assertFalse(nameBitmap.contains(1));
+      assertTrue(nameBitmap.contains(2));
+      assertTrue(nameBitmap.contains(3));
+
+      // Verify typed values
+      assertEquals(reader.getInt(0, "age"), 25);
+      assertEquals(reader.getInt(1, "age"), 30);
+      assertEquals(reader.getInt(3, "age"), 25);
+
+      assertEquals(reader.getString(0, "name"), "alice");
+      assertEquals(reader.getString(2, "name"), "charlie");
+      assertEquals(reader.getString(3, "name"), "dave");
+
+      // Verify doc counts
+      assertEquals(reader.getNumDocsWithKey("age"), 3);
+      assertEquals(reader.getNumDocsWithKey("name"), 3);
+    }
+  }
+
+  @Test
+  public void testGetMap()
+      throws IOException {
+    Map<String, FieldSpec.DataType> keyTypes = new HashMap<>();
+    keyTypes.put("score", FieldSpec.DataType.DOUBLE);
+
+    @SuppressWarnings("unchecked")
+    Map<String, Object>[] docs = new Map[]{
+        Map.of("score", 1.5, "tag", "a"),
+        Map.of("score", 2.0),
+        new HashMap<>()
+    };
+
+    File indexFile = createIndex(keyTypes, docs);
+
+    try (PinotDataBuffer buffer = PinotDataBuffer.mapReadOnlyBigEndianFile(indexFile);
+        SparseMapIndexReader reader = new ImmutableSparseMapIndexReader(buffer, null)) {
+
+      Map<String, Object> doc0 = reader.getMap(0);
+      assertTrue(doc0.containsKey("score"));
+      assertEquals((double) doc0.get("score"), 1.5, 0.001);
+      assertTrue(doc0.containsKey("tag")); // stored as STRING (default)
+      assertEquals(doc0.get("tag"), "a");
+
+      Map<String, Object> doc1 = reader.getMap(1);
+      assertTrue(doc1.containsKey("score"));
+      assertEquals((double) doc1.get("score"), 2.0, 0.001);
+      assertFalse(doc1.containsKey("tag"));
+
+      Map<String, Object> doc2 = reader.getMap(2);
+      assertTrue(doc2.isEmpty());
+    }
+  }
+
+  @Test
+  public void testAbsentKeyReturnsEmptyPresenceBitmap()
+      throws IOException {
+    Map<String, FieldSpec.DataType> keyTypes = new HashMap<>();
+    keyTypes.put("x", FieldSpec.DataType.INT);
+
+    @SuppressWarnings("unchecked")
+    Map<String, Object>[] docs = new Map[]{Map.of("x", 1)};
+
+    File indexFile = createIndex(keyTypes, docs);
+
+    try (PinotDataBuffer buffer = PinotDataBuffer.mapReadOnlyBigEndianFile(indexFile);
+        SparseMapIndexReader reader = new ImmutableSparseMapIndexReader(buffer, null)) {
+
+      ImmutableRoaringBitmap missingBitmap = reader.getPresenceBitmap("nonexistent");
+      assertTrue(missingBitmap.isEmpty());
+
+      assertNull(reader.getKeyValueType("nonexistent"));
+      assertEquals(reader.getNumDocsWithKey("nonexistent"), 0);
+    }
+  }
+
+  @Test
+  public void testWithInvertedIndex()
+      throws IOException {
+    Map<String, FieldSpec.DataType> keyTypes = new HashMap<>();
+    keyTypes.put("color", FieldSpec.DataType.STRING);
+
+    @SuppressWarnings("unchecked")
+    Map<String, Object>[] docs = new Map[]{
+        Map.of("color", "red"),
+        Map.of("color", "blue"),
+        Map.of("color", "red"),
+        Map.of("color", "green")
+    };
+
+    SparseMapFieldSpec fieldSpec = buildFieldSpec(keyTypes);
+    SparseMapIndexConfig config = new SparseMapIndexConfig(true, null, true, 1000);
+    File indexFile =
+        new File(INDEX_DIR, COLUMN_NAME + V1Constants.Indexes.SPARSE_MAP_INDEX_FILE_EXTENSION);
+
+    try (OnHeapSparseMapIndexCreator creator = new OnHeapSparseMapIndexCreator(
+        INDEX_DIR, COLUMN_NAME, fieldSpec, config)) {
+      for (Map<String, Object> doc : docs) {
+        creator.add(doc);
+      }
+      creator.seal();
+    }
+
+    try (PinotDataBuffer buffer = PinotDataBuffer.mapReadOnlyBigEndianFile(indexFile);
+        SparseMapIndexReader reader = new ImmutableSparseMapIndexReader(buffer, null)) {
+
+      ImmutableRoaringBitmap reds = reader.getDocsWithKeyValue("color", "red");
+      assertNotNull(reds);
+      assertTrue(reds.contains(0));
+      assertFalse(reds.contains(1));
+      assertTrue(reds.contains(2));
+      assertFalse(reds.contains(3));
+
+      ImmutableRoaringBitmap blues = reader.getDocsWithKeyValue("color", "blue");
+      assertNotNull(blues);
+      assertFalse(blues.contains(0));
+      assertTrue(blues.contains(1));
+
+      ImmutableRoaringBitmap nullResult = reader.getDocsWithKeyValue("color", "purple");
+      assertNull(nullResult);
+    }
+  }
+
+  @Test
+  public void testMutableIndexBasicOperations()
+      throws IOException {
+    Map<String, FieldSpec.DataType> keyTypes = new HashMap<>();
+    keyTypes.put("price", FieldSpec.DataType.FLOAT);
+    keyTypes.put("brand", FieldSpec.DataType.STRING);
+
+    SparseMapFieldSpec fieldSpec = buildFieldSpec(keyTypes);
+    SparseMapIndexConfig config = new SparseMapIndexConfig(true, null, false, 100);
+
+    try (MutableSparseMapIndexImpl mutableIndex = new MutableSparseMapIndexImpl(
+        buildMutableContext(fieldSpec), config)) {
+
+      mutableIndex.add(Map.of("price", 9.99f, "brand", "acme"), -1, 0);
+      mutableIndex.add(Map.of("price", 14.99f), -1, 1);
+      mutableIndex.add(Map.of("brand", "foo"), -1, 2);
+      mutableIndex.add(Map.of("price", 9.99f, "brand", "acme"), -1, 3);
+
+      // Test presence bitmaps
+      ImmutableRoaringBitmap priceBitmap = mutableIndex.getPresenceBitmap("price");
+      assertTrue(priceBitmap.contains(0));
+      assertTrue(priceBitmap.contains(1));
+      assertFalse(priceBitmap.contains(2));
+      assertTrue(priceBitmap.contains(3));
+
+      ImmutableRoaringBitmap brandBitmap = mutableIndex.getPresenceBitmap("brand");
+      assertTrue(brandBitmap.contains(0));
+      assertFalse(brandBitmap.contains(1));
+      assertTrue(brandBitmap.contains(2));
+      assertTrue(brandBitmap.contains(3));
+
+      // Test typed reads
+      assertEquals(mutableIndex.getFloat(0, "price"), 9.99f, 0.001f);
+      assertEquals(mutableIndex.getFloat(1, "price"), 14.99f, 0.001f);
+      assertEquals(mutableIndex.getString(0, "brand"), "acme");
+      assertEquals(mutableIndex.getString(2, "brand"), "foo");
+
+      // Test getMap
+      Map<String, Object> doc0 = mutableIndex.getMap(0);
+      assertEquals(doc0.get("brand"), "acme");
+
+      // Test getNumDocsWithKey
+      assertEquals(mutableIndex.getNumDocsWithKey("price"), 3);
+      assertEquals(mutableIndex.getNumDocsWithKey("brand"), 3);
+      assertEquals(mutableIndex.getNumDocsWithKey("nonexistent"), 0);
+    }
+  }
+
+  @Test
+  public void testMaxKeysDropsExcessKeysImmutable()
+      throws Exception {
+    String colName = "maxkeys_imm_test";
+    SparseMapFieldSpec fieldSpec = new SparseMapFieldSpec(colName);
+    SparseMapIndexConfig config = new SparseMapIndexConfig(true, null, false, 2); // maxKeys=2
+    OnHeapSparseMapIndexCreator creator = new OnHeapSparseMapIndexCreator(INDEX_DIR, colName, fieldSpec, config);
+
+    // Add a doc with 3 keys — only 2 should be stored
+    Map<String, Object> doc = new HashMap<>();
+    doc.put("alpha", 1);
+    doc.put("beta", 2);
+    doc.put("gamma", 3);
+    creator.add(doc);
+    creator.seal();
+    creator.close();
+
+    File indexFile = new File(INDEX_DIR, colName + V1Constants.Indexes.SPARSE_MAP_INDEX_FILE_EXTENSION);
+    PinotDataBuffer buf = PinotDataBuffer.mapReadOnlyBigEndianFile(indexFile);
+    ImmutableSparseMapIndexReader reader = new ImmutableSparseMapIndexReader(buf, null);
+
+    assertEquals(2, reader.getKeys().size());
+    buf.close();
+  }
+
+  @Test
+  public void testMaxKeysDropsExcessKeysMutable()
+      throws Exception {
+    SparseMapIndexConfig config = new SparseMapIndexConfig(true, null, false, 2); // maxKeys=2
+    SparseMapFieldSpec fieldSpec = new SparseMapFieldSpec("mutable_maxkeys_test");
+
+    try (MutableSparseMapIndexImpl mutableIndex = new MutableSparseMapIndexImpl(
+        buildMutableContext(fieldSpec), config)) {
+
+      // Add doc 0 with 3 keys — only 2 should be stored
+      Map<String, Object> doc = new HashMap<>();
+      doc.put("alpha", 1);
+      doc.put("beta", 2);
+      doc.put("gamma", 3);
+      mutableIndex.add(doc, -1, 0);
+
+      assertEquals(2, mutableIndex.getKeys().size());
+    }
+  }
+
+  @Test
+  public void testNullValueTreatedAsAbsentImmutable()
+      throws Exception {
+    String colName = "null_absent_imm_test";
+    SparseMapFieldSpec fieldSpec = new SparseMapFieldSpec(colName);
+    SparseMapIndexConfig config = new SparseMapIndexConfig(true, null, false, 10);
+    OnHeapSparseMapIndexCreator creator = new OnHeapSparseMapIndexCreator(INDEX_DIR, colName, fieldSpec, config);
+
+    Map<String, Object> doc = new HashMap<>();
+    doc.put("key", null);   // explicit null — must be treated as absent
+    creator.add(doc);
+    creator.seal();
+    creator.close();
+
+    File indexFile = new File(INDEX_DIR, colName + V1Constants.Indexes.SPARSE_MAP_INDEX_FILE_EXTENSION);
+    PinotDataBuffer buf = PinotDataBuffer.mapReadOnlyBigEndianFile(indexFile);
+    ImmutableSparseMapIndexReader reader = new ImmutableSparseMapIndexReader(buf, null);
+
+    // Key must not appear in the index at all
+    assertFalse(reader.getPresenceBitmap("key").contains(0));
+    assertEquals(0, reader.getKeys().size());
+    buf.close();
+  }
+
+  @Test
+  public void testNullValueTreatedAsAbsentMutable()
+      throws Exception {
+    SparseMapIndexConfig config = new SparseMapIndexConfig(true, null, false, 10);
+    SparseMapFieldSpec fieldSpec =
+        new SparseMapFieldSpec("mutable_null_absent_test");
+
+    try (MutableSparseMapIndexImpl mutableIndex = new MutableSparseMapIndexImpl(
+        buildMutableContext(fieldSpec), config)) {
+
+      // add doc 0 with Map {"key": null}
+      Map<String, Object> doc = new HashMap<>();
+      doc.put("key", null);
+      mutableIndex.add(doc, -1, 0);
+
+      // key must not appear in the presence bitmap or key set
+      assertFalse(mutableIndex.getPresenceBitmap("key").contains(0));
+      assertFalse(mutableIndex.getKeys().contains("key"));
+    }
+  }
+
+  private static org.apache.pinot.segment.spi.index.mutable.provider.MutableIndexContext buildMutableContext(
+      FieldSpec fieldSpec) {
+    return new org.apache.pinot.segment.spi.index.mutable.provider.MutableIndexContext(
+        fieldSpec, -1, false, "testSegment", null, 1000, false, 100, 1000, 1, null);
+  }
+
+  @Test
+  public void testInvalidMagicBytesThrows()
+      throws Exception {
+    // Build a minimal valid index
+    String colName = "magic_test";
+    SparseMapFieldSpec fieldSpec = new SparseMapFieldSpec(colName);
+    SparseMapIndexConfig config = new SparseMapIndexConfig(true, null, false, 10);
+    OnHeapSparseMapIndexCreator creator =
+        new OnHeapSparseMapIndexCreator(INDEX_DIR, colName, fieldSpec, config);
+    creator.add(Map.of("k", 42));
+    creator.seal();
+    creator.close();
+
+    // Corrupt magic bytes
+    File indexFile = new File(INDEX_DIR, colName + V1Constants.Indexes.SPARSE_MAP_INDEX_FILE_EXTENSION);
+    try (RandomAccessFile raf = new RandomAccessFile(indexFile, "rw")) {
+      raf.seek(0);
+      raf.writeInt(0xDEADBEEF);
+    }
+
+    // Verify reader throws
+    PinotDataBuffer buf = PinotDataBuffer.mapReadOnlyBigEndianFile(indexFile);
+    assertThrows(IOException.class, () -> new ImmutableSparseMapIndexReader(buf, null));
+    buf.close();
+  }
+
+  @Test
+  public void testConcurrentAddAndReadDoesNotThrow()
+      throws Exception {
+    SparseMapFieldSpec fieldSpec =
+        new SparseMapFieldSpec("concurrent_test");
+    SparseMapIndexConfig config = new SparseMapIndexConfig(true, null, false, 100);
+    MutableSparseMapIndexImpl idx;
+    try (MutableSparseMapIndexImpl tmp = new MutableSparseMapIndexImpl(buildMutableContext(fieldSpec), config)) {
+      idx = tmp;
+      // Note: MutableSparseMapIndexImpl.close() is a no-op, so this is safe
+
+      ExecutorService pool = Executors.newFixedThreadPool(4);
+      AtomicBoolean failed = new AtomicBoolean(false);
+
+      // 2 writer threads
+      for (int t = 0; t < 2; t++) {
+        final int thread = t;
+        pool.submit(() -> {
+          for (int i = 0; i < 200; i++) {
+            try {
+              idx.add(Map.of("k" + (thread * 200 + i), i), -1, thread * 200 + i);
+            } catch (Exception e) {
+              failed.set(true);
+            }
+          }
+        });
+      }
+
+      // 2 reader threads
+      for (int t = 0; t < 2; t++) {
+        final int thread = t;
+        pool.submit(() -> {
+          for (int i = 0; i < 200; i++) {
+            try {
+              idx.getMap(thread * 200 + i);
+              idx.getKeys();
+            } catch (Exception e) {
+              failed.set(true);
+            }
+          }
+        });
+      }
+
+      pool.shutdown();
+      pool.awaitTermination(15, TimeUnit.SECONDS);
+      assertFalse(failed.get(), "Concurrent add/read threw an exception");
+    }
+  }
+
+  @Test
+  public void testMaxKeysRetainsExactlyMaxKeysKeys()
+      throws Exception {
+    String colName = "maxkeys_exact_test";
+    SparseMapFieldSpec fieldSpec = new SparseMapFieldSpec(colName);
+    SparseMapIndexConfig config = new SparseMapIndexConfig(true, null, false, 2);
+    OnHeapSparseMapIndexCreator creator = new OnHeapSparseMapIndexCreator(INDEX_DIR, colName, fieldSpec, config);
+
+    // Add keys one at a time, in known order, across multiple documents
+    // "alpha" first (doc 0), "beta" second (doc 1), "gamma" third (doc 2, should be dropped)
+    creator.add(Map.of("alpha", 1));  // doc 0
+    creator.add(Map.of("beta", 2));   // doc 1
+    creator.add(Map.of("gamma", 3));  // doc 2 — gamma should be dropped (maxKeys=2)
+    creator.seal();
+    creator.close();
+
+    File indexFile = new File(INDEX_DIR, colName + V1Constants.Indexes.SPARSE_MAP_INDEX_FILE_EXTENSION);
+    PinotDataBuffer buf = PinotDataBuffer.mapReadOnlyBigEndianFile(indexFile);
+    ImmutableSparseMapIndexReader reader = new ImmutableSparseMapIndexReader(buf, null);
+
+    assertEquals(reader.getKeys().size(), 2, "Index must hold exactly maxKeys=2 keys");
+    assertTrue(reader.getKeys().contains("alpha"), "alpha was first key, must be retained");
+    assertTrue(reader.getKeys().contains("beta"), "beta was second key, must be retained");
+    assertFalse(reader.getKeys().contains("gamma"), "gamma was third key and must be dropped");
+
+    // Presence bitmaps must be correct
+    assertTrue(reader.getPresenceBitmap("alpha").contains(0));
+    assertTrue(reader.getPresenceBitmap("beta").contains(1));
+    assertEquals(reader.getPresenceBitmap("gamma").getCardinality(), 0); // empty — key not indexed
+
+    buf.close();
+  }
+
+  @Test
+  public void testSealAfterManyAddsProducesValidIndex()
+      throws Exception {
+    String colName = "many_docs_test";
+    SparseMapFieldSpec fieldSpec = new SparseMapFieldSpec(colName,
+        Collections.singletonMap("count", FieldSpec.DataType.INT));
+    SparseMapIndexConfig config = new SparseMapIndexConfig(true, null, false, 10);
+    OnHeapSparseMapIndexCreator creator = new OnHeapSparseMapIndexCreator(INDEX_DIR, colName, fieldSpec, config);
+
+    int numDocs = 500;
+    for (int i = 0; i < numDocs; i++) {
+      if (i % 3 == 0) {
+        creator.add(Map.of("count", i));  // every 3rd doc has "count"
+      } else {
+        creator.add(Collections.emptyMap());  // absent
+      }
+    }
+    creator.seal();
+    creator.close();
+
+    File indexFile = new File(INDEX_DIR, colName + V1Constants.Indexes.SPARSE_MAP_INDEX_FILE_EXTENSION);
+    PinotDataBuffer buf = PinotDataBuffer.mapReadOnlyBigEndianFile(indexFile);
+    ImmutableSparseMapIndexReader reader = new ImmutableSparseMapIndexReader(buf, null);
+
+    // Exactly numDocs/3 (rounded up) docs have "count"
+    int expectedCount = (numDocs + 2) / 3;  // ceil(500/3) = 167
+    assertEquals(reader.getPresenceBitmap("count").getCardinality(), expectedCount);
+
+    // Spot check: doc 0 has count=0, doc 3 has count=3, doc 1 is absent
+    assertTrue(reader.getPresenceBitmap("count").contains(0));
+    assertTrue(reader.getPresenceBitmap("count").contains(3));
+    assertFalse(reader.getPresenceBitmap("count").contains(1));
+    assertEquals(reader.getInt(0, "count"), 0);
+    assertEquals(reader.getInt(3, "count"), 3);
+
+    buf.close();
+  }
+
+  @Test
+  public void testByteOrderRoundTripAllTypes()
+      throws Exception {
+    String colName = "byteorder_test";
+    SparseMapFieldSpec fieldSpec = new SparseMapFieldSpec(colName, Map.of(
+        "intKey", FieldSpec.DataType.INT,
+        "longKey", FieldSpec.DataType.LONG,
+        "floatKey", FieldSpec.DataType.FLOAT,
+        "doubleKey", FieldSpec.DataType.DOUBLE
+    ));
+
+    SparseMapIndexConfig config = new SparseMapIndexConfig(true, null, false, 10);
+    try (OnHeapSparseMapIndexCreator creator =
+        new OnHeapSparseMapIndexCreator(INDEX_DIR, colName, fieldSpec, config)) {
+      creator.add(Map.of(
+          "intKey", 0x12345678,
+          "longKey", 0x123456789ABCDEF0L,
+          "floatKey", 3.14f,
+          "doubleKey", 2.718281828
+      ));
+      creator.seal();
+    }
+
+    File indexFile = new File(INDEX_DIR, colName + V1Constants.Indexes.SPARSE_MAP_INDEX_FILE_EXTENSION);
+    PinotDataBuffer buf = PinotDataBuffer.mapReadOnlyBigEndianFile(indexFile);
+    ImmutableSparseMapIndexReader reader = new ImmutableSparseMapIndexReader(buf, null);
+
+    assertEquals(reader.getInt(0, "intKey"), 0x12345678);
+    assertEquals(reader.getLong(0, "longKey"), 0x123456789ABCDEF0L);
+    assertEquals(reader.getFloat(0, "floatKey"), 3.14f, 0.0001f);
+    assertEquals(reader.getDouble(0, "doubleKey"), 2.718281828, 0.000000001);
+
+    reader.close();
+    buf.close();
+  }
+}

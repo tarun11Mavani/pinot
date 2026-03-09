@@ -1,0 +1,408 @@
+/**
+ * Licensed to the Apache Software Foundation (ASF) under one
+ * or more contributor license agreements.  See the NOTICE file
+ * distributed with this work for additional information
+ * regarding copyright ownership.  The ASF licenses this file
+ * to you under the Apache License, Version 2.0 (the
+ * "License"); you may not use this file except in compliance
+ * with the License.  You may obtain a copy of the License at
+ *
+ *   http://www.apache.org/licenses/LICENSE-2.0
+ *
+ * Unless required by applicable law or agreed to in writing,
+ * software distributed under the License is distributed on an
+ * "AS IS" BASIS, WITHOUT WARRANTIES OR CONDITIONS OF ANY
+ * KIND, either express or implied.  See the License for the
+ * specific language governing permissions and limitations
+ * under the License.
+ */
+package org.apache.pinot.segment.local.segment.index.sparsemap;
+
+import java.io.ByteArrayOutputStream;
+import java.io.DataOutputStream;
+import java.io.File;
+import java.io.FileOutputStream;
+import java.io.IOException;
+import java.nio.charset.StandardCharsets;
+import java.util.ArrayList;
+import java.util.HashMap;
+import java.util.HashSet;
+import java.util.List;
+import java.util.Map;
+import java.util.Set;
+import java.util.TreeMap;
+import javax.annotation.Nullable;
+import org.apache.pinot.common.utils.RoaringBitmapUtils;
+import org.apache.pinot.segment.spi.V1Constants;
+import org.apache.pinot.segment.spi.creator.IndexCreationContext;
+import org.apache.pinot.segment.spi.index.creator.SparseMapIndexCreator;
+import org.apache.pinot.spi.config.table.SparseMapIndexConfig;
+import org.apache.pinot.spi.data.FieldSpec.DataType;
+import org.apache.pinot.spi.data.SparseMapFieldSpec;
+import org.roaringbitmap.RoaringBitmap;
+import org.slf4j.Logger;
+import org.slf4j.LoggerFactory;
+
+
+/**
+ * On-heap implementation of {@link SparseMapIndexCreator} for immutable (offline) segments.
+ * Accumulates per-document sparse maps in memory and writes a binary index file on seal.
+ * Uses more heap memory but avoids disk I/O during indexing.
+ */
+public class OnHeapSparseMapIndexCreator implements SparseMapIndexCreator {
+
+  private static final Logger LOGGER = LoggerFactory.getLogger(OnHeapSparseMapIndexCreator.class);
+
+  private static final int MAGIC = 0x53504D58;   // "SPMX"
+  private static final int VERSION = 2;
+  private static final int HEADER_SIZE = 64;
+  private static final int KEY_METADATA_ENTRY_SIZE = 53;
+
+  private final File _indexDir;
+  private final String _columnName;
+  private final Map<String, DataType> _keyTypes;
+  private final DataType _defaultValueType;
+  private final boolean _enableInvertedIndex;
+  private final Set<String> _indexedKeys;
+  private final int _maxKeys;
+
+  private final Map<String, RoaringBitmap> _presenceBitmaps = new HashMap<>();
+  private final Map<String, List<Object>> _values = new HashMap<>();
+  private int _numDocs;
+  private int _distinctKeyCount;
+  private final Set<String> _droppedKeys = new HashSet<>();
+
+  public OnHeapSparseMapIndexCreator(IndexCreationContext context, SparseMapIndexConfig config)
+      throws IOException {
+    this(context.getIndexDir(), context.getFieldSpec().getName(),
+        (SparseMapFieldSpec) context.getFieldSpec(), config);
+  }
+
+  public OnHeapSparseMapIndexCreator(File indexDir, String columnName, SparseMapFieldSpec fieldSpec,
+      SparseMapIndexConfig config)
+      throws IOException {
+    _indexDir = indexDir;
+    _columnName = columnName;
+    _enableInvertedIndex = config.isEnableInvertedIndex();
+    _indexedKeys = config.getIndexedKeys();
+    _maxKeys = config.getMaxKeys();
+
+    Map<String, DataType> keyTypes = fieldSpec.getKeyTypes();
+    _keyTypes = keyTypes != null ? new HashMap<>(keyTypes) : new HashMap<>();
+    DataType defaultType = fieldSpec.getDefaultValueType();
+    _defaultValueType = defaultType != null ? defaultType : DataType.STRING;
+  }
+
+  @Override
+  public void add(Map<String, Object> sparseMap)
+      throws IOException {
+    if (sparseMap != null && !sparseMap.isEmpty()) {
+      for (Map.Entry<String, Object> entry : sparseMap.entrySet()) {
+        String key = entry.getKey();
+        if (_indexedKeys != null && !_indexedKeys.contains(key)) {
+          continue;
+        }
+        Object rawValue = entry.getValue();
+        if (rawValue == null) {
+          // Null values are treated as absent: the key is not recorded for this document.
+          // There is no distinction between "key absent" and "key present with null value".
+          continue;
+        }
+        if (!_presenceBitmaps.containsKey(key) && _distinctKeyCount >= _maxKeys) {
+          if (_droppedKeys.add(key)) {
+            LOGGER.warn(
+                "SparseMap index for column '{}' reached maxKeys limit ({}). Dropping key '{}'. "
+                    + "Total distinct dropped keys so far: {}.",
+                _columnName, _maxKeys, key, _droppedKeys.size());
+          }
+          continue;
+        }
+        DataType valueType = _keyTypes.getOrDefault(key, _defaultValueType);
+        if (!_presenceBitmaps.containsKey(key)) {
+          _presenceBitmaps.put(key, new RoaringBitmap());
+          _values.put(key, new ArrayList<>());
+          _distinctKeyCount++;
+        }
+        _presenceBitmaps.get(key).add(_numDocs);
+        Object coerced = coerceValue(rawValue, valueType);
+        _values.get(key).add(coerced);
+      }
+    }
+    _numDocs++;
+  }
+
+  @Override
+  public void add(Object value, int dictId)
+      throws IOException {
+    add((Map<String, Object>) value);
+  }
+
+  @Override
+  public void add(Object[] values, @Nullable int[] dictIds)
+      throws IOException {
+    for (Object v : values) {
+      add((Map<String, Object>) v);
+    }
+  }
+
+  private Object coerceValue(Object value, DataType dataType) {
+    if (value == null) {
+      return coerceValueForType(dataType, null);
+    }
+    DataType storedType = dataType.getStoredType();
+    switch (storedType) {
+      case INT:
+        if (value instanceof Boolean) {
+          return (Boolean) value ? 1 : 0;
+        }
+        return ((Number) value).intValue();
+      case LONG:
+        return ((Number) value).longValue();
+      case FLOAT:
+        return ((Number) value).floatValue();
+      case DOUBLE:
+        return ((Number) value).doubleValue();
+      case STRING:
+        return value.toString();
+      case BYTES:
+        if (value instanceof byte[]) {
+          return value;
+        }
+        return value.toString().getBytes(StandardCharsets.UTF_8);
+      default:
+        return value.toString();
+    }
+  }
+
+  private Object coerceValueForType(DataType dataType, Object nullValue) {
+    DataType storedType = dataType.getStoredType();
+    switch (storedType) {
+      case INT:
+        return nullValue != null ? ((Number) nullValue).intValue() : 0;
+      case LONG:
+        return nullValue != null ? ((Number) nullValue).longValue() : 0L;
+      case FLOAT:
+        return nullValue != null ? ((Number) nullValue).floatValue() : 0.0f;
+      case DOUBLE:
+        return nullValue != null ? ((Number) nullValue).doubleValue() : 0.0;
+      case STRING:
+        return nullValue != null ? nullValue.toString() : "";
+      case BYTES:
+        return nullValue instanceof byte[] ? nullValue : new byte[0];
+      default:
+        return "";
+    }
+  }
+
+  @Override
+  public void seal()
+      throws IOException {
+    List<String> sortedKeys = new ArrayList<>(new TreeMap<>(_presenceBitmaps).keySet());
+    int numKeys = sortedKeys.size();
+
+    byte[] keyDictionarySection = buildKeyDictionarySection(sortedKeys);
+    byte[] keyMetadataSection = new byte[numKeys * KEY_METADATA_ENTRY_SIZE];
+    byte[] perKeyDataSection = buildPerKeyDataSection(sortedKeys, keyMetadataSection);
+
+    long keyDictionaryOffset = HEADER_SIZE;
+    long keyMetadataOffset = keyDictionaryOffset + keyDictionarySection.length;
+    long perKeyDataOffset = keyMetadataOffset + keyMetadataSection.length;
+
+    File indexFile = new File(_indexDir, _columnName + V1Constants.Indexes.SPARSE_MAP_INDEX_FILE_EXTENSION);
+    try (FileOutputStream fos = new FileOutputStream(indexFile);
+        DataOutputStream dos = new DataOutputStream(fos)) {
+      writeHeader(dos, numKeys, keyDictionaryOffset, keyMetadataOffset, perKeyDataOffset);
+      dos.write(keyDictionarySection);
+      dos.write(keyMetadataSection);
+      dos.write(perKeyDataSection);
+    }
+  }
+
+  private byte[] buildKeyDictionarySection(List<String> sortedKeys)
+      throws IOException {
+    ByteArrayOutputStream baos = new ByteArrayOutputStream();
+    DataOutputStream dos = new DataOutputStream(baos);
+    dos.writeInt(sortedKeys.size());
+    for (String key : sortedKeys) {
+      byte[] keyBytes = key.getBytes(StandardCharsets.UTF_8);
+      dos.writeInt(keyBytes.length);
+      dos.write(keyBytes);
+    }
+    return baos.toByteArray();
+  }
+
+  private byte[] buildPerKeyDataSection(List<String> sortedKeys, byte[] keyMetadataSection)
+      throws IOException {
+    ByteArrayOutputStream baos = new ByteArrayOutputStream();
+    DataOutputStream dos = new DataOutputStream(baos);
+    long currentOffset = 0;
+
+    for (int i = 0; i < sortedKeys.size(); i++) {
+      String key = sortedKeys.get(i);
+      RoaringBitmap presence = _presenceBitmaps.get(key);
+      List<Object> values = _values.get(key);
+      DataType dataType = _keyTypes.getOrDefault(key, _defaultValueType);
+      DataType storedType = dataType.getStoredType();
+
+      byte[] presenceBytes = RoaringBitmapUtils.serialize(presence);
+      long presenceOffset = currentOffset;
+      dos.write(presenceBytes);
+      currentOffset += presenceBytes.length;
+
+      byte[] forwardBytes = buildForwardIndex(values, storedType);
+      long forwardOffset = currentOffset;
+      dos.write(forwardBytes);
+      currentOffset += forwardBytes.length;
+
+      byte[] invertedBytes = _enableInvertedIndex ? buildInvertedIndex(presence, values, storedType) : new byte[0];
+      long invertedOffset = _enableInvertedIndex ? currentOffset : 0;
+      if (_enableInvertedIndex) {
+        dos.write(invertedBytes);
+        currentOffset += invertedBytes.length;
+      }
+
+      int entryOffset = i * KEY_METADATA_ENTRY_SIZE;
+      keyMetadataSection[entryOffset] = (byte) storedType.ordinal();
+      writeInt(keyMetadataSection, entryOffset + 1, values.size());
+      writeLong(keyMetadataSection, entryOffset + 5, presenceOffset);
+      writeLong(keyMetadataSection, entryOffset + 13, presenceBytes.length);
+      writeLong(keyMetadataSection, entryOffset + 21, forwardOffset);
+      writeLong(keyMetadataSection, entryOffset + 29, forwardBytes.length);
+      writeLong(keyMetadataSection, entryOffset + 37, invertedOffset);
+      writeLong(keyMetadataSection, entryOffset + 45, invertedBytes.length);
+    }
+    return baos.toByteArray();
+  }
+
+  private static void writeInt(byte[] buf, int offset, int value) {
+    buf[offset] = (byte) (value >> 24);
+    buf[offset + 1] = (byte) (value >> 16);
+    buf[offset + 2] = (byte) (value >> 8);
+    buf[offset + 3] = (byte) (value);
+  }
+
+  private static void writeLong(byte[] buf, int offset, long value) {
+    for (int i = 0; i < 8; i++) {
+      buf[offset + i] = (byte) (value >> ((7 - i) * 8));
+    }
+  }
+
+  private byte[] buildForwardIndex(List<Object> values, DataType storedType)
+      throws IOException {
+    ByteArrayOutputStream baos = new ByteArrayOutputStream();
+    DataOutputStream dos = new DataOutputStream(baos);
+    writeForwardIndex(dos, values, storedType);
+    return baos.toByteArray();
+  }
+
+  private void writeForwardIndex(DataOutputStream dos, List<Object> values, DataType storedType)
+      throws IOException {
+    switch (storedType) {
+      case INT:
+        for (Object v : values) {
+          dos.writeInt((Integer) v);
+        }
+        break;
+      case LONG:
+        for (Object v : values) {
+          dos.writeLong((Long) v);
+        }
+        break;
+      case FLOAT:
+        for (Object v : values) {
+          dos.writeFloat((Float) v);
+        }
+        break;
+      case DOUBLE:
+        for (Object v : values) {
+          dos.writeDouble((Double) v);
+        }
+        break;
+      case STRING: {
+        int numValues = values.size();
+        dos.writeInt(numValues);
+        ByteArrayOutputStream dataBaos = new ByteArrayOutputStream();
+        int[] offsets = new int[numValues + 1];
+        int offset = 0;
+        for (int i = 0; i < numValues; i++) {
+          offsets[i] = offset;
+          byte[] b = ((String) values.get(i)).getBytes(StandardCharsets.UTF_8);
+          dataBaos.write(b);
+          offset += b.length;
+        }
+        offsets[numValues] = offset;
+        for (int o : offsets) {
+          dos.writeInt(o);
+        }
+        dos.write(dataBaos.toByteArray());
+        break;
+      }
+      case BYTES: {
+        int numValues = values.size();
+        dos.writeInt(numValues);
+        ByteArrayOutputStream dataBaos = new ByteArrayOutputStream();
+        int[] offsets = new int[numValues + 1];
+        int offset = 0;
+        for (int i = 0; i < numValues; i++) {
+          offsets[i] = offset;
+          byte[] b = (byte[]) values.get(i);
+          dataBaos.write(b);
+          offset += b.length;
+        }
+        offsets[numValues] = offset;
+        for (int o : offsets) {
+          dos.writeInt(o);
+        }
+        dos.write(dataBaos.toByteArray());
+        break;
+      }
+      default:
+        throw new IllegalStateException("Unsupported stored type for forward index: " + storedType);
+    }
+  }
+
+  private byte[] buildInvertedIndex(RoaringBitmap presence, List<Object> values, DataType storedType)
+      throws IOException {
+    Map<String, RoaringBitmap> valueToDocIds = new TreeMap<>();
+    int ordinal = 0;
+    for (int docId : presence) {
+      Object value = values.get(ordinal);
+      String keyRep = storedType.toString(value);
+      valueToDocIds.computeIfAbsent(keyRep, k -> new RoaringBitmap()).add(docId);
+      ordinal++;
+    }
+
+    ByteArrayOutputStream baos = new ByteArrayOutputStream();
+    DataOutputStream dos = new DataOutputStream(baos);
+    dos.writeInt(valueToDocIds.size());
+    for (Map.Entry<String, RoaringBitmap> entry : valueToDocIds.entrySet()) {
+      byte[] valueBytes = entry.getKey().getBytes(StandardCharsets.UTF_8);
+      dos.writeInt(valueBytes.length);
+      dos.write(valueBytes);
+      byte[] bitmapBytes = RoaringBitmapUtils.serialize(entry.getValue());
+      dos.writeInt(bitmapBytes.length);
+      dos.write(bitmapBytes);
+    }
+    return baos.toByteArray();
+  }
+
+  private void writeHeader(DataOutputStream dos, int numKeys, long keyDictOffset, long keyMetaOffset, long perKeyOffset)
+      throws IOException {
+    dos.writeInt(MAGIC);
+    dos.writeInt(VERSION);
+    dos.writeInt(numKeys);
+    dos.writeInt(_numDocs);
+    dos.writeLong(keyDictOffset);
+    dos.writeLong(keyMetaOffset);
+    dos.writeLong(perKeyOffset);
+    // 64 - (4 ints * 4 bytes) - (3 longs * 8 bytes) = 64 - 16 - 24 = 24 bytes padding
+    for (int i = 0; i < 24; i++) {
+      dos.write(0);
+    }
+  }
+
+  @Override
+  public void close()
+      throws IOException {
+  }
+}
