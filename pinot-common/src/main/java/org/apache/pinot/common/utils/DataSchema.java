@@ -296,6 +296,12 @@ public class DataSchema {
         return typeFactory.createSqlType(SqlTypeName.MAP);
       }
     },
+    SPARSE_MAP(NullValuePlaceHolder.SPARSE_MAP) {
+      @Override
+      public RelDataType toType(RelDataTypeFactory typeFactory) {
+        return typeFactory.createSqlType(SqlTypeName.MAP);
+      }
+    },
     BYTES(NullValuePlaceHolder.INTERNAL_BYTES) {
       @Override
       public RelDataType toType(RelDataTypeFactory typeFactory) {
@@ -455,6 +461,10 @@ public class DataSchema {
         case BYTES:
         case BYTES_ARRAY:
           return DataType.BYTES;
+        case MAP:
+          return DataType.MAP;
+        case SPARSE_MAP:
+          return DataType.SPARSE_MAP;
         case UNKNOWN:
           return DataType.UNKNOWN;
         default:
@@ -590,6 +600,9 @@ public class DataSchema {
           return toTimestampArray(toLongArray(value));
         case BYTES_ARRAY:
           return (byte[][]) value;
+        case MAP:
+        case SPARSE_MAP:
+          return (Serializable) value;
         case UNKNOWN: // fall through
         case OBJECT:
           return (Serializable) value;
@@ -645,6 +658,7 @@ public class DataSchema {
         case BYTES:
           return ((ByteArray) value).toHexString();
         case MAP:
+        case SPARSE_MAP:
           return toMap(value);
         case INT_ARRAY:
           return (int[]) value;
@@ -848,6 +862,8 @@ public class DataSchema {
           return BYTES;
         case MAP:
           return MAP;
+        case SPARSE_MAP:
+          return SPARSE_MAP;
         case UNKNOWN:
           return UNKNOWN;
         default:

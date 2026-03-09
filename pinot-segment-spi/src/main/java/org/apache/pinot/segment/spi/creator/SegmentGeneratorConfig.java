@@ -556,6 +556,10 @@ public class SegmentGeneratorConfig implements Serializable {
     return getQualifyingFields(FieldType.COMPLEX, true);
   }
 
+  public List<String> getSparseMapColumnNames() {
+    return getQualifyingFields(FieldType.SPARSE_MAP, true);
+  }
+
   public void setSegmentPartitionConfig(SegmentPartitionConfig segmentPartitionConfig) {
     _segmentPartitionConfig = segmentPartitionConfig;
   }

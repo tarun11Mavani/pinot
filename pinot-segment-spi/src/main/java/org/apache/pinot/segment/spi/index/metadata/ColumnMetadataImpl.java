@@ -25,6 +25,7 @@ import it.unimi.dsi.fastutil.longs.LongArrayList;
 import java.math.BigDecimal;
 import java.util.HashMap;
 import java.util.Iterator;
+import java.util.LinkedHashMap;
 import java.util.List;
 import java.util.Map;
 import java.util.Objects;
@@ -49,6 +50,7 @@ import org.apache.pinot.spi.data.DimensionFieldSpec;
 import org.apache.pinot.spi.data.FieldSpec;
 import org.apache.pinot.spi.data.FieldSpec.DataType;
 import org.apache.pinot.spi.data.MetricFieldSpec;
+import org.apache.pinot.spi.data.SparseMapFieldSpec;
 import org.apache.pinot.spi.data.TimeFieldSpec;
 import org.apache.pinot.spi.data.TimeGranularitySpec;
 import org.apache.pinot.spi.env.CommonsConfigurationUtils;
@@ -358,6 +360,28 @@ public class ColumnMetadataImpl implements ColumnMetadata {
         boolean isSingleValue = config.getBoolean(Column.getKeyFor(column, Column.IS_SINGLE_VALUED));
         fieldSpec = new DimensionFieldSpec(fieldName, dataType, isSingleValue, maxLength,
             defaultNullValueString, maxLengthExceedStrategy);
+        break;
+      case SPARSE_MAP:
+        SparseMapFieldSpec sparseMapSpec = new SparseMapFieldSpec(fieldName);
+        List<String> keyNames =
+            config.getList(String.class, Column.getKeyFor(column, Column.SPARSE_MAP_KEY_NAMES), List.of());
+        if (!keyNames.isEmpty()) {
+          Map<String, DataType> keyTypes = new LinkedHashMap<>();
+          for (String keyName : keyNames) {
+            String typeName = config.getString(
+                Column.getKeyFor(column, Column.SPARSE_MAP_KEY_TYPE_PREFIX + "." + keyName), null);
+            if (typeName != null) {
+              keyTypes.put(keyName, DataType.valueOf(typeName));
+            }
+          }
+          sparseMapSpec.setKeyTypes(keyTypes);
+        }
+        String defaultValueTypeName =
+            config.getString(Column.getKeyFor(column, Column.SPARSE_MAP_DEFAULT_VALUE_TYPE), null);
+        if (defaultValueTypeName != null) {
+          sparseMapSpec.setDefaultValueType(DataType.valueOf(defaultValueTypeName));
+        }
+        fieldSpec = sparseMapSpec;
         break;
       case METRIC:
         fieldSpec =

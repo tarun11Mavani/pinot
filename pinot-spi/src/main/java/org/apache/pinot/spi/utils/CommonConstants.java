@@ -2118,6 +2118,7 @@ public class CommonConstants {
     public static final String[] STRING_ARRAY = new String[0];
     public static final byte[][] BYTES_ARRAY = new byte[0][];
     public static final Object MAP = Collections.emptyMap();
+    public static final Object SPARSE_MAP = Collections.emptyMap();
   }
 
   public static class CursorConfigs {
