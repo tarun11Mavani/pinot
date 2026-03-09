@@ -21,9 +21,6 @@ package org.apache.pinot.spi.data;
 import com.fasterxml.jackson.annotation.JsonIgnore;
 import com.fasterxml.jackson.annotation.JsonInclude;
 import com.fasterxml.jackson.annotation.JsonProperty;
-import com.fasterxml.jackson.annotation.JsonSubTypes;
-import com.fasterxml.jackson.annotation.JsonTypeInfo;
-import com.fasterxml.jackson.annotation.OptBoolean;
 import com.fasterxml.jackson.core.JsonProcessingException;
 import com.fasterxml.jackson.databind.JsonNode;
 import com.fasterxml.jackson.databind.node.ObjectNode;
@@ -60,19 +57,6 @@ import org.apache.pinot.spi.utils.TimestampUtils;
  * </ul>
  */
 @SuppressWarnings("unused")
-@JsonTypeInfo(
-    use = JsonTypeInfo.Id.NAME,
-    property = "fieldType",
-    requireTypeIdForSubtypes = OptBoolean.FALSE
-)
-@JsonSubTypes({
-    @JsonSubTypes.Type(value = DimensionFieldSpec.class, name = "DIMENSION"),
-    @JsonSubTypes.Type(value = MetricFieldSpec.class, name = "METRIC"),
-    @JsonSubTypes.Type(value = TimeFieldSpec.class, name = "TIME"),
-    @JsonSubTypes.Type(value = DateTimeFieldSpec.class, name = "DATE_TIME"),
-    @JsonSubTypes.Type(value = ComplexFieldSpec.class, name = "COMPLEX"),
-    @JsonSubTypes.Type(value = SparseMapFieldSpec.class, name = "SPARSE_MAP")
-})
 @JsonInclude(JsonInclude.Include.NON_NULL)
 public abstract class FieldSpec implements Comparable<FieldSpec>, Serializable {
   public static final Integer DEFAULT_DIMENSION_NULL_VALUE_OF_INT = Integer.MIN_VALUE;
