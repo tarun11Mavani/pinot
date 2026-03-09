@@ -1,0 +1,218 @@
+/**
+ * Licensed to the Apache Software Foundation (ASF) under one
+ * or more contributor license agreements.  See the NOTICE file
+ * distributed with this work for additional information
+ * regarding copyright ownership.  The ASF licenses this file
+ * to you under the Apache License, Version 2.0 (the
+ * "License"); you may not use this file except in compliance
+ * with the License.  You may obtain a copy of the License at
+ *
+ *   http://www.apache.org/licenses/LICENSE-2.0
+ *
+ * Unless required by applicable law or agreed to in writing,
+ * software distributed under the License is distributed on an
+ * "AS IS" BASIS, WITHOUT WARRANTIES OR CONDITIONS OF ANY
+ * KIND, either express or implied.  See the License for the
+ * specific language governing permissions and limitations
+ * under the License.
+ */
+package org.apache.pinot.tools;
+
+import java.util.ArrayList;
+import java.util.Arrays;
+import java.util.List;
+import org.apache.pinot.tools.admin.PinotAdministrator;
+import org.apache.pinot.tools.admin.command.QuickstartRunner;
+
+
+/**
+ * Quickstart demonstrating SPARSE_MAP column type vs JSON column type on identical data.
+ *
+ * <p>Two tables are loaded with the same 20-row user-metrics dataset:
+ * <ul>
+ *   <li>{@code userMetrics} — {@code metrics} column is {@code SPARSE_MAP} with declared keys
+ *       {@code clicks} (LONG), {@code spend} (DOUBLE), {@code sessions} (INT), and
+ *       {@code country} (STRING). Values are stored in a compact columnar bitmap index enabling
+ *       O(1) per-key retrieval and fast EQ/IN filtering via per-key inverted indexes.</li>
+ *   <li>{@code userMetricsJson} — {@code metrics} column is {@code JSON}, storing the entire
+ *       map object as a JSON blob. Key access requires {@code JSON_EXTRACT_SCALAR} and all
+ *       predicates are evaluated via full document scan.</li>
+ * </ul>
+ *
+ * <p>Equivalent queries are run against both tables so you can compare query syntax and
+ * inspect execution plans to observe the performance difference.
+ */
+public class SparseMapQuickStart extends Quickstart {
+
+  @Override
+  public List<String> types() {
+    return Arrays.asList("SPARSE_MAP", "BATCH_SPARSE_MAP", "BATCH-SPARSE-MAP", "OFFLINE_SPARSE_MAP",
+        "OFFLINE-SPARSE-MAP");
+  }
+
+  @Override
+  protected String[] getDefaultBatchTableDirectories() {
+    return new String[]{"examples/batch/userMetrics", "examples/batch/userMetricsJson"};
+  }
+
+  @Override
+  public void runSampleQueries(QuickstartRunner runner)
+      throws Exception {
+    printStatus(Color.GREEN, "[SPARSE_MAP_QUICKSTART_BUILD=v5] Starting sample queries");
+
+    // -----------------------------------------------------------------------
+    // Q1: Total record count — both tables have identical row counts
+    // -----------------------------------------------------------------------
+    String q1sm = "SELECT COUNT(*) FROM userMetrics";
+    printStatus(Color.YELLOW, "[SPARSE_MAP] Total number of user metric records");
+    printStatus(Color.CYAN, "Query : " + q1sm);
+    printStatus(Color.YELLOW, prettyPrintResponse(runner.runQuery(q1sm)));
+    printStatus(Color.GREEN, "***************************************************");
+
+    String q1json = "SELECT COUNT(*) FROM userMetricsJson";
+    printStatus(Color.YELLOW, "[JSON] Total number of user metric records");
+    printStatus(Color.CYAN, "Query : " + q1json);
+    printStatus(Color.YELLOW, prettyPrintResponse(runner.runQuery(q1json)));
+    printStatus(Color.GREEN, "***************************************************");
+
+    // -----------------------------------------------------------------------
+    // Q2: Simple projection of non-map columns
+    // -----------------------------------------------------------------------
+    String q2sm = "SELECT userId, region FROM userMetrics LIMIT 10";
+    printStatus(Color.YELLOW, "[SPARSE_MAP] Show first 10 rows (userId and region columns)");
+    printStatus(Color.CYAN, "Query : " + q2sm);
+    printStatus(Color.YELLOW, prettyPrintResponse(runner.runQuery(q2sm)));
+    printStatus(Color.GREEN, "***************************************************");
+
+    String q2json = "SELECT userId, region FROM userMetricsJson LIMIT 10";
+    printStatus(Color.YELLOW, "[JSON] Show first 10 rows (userId and region columns)");
+    printStatus(Color.CYAN, "Query : " + q2json);
+    printStatus(Color.YELLOW, prettyPrintResponse(runner.runQuery(q2json)));
+    printStatus(Color.GREEN, "***************************************************");
+
+    // -----------------------------------------------------------------------
+    // Q3: Group-by on a regular column
+    // -----------------------------------------------------------------------
+    String q3sm = "SELECT region, COUNT(*) AS userCount FROM userMetrics GROUP BY region ORDER BY userCount DESC";
+    printStatus(Color.YELLOW, "[SPARSE_MAP] Count users per region");
+    printStatus(Color.CYAN, "Query : " + q3sm);
+    printStatus(Color.YELLOW, prettyPrintResponse(runner.runQuery(q3sm)));
+    printStatus(Color.GREEN, "***************************************************");
+
+    String q3json = "SELECT region, COUNT(*) AS userCount FROM userMetricsJson GROUP BY region ORDER BY userCount DESC";
+    printStatus(Color.YELLOW, "[JSON] Count users per region");
+    printStatus(Color.CYAN, "Query : " + q3json);
+    printStatus(Color.YELLOW, prettyPrintResponse(runner.runQuery(q3json)));
+    printStatus(Color.GREEN, "***************************************************");
+
+    // -----------------------------------------------------------------------
+    // Q4: EQ filter on regular column + group-by
+    // -----------------------------------------------------------------------
+    String q4sm = "SELECT region, COUNT(*) FROM userMetrics WHERE region = 'US' GROUP BY region";
+    printStatus(Color.YELLOW, "[SPARSE_MAP] Count records for US region");
+    printStatus(Color.CYAN, "Query : " + q4sm);
+    printStatus(Color.YELLOW, prettyPrintResponse(runner.runQuery(q4sm)));
+    printStatus(Color.GREEN, "***************************************************");
+
+    String q4json = "SELECT region, COUNT(*) FROM userMetricsJson WHERE region = 'US' GROUP BY region";
+    printStatus(Color.YELLOW, "[JSON] Count records for US region");
+    printStatus(Color.CYAN, "Query : " + q4json);
+    printStatus(Color.YELLOW, prettyPrintResponse(runner.runQuery(q4json)));
+    printStatus(Color.GREEN, "***************************************************");
+
+    // -----------------------------------------------------------------------
+    // Q5: Key projection — SPARSE_MAP uses col['key']; JSON uses JSON_EXTRACT_SCALAR
+    // -----------------------------------------------------------------------
+    String q5sm = "SELECT userId, metrics['clicks'] FROM userMetrics LIMIT 10";
+    printStatus(Color.YELLOW, "[SPARSE_MAP] Project metrics['clicks'] — O(1) bitmap-rank lookup per doc");
+    printStatus(Color.CYAN, "Query : " + q5sm);
+    printStatus(Color.YELLOW, prettyPrintResponse(runner.runQuery(q5sm)));
+    printStatus(Color.GREEN, "***************************************************");
+
+    String q5json = "SELECT userId, JSON_EXTRACT_SCALAR(metrics, '$.clicks', 'LONG') FROM userMetricsJson LIMIT 10";
+    printStatus(Color.YELLOW, "[JSON] Project clicks via JSON_EXTRACT_SCALAR — parses JSON blob per doc");
+    printStatus(Color.CYAN, "Query : " + q5json);
+    printStatus(Color.YELLOW, prettyPrintResponse(runner.runQuery(q5json)));
+    printStatus(Color.GREEN, "***************************************************");
+
+    // -----------------------------------------------------------------------
+    // Q6: Range predicate on map key — SPARSE_MAP uses expression scan over typed values;
+    //     JSON_MATCH does not guarantee numeric ordering so JSON_EXTRACT_SCALAR is used here
+    // -----------------------------------------------------------------------
+    String q6sm = "SELECT userId, metrics['clicks'] FROM userMetrics WHERE metrics['clicks'] >= 5 LIMIT 100";
+    printStatus(Color.YELLOW, "[SPARSE_MAP] Filter metrics['clicks'] >= 5 — typed per-key forward index scan");
+    printStatus(Color.CYAN, "Query : " + q6sm);
+    printStatus(Color.YELLOW, prettyPrintResponse(runner.runQuery(q6sm)));
+    printStatus(Color.GREEN, "***************************************************");
+
+    String q6json =
+        "SELECT userId, JSON_EXTRACT_SCALAR(metrics, '$.clicks', 'LONG') FROM userMetricsJson"
+            + " WHERE JSON_EXTRACT_SCALAR(metrics, '$.clicks', 'LONG') >= 5 LIMIT 100";
+    printStatus(Color.YELLOW, "[JSON] Filter clicks >= 5 via JSON_EXTRACT_SCALAR (range — JSON_MATCH not used for numeric range)");
+    printStatus(Color.CYAN, "Query : " + q6json);
+    printStatus(Color.YELLOW, prettyPrintResponse(runner.runQuery(q6json)));
+    printStatus(Color.GREEN, "***************************************************");
+
+    // -----------------------------------------------------------------------
+    // Q7: EQ filter on map key — SPARSE_MAP uses per-key inverted index (no scan);
+    //     JSON_MATCH uses the JSON index (inverted lookup) — both avoid full doc scan
+    // -----------------------------------------------------------------------
+    String q7sm = "SELECT userId, metrics['country'] FROM userMetrics WHERE metrics['country'] = 'US' LIMIT 100";
+    printStatus(Color.YELLOW, "[SPARSE_MAP] Filter metrics['country'] = 'US' — inverted index lookup, no doc scan");
+    printStatus(Color.CYAN, "Query : " + q7sm);
+    printStatus(Color.YELLOW, prettyPrintResponse(runner.runQuery(q7sm)));
+    printStatus(Color.GREEN, "***************************************************");
+
+    String q7json =
+        "SELECT userId, JSON_EXTRACT_SCALAR(metrics, '$.country', 'STRING') FROM userMetricsJson"
+            + " WHERE JSON_MATCH(metrics, '\"$.country\" = ''US''')";
+    printStatus(Color.YELLOW, "[JSON] Filter country = 'US' via JSON_MATCH — uses JSON index, no full doc parse");
+    printStatus(Color.CYAN, "Query : " + q7json);
+    printStatus(Color.YELLOW, prettyPrintResponse(runner.runQuery(q7json)));
+    printStatus(Color.GREEN, "***************************************************");
+
+    // -----------------------------------------------------------------------
+    // Q8: SUM aggregation on a numeric map key
+    // -----------------------------------------------------------------------
+    String q8sm = "SELECT SUM(metrics['clicks']) AS totalClicks FROM userMetrics";
+    printStatus(Color.YELLOW, "[SPARSE_MAP] SUM of metrics['clicks'] across all users");
+    printStatus(Color.CYAN, "Query : " + q8sm);
+    printStatus(Color.YELLOW, prettyPrintResponse(runner.runQuery(q8sm)));
+    printStatus(Color.GREEN, "***************************************************");
+
+    String q8json = "SELECT SUM(JSON_EXTRACT_SCALAR(metrics, '$.clicks', 'LONG')) AS totalClicks FROM userMetricsJson";
+    printStatus(Color.YELLOW, "[JSON] SUM of clicks extracted via JSON_EXTRACT_SCALAR");
+    printStatus(Color.CYAN, "Query : " + q8json);
+    printStatus(Color.YELLOW, prettyPrintResponse(runner.runQuery(q8json)));
+    printStatus(Color.GREEN, "***************************************************");
+
+    // -----------------------------------------------------------------------
+    // Q9: GROUP BY on a map key
+    // -----------------------------------------------------------------------
+    String q9sm =
+        "SELECT metrics['country'], COUNT(*) AS cnt FROM userMetrics"
+            + " WHERE metrics['country'] != '' GROUP BY metrics['country'] ORDER BY cnt DESC";
+    printStatus(Color.YELLOW, "[SPARSE_MAP] GROUP BY metrics['country'] — per-key forward index, inverted index assists filter");
+    printStatus(Color.CYAN, "Query : " + q9sm);
+    printStatus(Color.YELLOW, prettyPrintResponse(runner.runQuery(q9sm)));
+    printStatus(Color.GREEN, "***************************************************");
+
+    String q9json =
+        "SELECT JSON_EXTRACT_SCALAR(metrics, '$.country', 'STRING') AS country, COUNT(*) AS cnt"
+            + " FROM userMetricsJson"
+            + " WHERE JSON_MATCH(metrics, '\"$.country\" IS NOT NULL')"
+            + " GROUP BY country ORDER BY cnt DESC";
+    printStatus(Color.YELLOW, "[JSON] GROUP BY country — JSON_MATCH IS NOT NULL uses JSON index to skip missing docs");
+    printStatus(Color.CYAN, "Query : " + q9json);
+    printStatus(Color.YELLOW, prettyPrintResponse(runner.runQuery(q9json)));
+    printStatus(Color.GREEN, "***************************************************");
+  }
+
+  public static void main(String[] args)
+      throws Exception {
+    List<String> arguments = new ArrayList<>();
+    arguments.addAll(Arrays.asList("QuickStart", "-type", "SPARSE_MAP"));
+    arguments.addAll(Arrays.asList(args));
+    PinotAdministrator.main(arguments.toArray(new String[arguments.size()]));
+  }
+}

@@ -1,0 +1,22 @@
+{
+  "tableName": "userMetricsJson",
+  "tableType": "OFFLINE",
+  "segmentsConfig": {
+    "replication": "1",
+    "timeColumnName": "ts"
+  },
+  "tableIndexConfig": {
+    "loadMode": "MMAP",
+    "noDictionaryColumns": [
+      "metrics"
+    ],
+    "jsonIndexColumns": [
+      "metrics"
+    ]
+  },
+  "tenants": {
+    "broker": "DefaultTenant",
+    "server": "DefaultTenant"
+  },
+  "metadata": {}
+}

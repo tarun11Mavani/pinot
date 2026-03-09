@@ -22,7 +22,7 @@ pinot-broker/test-output/
 pinot-core/test-output/
 *.log
 .doppelganger
-docs/_build
+docs/
 *.ipr
 *.iws
 .*.swp
@@ -110,3 +110,5 @@ hf_cache/
 # Python
 __pycache__/
 *.py[cod]
+.claude.md
+.CLAUDE.md
