@@ -7,18 +7,18 @@
     {
       "name": "region",
       "dataType": "STRING"
-    },
+    }
+  ],
+  "sparseMapFieldSpecs": [
     {
       "name": "metrics",
-      "dataType": "SPARSE_MAP",
-      "singleValueField": true,
-      "sparseMapKeyTypes": {
+      "keyTypes": {
         "clicks": "LONG",
         "spend": "DOUBLE",
         "sessions": "INT",
         "country": "STRING"
       },
-      "sparseMapDefaultValueType": "STRING"
+      "defaultValueType": "STRING"
     }
   ],
   "dateTimeFieldSpecs": [

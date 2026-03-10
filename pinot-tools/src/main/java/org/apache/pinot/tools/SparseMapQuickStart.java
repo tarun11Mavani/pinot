@@ -52,13 +52,50 @@ public class SparseMapQuickStart extends Quickstart {
 
   @Override
   protected String[] getDefaultBatchTableDirectories() {
-    return new String[]{"examples/batch/userMetrics", "examples/batch/userMetricsJson"};
+    return new String[]{
+        "examples/batch/baseballStats",
+        "examples/batch/userMetrics",
+        "examples/batch/userMetricsJson"
+    };
   }
 
   @Override
   public void runSampleQueries(QuickstartRunner runner)
       throws Exception {
-    printStatus(Color.GREEN, "[SPARSE_MAP_QUICKSTART_BUILD=v5] Starting sample queries");
+    printStatus(Color.GREEN, "[SPARSE_MAP_QUICKSTART_BUILD=v6] Starting sample queries");
+
+    // -----------------------------------------------------------------------
+    // Legacy schema validation — baseballStats uses a traditional schema with
+    // dimension + metric field specs and no sparse map columns. Verifying this
+    // table loads and queries correctly ensures backward compatibility.
+    // -----------------------------------------------------------------------
+    printStatus(Color.GREEN, "=== LEGACY SCHEMA VALIDATION (baseballStats) ===");
+
+    String legacy1 = "SELECT COUNT(*) FROM baseballStats";
+    printStatus(Color.YELLOW, "[LEGACY] Total records in baseballStats (traditional schema)");
+    printStatus(Color.CYAN, "Query : " + legacy1);
+    printStatus(Color.YELLOW, prettyPrintResponse(runner.runQuery(legacy1)));
+    printStatus(Color.GREEN, "***************************************************");
+
+    String legacy2 =
+        "SELECT playerName, SUM(runs) FROM baseballStats GROUP BY playerName ORDER BY SUM(runs) DESC LIMIT 5";
+    printStatus(Color.YELLOW, "[LEGACY] Top 5 run scorers — validates metric aggregation on legacy schema");
+    printStatus(Color.CYAN, "Query : " + legacy2);
+    printStatus(Color.YELLOW, prettyPrintResponse(runner.runQuery(legacy2)));
+    printStatus(Color.GREEN, "***************************************************");
+
+    String legacy3 =
+        "SELECT playerName, yearID, homeRuns FROM baseballStats WHERE yearID = 2000 ORDER BY homeRuns DESC LIMIT 5";
+    printStatus(Color.YELLOW, "[LEGACY] Top home-run hitters in 2000 — validates dimension filter + metric projection");
+    printStatus(Color.CYAN, "Query : " + legacy3);
+    printStatus(Color.YELLOW, prettyPrintResponse(runner.runQuery(legacy3)));
+    printStatus(Color.GREEN, "***************************************************");
+
+    printStatus(Color.GREEN, "=== Legacy schema validation PASSED — coexists with SPARSE_MAP tables ===");
+
+    // -----------------------------------------------------------------------
+    // SPARSE_MAP vs JSON comparison queries
+    // -----------------------------------------------------------------------
 
     // -----------------------------------------------------------------------
     // Q1: Total record count — both tables have identical row counts

@@ -77,9 +77,9 @@ public class SparseMapIndexType
       String column = fieldSpec.getName();
       Preconditions.checkState(fieldSpec.isSingleValueField(),
           "Cannot create SparseMap index on multi-value column: %s", column);
-      Preconditions.checkState(fieldSpec.getFieldType() == FieldSpec.FieldType.SPARSE_MAP,
+      Preconditions.checkState(fieldSpec.getDataType() == FieldSpec.DataType.SPARSE_MAP,
           "SparseMap index can only be created on SPARSE_MAP columns, got: %s for column: %s",
-          fieldSpec.getFieldType(), column);
+          fieldSpec.getDataType(), column);
     }
   }
 

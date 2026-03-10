@@ -46,6 +46,7 @@ public final class SparseMapFieldSpec extends FieldSpec {
   public SparseMapFieldSpec() {
     super();
     _dataType = DataType.SPARSE_MAP;
+    _defaultNullValue = getDefaultNullValue(FieldType.SPARSE_MAP, DataType.SPARSE_MAP, null);
   }
 
   public SparseMapFieldSpec(String name) {

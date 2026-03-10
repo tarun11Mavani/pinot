@@ -131,6 +131,7 @@ public final class Schema implements Serializable {
           case STRING:
           case JSON:
           case BYTES:
+          case SPARSE_MAP:
             break;
           default:
             throw new IllegalStateException(
