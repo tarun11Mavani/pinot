@@ -56,7 +56,8 @@ public class SparseMapDataSource extends BaseDataSource implements MapDataSource
    * Constructs a SparseMapDataSource for an immutable segment.
    */
   public SparseMapDataSource(ColumnMetadata columnMetadata, SparseMapIndexReader sparseMapIndexReader) {
-    super(new SparseMapDataSourceMetadata(columnMetadata), ColumnIndexContainer.Empty.INSTANCE);
+    super(new SparseMapDataSourceMetadata(columnMetadata),
+        buildContainerWithForwardIndex(sparseMapIndexReader));
     _sparseMapIndexReader = sparseMapIndexReader;
   }
 
@@ -64,8 +65,15 @@ public class SparseMapDataSource extends BaseDataSource implements MapDataSource
    * Constructs a SparseMapDataSource for a mutable (real-time) segment.
    */
   public SparseMapDataSource(FieldSpec fieldSpec, int numDocs, SparseMapIndexReader sparseMapIndexReader) {
-    super(new MutableSparseMapDataSourceMetadata(fieldSpec, numDocs), ColumnIndexContainer.Empty.INSTANCE);
+    super(new MutableSparseMapDataSourceMetadata(fieldSpec, numDocs),
+        buildContainerWithForwardIndex(sparseMapIndexReader));
     _sparseMapIndexReader = sparseMapIndexReader;
+  }
+
+  private static ColumnIndexContainer buildContainerWithForwardIndex(SparseMapIndexReader reader) {
+    return new ColumnIndexContainer.FromMap.Builder()
+        .with(StandardIndexes.forward(), new SparseMapForwardIndexReader(reader))
+        .build();
   }
 
   /**

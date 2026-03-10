@@ -107,7 +107,7 @@ Integration tests start a full embedded cluster (ZK + controller + broker + serv
 
 ```bash
 pkill -9 -f "pinot" 2>/dev/null; sleep 2
-rm -rf /tmp/QuickStart*
+rm -rf /tmp/QuickStart 2>/dev/null
 pinot-tools/target/pinot-tools-pkg/bin/pinot-admin.sh QuickStart -type <TYPE>
 ```
 
@@ -118,9 +118,9 @@ Add a unique build marker (e.g. `[BUILD=v5]`) to a startup log line in the quick
 After making Java changes:
 
 ```bash
+./mvnw license:format -pl <module>   # only needed for new files — run BEFORE spotless
 ./mvnw spotless:apply -pl <module>
 ./mvnw checkstyle:check -pl <module>
-./mvnw license:format -pl <module>   # only needed for new files
 ```
 
 Or run all at once:
