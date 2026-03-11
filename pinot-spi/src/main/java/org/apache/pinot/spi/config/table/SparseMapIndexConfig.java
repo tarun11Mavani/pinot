@@ -28,28 +28,41 @@ import javax.annotation.Nullable;
  * Configuration for the SparseMap index on a SPARSE_MAP column.
  * Controls which keys are indexed per-key in columnar storage and whether
  * per-key inverted indexes are enabled for fast value-based filtering.
+ *
+ * <p>Inverted index control:
+ * <ul>
+ *   <li>{@code enableInvertedIndexForAll: true} — inverted index on ALL keys
+ *       ({@code invertedIndexKeys} is ignored)</li>
+ *   <li>{@code enableInvertedIndexForAll: false} + {@code invertedIndexKeys: [...]} —
+ *       only the listed keys get inverted indexes</li>
+ *   <li>{@code enableInvertedIndexForAll: false} + no {@code invertedIndexKeys} —
+ *       no inverted indexes</li>
+ * </ul>
  */
 public class SparseMapIndexConfig extends IndexConfig {
   public static final SparseMapIndexConfig DISABLED = new SparseMapIndexConfig(false);
   public static final SparseMapIndexConfig DEFAULT = new SparseMapIndexConfig(true);
 
   private final Set<String> _indexedKeys;
-  private final boolean _enableInvertedIndex;
+  private final boolean _enableInvertedIndexForAll;
+  private final Set<String> _invertedIndexKeys;
   private final int _maxKeys;
 
   public SparseMapIndexConfig(boolean enabled) {
-    this(enabled, null, false, 1000);
+    this(enabled, null, false, null, 1000);
   }
 
   @JsonCreator
   public SparseMapIndexConfig(
       @JsonProperty("enabled") boolean enabled,
       @JsonProperty("indexedKeys") @Nullable Set<String> indexedKeys,
-      @JsonProperty("enableInvertedIndex") boolean enableInvertedIndex,
+      @JsonProperty("enableInvertedIndexForAll") boolean enableInvertedIndexForAll,
+      @JsonProperty("invertedIndexKeys") @Nullable Set<String> invertedIndexKeys,
       @JsonProperty("maxKeys") int maxKeys) {
     super(!enabled);
     _indexedKeys = indexedKeys;
-    _enableInvertedIndex = enableInvertedIndex;
+    _enableInvertedIndexForAll = enableInvertedIndexForAll;
+    _invertedIndexKeys = invertedIndexKeys;
     _maxKeys = maxKeys > 0 ? maxKeys : 1000;
   }
 
@@ -62,10 +75,29 @@ public class SparseMapIndexConfig extends IndexConfig {
   }
 
   /**
-   * Returns true if per-key inverted indexes should be created for fast value-based filtering.
+   * Returns true if inverted indexes should be created for ALL keys.
    */
-  public boolean isEnableInvertedIndex() {
-    return _enableInvertedIndex;
+  public boolean isEnableInvertedIndexForAll() {
+    return _enableInvertedIndexForAll;
+  }
+
+  /**
+   * Returns the set of keys that should have inverted indexes, or null if not specified.
+   * Only consulted when {@link #isEnableInvertedIndexForAll()} is false.
+   */
+  @Nullable
+  public Set<String> getInvertedIndexKeys() {
+    return _invertedIndexKeys;
+  }
+
+  /**
+   * Returns true if an inverted index should be created for the given key.
+   * Returns true if {@code enableInvertedIndexForAll} is set, or if the key
+   * is in the {@code invertedIndexKeys} set.
+   */
+  public boolean shouldEnableInvertedIndexForKey(String key) {
+    return _enableInvertedIndexForAll
+        || (_invertedIndexKeys != null && _invertedIndexKeys.contains(key));
   }
 
   /**

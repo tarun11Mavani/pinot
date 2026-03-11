@@ -56,7 +56,7 @@ public class MutableSparseMapIndexImpl implements MutableIndex, SparseMapIndexRe
 
   private final Map<String, DataType> _keyTypes;
   private final DataType _defaultValueType;
-  private final boolean _enableInvertedIndex;
+  private final SparseMapIndexConfig _config;
   private final int _maxKeys;
   private final String _columnName;
 
@@ -83,7 +83,7 @@ public class MutableSparseMapIndexImpl implements MutableIndex, SparseMapIndexRe
       _keyTypes = new HashMap<>();
       _defaultValueType = DataType.STRING;
     }
-    _enableInvertedIndex = config.isEnableInvertedIndex();
+    _config = config;
     _maxKeys = config.getMaxKeys();
     _columnName = context.getFieldSpec().getName();
   }
@@ -121,7 +121,7 @@ public class MutableSparseMapIndexImpl implements MutableIndex, SparseMapIndexRe
         if (!_presenceBitmaps.containsKey(key)) {
           _presenceBitmaps.put(key, new MutableRoaringBitmap());
           _values.put(key, new ArrayList<>());
-          if (_enableInvertedIndex) {
+          if (_config.shouldEnableInvertedIndexForKey(key)) {
             _invertedIndexes.put(key, new TreeMap<>());
           }
           _distinctKeyCount++;
@@ -129,7 +129,7 @@ public class MutableSparseMapIndexImpl implements MutableIndex, SparseMapIndexRe
         _presenceBitmaps.get(key).add(docId);
         Object coerced = coerceValue(rawValue, valueType);
         _values.get(key).add(coerced);
-        if (_enableInvertedIndex) {
+        if (_config.shouldEnableInvertedIndexForKey(key)) {
           String valueStr = valueType.toString(coerced);
           _invertedIndexes.get(key).computeIfAbsent(valueStr, k -> new MutableRoaringBitmap()).add(docId);
         }
@@ -318,7 +318,7 @@ public class MutableSparseMapIndexImpl implements MutableIndex, SparseMapIndexRe
   @Nullable
   @Override
   public ImmutableRoaringBitmap getDocsWithKeyValue(String key, Object value) {
-    if (!_enableInvertedIndex) {
+    if (!_config.shouldEnableInvertedIndexForKey(key)) {
       return null;
     }
     _lock.readLock().lock();

@@ -73,7 +73,7 @@ public interface SparseMapIndexReader extends IndexReader {
 
   /**
    * Returns a bitmap of docIds that have the given key-value pair.
-   * Only available if per-key inverted index is enabled (enableInvertedIndex=true in config).
+   * Only available if per-key inverted index is enabled (enableInvertedIndexForAll=true or key in invertedIndexKeys).
    * Returns null if inverted index is not available for this key.
    */
   @Nullable

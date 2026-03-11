@@ -87,7 +87,7 @@ public class SparseMapSegmentCreationTest {
     // Build table config with sparse_map index in fieldConfigList
     ObjectNode sparseMapNode = JsonUtils.newObjectNode();
     sparseMapNode.put("enabled", true);
-    sparseMapNode.put("enableInvertedIndex", false);
+    sparseMapNode.put("enableInvertedIndexForAll", false);
     sparseMapNode.put("maxKeys", 100);
     ObjectNode indexesNode = JsonUtils.newObjectNode();
     indexesNode.set("sparse_map", sparseMapNode);

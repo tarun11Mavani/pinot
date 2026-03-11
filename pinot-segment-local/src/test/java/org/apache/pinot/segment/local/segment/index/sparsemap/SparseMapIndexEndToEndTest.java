@@ -76,7 +76,7 @@ public class SparseMapIndexEndToEndTest {
     SparseMapFieldSpec fieldSpec = new SparseMapFieldSpec(COLUMN, keyTypes);
     fieldSpec.setDefaultValueType(FieldSpec.DataType.STRING);
 
-    SparseMapIndexConfig config = new SparseMapIndexConfig(true, null, true, 100);
+    SparseMapIndexConfig config = new SparseMapIndexConfig(true, null, true, null, 100);
 
     // Build test data: 6 documents, sparse keys
     @SuppressWarnings("unchecked")
@@ -195,7 +195,7 @@ public class SparseMapIndexEndToEndTest {
     SparseMapFieldSpec fieldSpec = new SparseMapFieldSpec(COLUMN, keyTypes);
     fieldSpec.setDefaultValueType(FieldSpec.DataType.STRING);
 
-    SparseMapIndexConfig config = new SparseMapIndexConfig(true, null, false, 100);
+    SparseMapIndexConfig config = new SparseMapIndexConfig(true, null, false, null, 100);
 
     @SuppressWarnings("unchecked")
     Map<String, Object>[] docs = new Map[]{
@@ -244,7 +244,7 @@ public class SparseMapIndexEndToEndTest {
     SparseMapFieldSpec fieldSpec = new SparseMapFieldSpec(COLUMN, keyTypes);
     fieldSpec.setDefaultValueType(FieldSpec.DataType.STRING);
 
-    SparseMapIndexConfig config = new SparseMapIndexConfig(true, null, true, 100);
+    SparseMapIndexConfig config = new SparseMapIndexConfig(true, null, true, null, 100);
     org.apache.pinot.segment.spi.index.mutable.provider.MutableIndexContext context =
         new org.apache.pinot.segment.spi.index.mutable.provider.MutableIndexContext(
             fieldSpec, -1, false, "testSegment", null, 100, false, 100, 1000, 1, null);
@@ -316,7 +316,7 @@ public class SparseMapIndexEndToEndTest {
     keyTypes.put("quantity", FieldSpec.DataType.INT);
     SparseMapFieldSpec fieldSpec = new SparseMapFieldSpec(colName, keyTypes);
     fieldSpec.setDefaultValueType(FieldSpec.DataType.STRING);
-    SparseMapIndexConfig config = new SparseMapIndexConfig(true, null, false, 10);
+    SparseMapIndexConfig config = new SparseMapIndexConfig(true, null, false, null, 10);
     OnHeapSparseMapIndexCreator creator =
         new OnHeapSparseMapIndexCreator(INDEX_DIR, colName, fieldSpec, config);
 

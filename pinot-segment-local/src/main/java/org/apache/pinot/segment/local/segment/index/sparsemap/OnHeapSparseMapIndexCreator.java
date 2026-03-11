@@ -62,7 +62,7 @@ public class OnHeapSparseMapIndexCreator implements SparseMapIndexCreator {
   private final String _columnName;
   private final Map<String, DataType> _keyTypes;
   private final DataType _defaultValueType;
-  private final boolean _enableInvertedIndex;
+  private final SparseMapIndexConfig _config;
   private final Set<String> _indexedKeys;
   private final int _maxKeys;
 
@@ -83,7 +83,7 @@ public class OnHeapSparseMapIndexCreator implements SparseMapIndexCreator {
       throws IOException {
     _indexDir = indexDir;
     _columnName = columnName;
-    _enableInvertedIndex = config.isEnableInvertedIndex();
+    _config = config;
     _indexedKeys = config.getIndexedKeys();
     _maxKeys = config.getMaxKeys();
 
@@ -254,9 +254,10 @@ public class OnHeapSparseMapIndexCreator implements SparseMapIndexCreator {
       dos.write(forwardBytes);
       currentOffset += forwardBytes.length;
 
-      byte[] invertedBytes = _enableInvertedIndex ? buildInvertedIndex(presence, values, storedType) : new byte[0];
-      long invertedOffset = _enableInvertedIndex ? currentOffset : 0;
-      if (_enableInvertedIndex) {
+      boolean enableInverted = _config.shouldEnableInvertedIndexForKey(key);
+      byte[] invertedBytes = enableInverted ? buildInvertedIndex(presence, values, storedType) : new byte[0];
+      long invertedOffset = enableInverted ? currentOffset : 0;
+      if (enableInverted) {
         dos.write(invertedBytes);
         currentOffset += invertedBytes.length;
       }

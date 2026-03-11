@@ -202,7 +202,7 @@ public class SparseMapClusterIntegrationTest extends BaseClusterIntegrationTest 
   private TableConfig buildSparseMapTableConfig() {
     ObjectNode sparseMapNode = JsonUtils.newObjectNode();
     sparseMapNode.put("enabled", true);
-    sparseMapNode.put("enableInvertedIndex", true);
+    sparseMapNode.put("enableInvertedIndexForAll", true);
     sparseMapNode.put("maxKeys", 100);
     ObjectNode indexesNode = JsonUtils.newObjectNode();
     indexesNode.set("sparse_map", sparseMapNode);

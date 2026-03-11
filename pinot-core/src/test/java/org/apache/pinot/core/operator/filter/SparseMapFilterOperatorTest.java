@@ -87,8 +87,8 @@ public class SparseMapFilterOperatorTest {
   private ImmutableSparseMapIndexReader buildColorIndex(String colName)
       throws Exception {
     SparseMapFieldSpec fieldSpec = new SparseMapFieldSpec(colName);
-    // enableInvertedIndex=true so that getDocsWithKeyValue() works
-    SparseMapIndexConfig config = new SparseMapIndexConfig(true, null, true, 10);
+    // enableInvertedIndexForAll=true so that getDocsWithKeyValue() works
+    SparseMapIndexConfig config = new SparseMapIndexConfig(true, null, true, null, 10);
 
     OnHeapSparseMapIndexCreator creator = new OnHeapSparseMapIndexCreator(_tmpDir, colName, fieldSpec, config);
     Map<String, Object> doc = new HashMap<>();
@@ -155,7 +155,7 @@ public class SparseMapFilterOperatorTest {
       throws Exception {
     String colName = "color_all_absent";
     SparseMapFieldSpec fieldSpec = new SparseMapFieldSpec(colName);
-    SparseMapIndexConfig config = new SparseMapIndexConfig(true, null, true, 10);
+    SparseMapIndexConfig config = new SparseMapIndexConfig(true, null, true, null, 10);
     OnHeapSparseMapIndexCreator creator = new OnHeapSparseMapIndexCreator(_tmpDir, colName, fieldSpec, config);
     // 3 docs, none have the "color" key
     creator.add(Collections.emptyMap());

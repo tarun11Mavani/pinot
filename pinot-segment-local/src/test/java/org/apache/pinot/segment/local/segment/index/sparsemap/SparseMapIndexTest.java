@@ -24,6 +24,7 @@ import java.io.RandomAccessFile;
 import java.util.Collections;
 import java.util.HashMap;
 import java.util.Map;
+import java.util.Set;
 import java.util.concurrent.ExecutorService;
 import java.util.concurrent.Executors;
 import java.util.concurrent.TimeUnit;
@@ -77,7 +78,7 @@ public class SparseMapIndexTest {
   private File createIndex(Map<String, FieldSpec.DataType> keyTypes, Map<String, Object>[] docs)
       throws IOException {
     SparseMapFieldSpec fieldSpec = buildFieldSpec(keyTypes);
-    SparseMapIndexConfig config = new SparseMapIndexConfig(true, null, false, 1000);
+    SparseMapIndexConfig config = new SparseMapIndexConfig(true, null, false, null, 1000);
 
     File indexFile =
         new File(INDEX_DIR, COLUMN_NAME + V1Constants.Indexes.SPARSE_MAP_INDEX_FILE_EXTENSION);
@@ -221,7 +222,7 @@ public class SparseMapIndexTest {
     };
 
     SparseMapFieldSpec fieldSpec = buildFieldSpec(keyTypes);
-    SparseMapIndexConfig config = new SparseMapIndexConfig(true, null, true, 1000);
+    SparseMapIndexConfig config = new SparseMapIndexConfig(true, null, true, null, 1000);
     File indexFile =
         new File(INDEX_DIR, COLUMN_NAME + V1Constants.Indexes.SPARSE_MAP_INDEX_FILE_EXTENSION);
 
@@ -261,7 +262,7 @@ public class SparseMapIndexTest {
     keyTypes.put("brand", FieldSpec.DataType.STRING);
 
     SparseMapFieldSpec fieldSpec = buildFieldSpec(keyTypes);
-    SparseMapIndexConfig config = new SparseMapIndexConfig(true, null, false, 100);
+    SparseMapIndexConfig config = new SparseMapIndexConfig(true, null, false, null, 100);
 
     try (MutableSparseMapIndexImpl mutableIndex = new MutableSparseMapIndexImpl(
         buildMutableContext(fieldSpec), config)) {
@@ -306,7 +307,7 @@ public class SparseMapIndexTest {
       throws Exception {
     String colName = "maxkeys_imm_test";
     SparseMapFieldSpec fieldSpec = new SparseMapFieldSpec(colName);
-    SparseMapIndexConfig config = new SparseMapIndexConfig(true, null, false, 2); // maxKeys=2
+    SparseMapIndexConfig config = new SparseMapIndexConfig(true, null, false, null, 2); // maxKeys=2
     OnHeapSparseMapIndexCreator creator = new OnHeapSparseMapIndexCreator(INDEX_DIR, colName, fieldSpec, config);
 
     // Add a doc with 3 keys — only 2 should be stored
@@ -329,7 +330,7 @@ public class SparseMapIndexTest {
   @Test
   public void testMaxKeysDropsExcessKeysMutable()
       throws Exception {
-    SparseMapIndexConfig config = new SparseMapIndexConfig(true, null, false, 2); // maxKeys=2
+    SparseMapIndexConfig config = new SparseMapIndexConfig(true, null, false, null, 2); // maxKeys=2
     SparseMapFieldSpec fieldSpec = new SparseMapFieldSpec("mutable_maxkeys_test");
 
     try (MutableSparseMapIndexImpl mutableIndex = new MutableSparseMapIndexImpl(
@@ -351,7 +352,7 @@ public class SparseMapIndexTest {
       throws Exception {
     String colName = "null_absent_imm_test";
     SparseMapFieldSpec fieldSpec = new SparseMapFieldSpec(colName);
-    SparseMapIndexConfig config = new SparseMapIndexConfig(true, null, false, 10);
+    SparseMapIndexConfig config = new SparseMapIndexConfig(true, null, false, null, 10);
     OnHeapSparseMapIndexCreator creator = new OnHeapSparseMapIndexCreator(INDEX_DIR, colName, fieldSpec, config);
 
     Map<String, Object> doc = new HashMap<>();
@@ -373,7 +374,7 @@ public class SparseMapIndexTest {
   @Test
   public void testNullValueTreatedAsAbsentMutable()
       throws Exception {
-    SparseMapIndexConfig config = new SparseMapIndexConfig(true, null, false, 10);
+    SparseMapIndexConfig config = new SparseMapIndexConfig(true, null, false, null, 10);
     SparseMapFieldSpec fieldSpec =
         new SparseMapFieldSpec("mutable_null_absent_test");
 
@@ -403,7 +404,7 @@ public class SparseMapIndexTest {
     // Build a minimal valid index
     String colName = "magic_test";
     SparseMapFieldSpec fieldSpec = new SparseMapFieldSpec(colName);
-    SparseMapIndexConfig config = new SparseMapIndexConfig(true, null, false, 10);
+    SparseMapIndexConfig config = new SparseMapIndexConfig(true, null, false, null, 10);
     OnHeapSparseMapIndexCreator creator =
         new OnHeapSparseMapIndexCreator(INDEX_DIR, colName, fieldSpec, config);
     creator.add(Map.of("k", 42));
@@ -428,7 +429,7 @@ public class SparseMapIndexTest {
       throws Exception {
     SparseMapFieldSpec fieldSpec =
         new SparseMapFieldSpec("concurrent_test");
-    SparseMapIndexConfig config = new SparseMapIndexConfig(true, null, false, 100);
+    SparseMapIndexConfig config = new SparseMapIndexConfig(true, null, false, null, 100);
     MutableSparseMapIndexImpl idx;
     try (MutableSparseMapIndexImpl tmp = new MutableSparseMapIndexImpl(buildMutableContext(fieldSpec), config)) {
       idx = tmp;
@@ -477,7 +478,7 @@ public class SparseMapIndexTest {
       throws Exception {
     String colName = "maxkeys_exact_test";
     SparseMapFieldSpec fieldSpec = new SparseMapFieldSpec(colName);
-    SparseMapIndexConfig config = new SparseMapIndexConfig(true, null, false, 2);
+    SparseMapIndexConfig config = new SparseMapIndexConfig(true, null, false, null, 2);
     OnHeapSparseMapIndexCreator creator = new OnHeapSparseMapIndexCreator(INDEX_DIR, colName, fieldSpec, config);
 
     // Add keys one at a time, in known order, across multiple documents
@@ -511,7 +512,7 @@ public class SparseMapIndexTest {
     String colName = "many_docs_test";
     SparseMapFieldSpec fieldSpec = new SparseMapFieldSpec(colName,
         Collections.singletonMap("count", FieldSpec.DataType.INT));
-    SparseMapIndexConfig config = new SparseMapIndexConfig(true, null, false, 10);
+    SparseMapIndexConfig config = new SparseMapIndexConfig(true, null, false, null, 10);
     OnHeapSparseMapIndexCreator creator = new OnHeapSparseMapIndexCreator(INDEX_DIR, colName, fieldSpec, config);
 
     int numDocs = 500;
@@ -554,7 +555,7 @@ public class SparseMapIndexTest {
         "doubleKey", FieldSpec.DataType.DOUBLE
     ));
 
-    SparseMapIndexConfig config = new SparseMapIndexConfig(true, null, false, 10);
+    SparseMapIndexConfig config = new SparseMapIndexConfig(true, null, false, null, 10);
     try (OnHeapSparseMapIndexCreator creator =
         new OnHeapSparseMapIndexCreator(INDEX_DIR, colName, fieldSpec, config)) {
       creator.add(Map.of(
@@ -577,5 +578,170 @@ public class SparseMapIndexTest {
 
     reader.close();
     buf.close();
+  }
+
+  // ---- Per-key inverted index tests ----
+
+  @Test
+  public void testPerKeyInvertedIndexSelectiveKeys()
+      throws IOException {
+    // enableInvertedIndexForAll=false + invertedIndexKeys=["color"] → only "color" gets inverted index
+    Map<String, FieldSpec.DataType> keyTypes = new HashMap<>();
+    keyTypes.put("color", FieldSpec.DataType.STRING);
+    keyTypes.put("size", FieldSpec.DataType.STRING);
+
+    SparseMapFieldSpec fieldSpec = buildFieldSpec(keyTypes);
+    SparseMapIndexConfig config =
+        new SparseMapIndexConfig(true, null, false, Set.of("color"), 1000);
+    File indexFile =
+        new File(INDEX_DIR, COLUMN_NAME + V1Constants.Indexes.SPARSE_MAP_INDEX_FILE_EXTENSION);
+
+    @SuppressWarnings("unchecked")
+    Map<String, Object>[] docs = new Map[]{
+        Map.of("color", "red", "size", "small"),
+        Map.of("color", "blue", "size", "large"),
+        Map.of("color", "red", "size", "medium")
+    };
+
+    try (OnHeapSparseMapIndexCreator creator =
+        new OnHeapSparseMapIndexCreator(INDEX_DIR, COLUMN_NAME, fieldSpec, config)) {
+      for (Map<String, Object> doc : docs) {
+        creator.add(doc);
+      }
+      creator.seal();
+    }
+
+    try (PinotDataBuffer buffer = PinotDataBuffer.mapReadOnlyBigEndianFile(indexFile);
+        SparseMapIndexReader reader = new ImmutableSparseMapIndexReader(buffer, null)) {
+      // color has inverted index
+      ImmutableRoaringBitmap reds = reader.getDocsWithKeyValue("color", "red");
+      assertNotNull(reds, "color should have inverted index");
+      assertTrue(reds.contains(0));
+      assertTrue(reds.contains(2));
+      assertFalse(reds.contains(1));
+
+      // size does NOT have inverted index
+      ImmutableRoaringBitmap smalls = reader.getDocsWithKeyValue("size", "small");
+      assertNull(smalls, "size should NOT have inverted index");
+    }
+  }
+
+  @Test
+  public void testPerKeyInvertedIndexAllOverridesSelectiveKeys()
+      throws IOException {
+    // enableInvertedIndexForAll=true + invertedIndexKeys=["color"] → ALL keys get inverted index (list ignored)
+    Map<String, FieldSpec.DataType> keyTypes = new HashMap<>();
+    keyTypes.put("color", FieldSpec.DataType.STRING);
+    keyTypes.put("size", FieldSpec.DataType.STRING);
+
+    SparseMapFieldSpec fieldSpec = buildFieldSpec(keyTypes);
+    SparseMapIndexConfig config =
+        new SparseMapIndexConfig(true, null, true, Set.of("color"), 1000);
+    File indexFile =
+        new File(INDEX_DIR, COLUMN_NAME + V1Constants.Indexes.SPARSE_MAP_INDEX_FILE_EXTENSION);
+
+    @SuppressWarnings("unchecked")
+    Map<String, Object>[] docs = new Map[]{
+        Map.of("color", "red", "size", "small"),
+        Map.of("color", "blue", "size", "large")
+    };
+
+    try (OnHeapSparseMapIndexCreator creator =
+        new OnHeapSparseMapIndexCreator(INDEX_DIR, COLUMN_NAME, fieldSpec, config)) {
+      for (Map<String, Object> doc : docs) {
+        creator.add(doc);
+      }
+      creator.seal();
+    }
+
+    try (PinotDataBuffer buffer = PinotDataBuffer.mapReadOnlyBigEndianFile(indexFile);
+        SparseMapIndexReader reader = new ImmutableSparseMapIndexReader(buffer, null)) {
+      // Both keys should have inverted indexes
+      assertNotNull(reader.getDocsWithKeyValue("color", "red"));
+      assertNotNull(reader.getDocsWithKeyValue("size", "small"));
+    }
+  }
+
+  @Test
+  public void testPerKeyInvertedIndexNoKeysSpecified()
+      throws IOException {
+    // enableInvertedIndexForAll=false + no invertedIndexKeys → no inverted indexes (existing behavior)
+    Map<String, FieldSpec.DataType> keyTypes = new HashMap<>();
+    keyTypes.put("color", FieldSpec.DataType.STRING);
+
+    SparseMapFieldSpec fieldSpec = buildFieldSpec(keyTypes);
+    SparseMapIndexConfig config = new SparseMapIndexConfig(true, null, false, null, 1000);
+    File indexFile =
+        new File(INDEX_DIR, COLUMN_NAME + V1Constants.Indexes.SPARSE_MAP_INDEX_FILE_EXTENSION);
+
+    @SuppressWarnings("unchecked")
+    Map<String, Object>[] docs = new Map[]{Map.of("color", "red")};
+
+    try (OnHeapSparseMapIndexCreator creator =
+        new OnHeapSparseMapIndexCreator(INDEX_DIR, COLUMN_NAME, fieldSpec, config)) {
+      for (Map<String, Object> doc : docs) {
+        creator.add(doc);
+      }
+      creator.seal();
+    }
+
+    try (PinotDataBuffer buffer = PinotDataBuffer.mapReadOnlyBigEndianFile(indexFile);
+        SparseMapIndexReader reader = new ImmutableSparseMapIndexReader(buffer, null)) {
+      assertNull(reader.getDocsWithKeyValue("color", "red"), "No inverted index should exist");
+    }
+  }
+
+  @Test
+  public void testPerKeyInvertedIndexMutableSelectiveKeys()
+      throws IOException {
+    // Mutable index: enableInvertedIndexForAll=false + invertedIndexKeys=["brand"] → only brand gets inverted index
+    Map<String, FieldSpec.DataType> keyTypes = new HashMap<>();
+    keyTypes.put("brand", FieldSpec.DataType.STRING);
+    keyTypes.put("sku", FieldSpec.DataType.STRING);
+
+    SparseMapFieldSpec fieldSpec = buildFieldSpec(keyTypes);
+    SparseMapIndexConfig config =
+        new SparseMapIndexConfig(true, null, false, Set.of("brand"), 100);
+
+    try (MutableSparseMapIndexImpl mutableIndex = new MutableSparseMapIndexImpl(
+        buildMutableContext(fieldSpec), config)) {
+      mutableIndex.add(Map.of("brand", "acme", "sku", "A1"), -1, 0);
+      mutableIndex.add(Map.of("brand", "acme", "sku", "B2"), -1, 1);
+      mutableIndex.add(Map.of("brand", "beta", "sku", "A1"), -1, 2);
+
+      // brand has inverted index
+      ImmutableRoaringBitmap acmeDocs = mutableIndex.getDocsWithKeyValue("brand", "acme");
+      assertNotNull(acmeDocs, "brand should have inverted index");
+      assertTrue(acmeDocs.contains(0));
+      assertTrue(acmeDocs.contains(1));
+      assertFalse(acmeDocs.contains(2));
+
+      // sku does NOT have inverted index
+      assertNull(mutableIndex.getDocsWithKeyValue("sku", "A1"),
+          "sku should NOT have inverted index");
+    }
+  }
+
+  @Test
+  public void testConfigShouldEnableInvertedIndexForKey() {
+    // Unit test for SparseMapIndexConfig.shouldEnableInvertedIndexForKey
+    SparseMapIndexConfig allEnabled = new SparseMapIndexConfig(true, null, true, null, 100);
+    assertTrue(allEnabled.shouldEnableInvertedIndexForKey("anyKey"));
+    assertTrue(allEnabled.shouldEnableInvertedIndexForKey("anotherKey"));
+
+    SparseMapIndexConfig selectiveEnabled =
+        new SparseMapIndexConfig(true, null, false, Set.of("k1", "k2"), 100);
+    assertTrue(selectiveEnabled.shouldEnableInvertedIndexForKey("k1"));
+    assertTrue(selectiveEnabled.shouldEnableInvertedIndexForKey("k2"));
+    assertFalse(selectiveEnabled.shouldEnableInvertedIndexForKey("k3"));
+
+    SparseMapIndexConfig noneEnabled = new SparseMapIndexConfig(true, null, false, null, 100);
+    assertFalse(noneEnabled.shouldEnableInvertedIndexForKey("anyKey"));
+
+    // enableInvertedIndexForAll=true overrides invertedIndexKeys
+    SparseMapIndexConfig allWithList =
+        new SparseMapIndexConfig(true, null, true, Set.of("k1"), 100);
+    assertTrue(allWithList.shouldEnableInvertedIndexForKey("k1"));
+    assertTrue(allWithList.shouldEnableInvertedIndexForKey("k999"));
   }
 }

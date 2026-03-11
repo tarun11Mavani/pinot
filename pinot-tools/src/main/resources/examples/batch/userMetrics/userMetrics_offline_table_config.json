@@ -14,7 +14,8 @@
       "indexes": {
         "sparse_map": {
           "enabled": true,
-          "enableInvertedIndex": true,
+          "enableInvertedIndexForAll": false,
+          "invertedIndexKeys": ["country", "sessions"],
           "maxKeys": 100
         }
       }
