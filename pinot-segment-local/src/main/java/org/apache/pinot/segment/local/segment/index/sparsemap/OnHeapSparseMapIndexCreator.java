@@ -33,6 +33,7 @@ import java.util.Set;
 import java.util.TreeMap;
 import javax.annotation.Nullable;
 import org.apache.pinot.common.utils.RoaringBitmapUtils;
+import org.apache.pinot.segment.local.io.util.PinotDataBitSet;
 import org.apache.pinot.segment.spi.V1Constants;
 import org.apache.pinot.segment.spi.creator.IndexCreationContext;
 import org.apache.pinot.segment.spi.index.creator.SparseMapIndexCreator;
@@ -56,7 +57,7 @@ public class OnHeapSparseMapIndexCreator implements SparseMapIndexCreator {
   private static final int MAGIC = 0x53504D58;   // "SPMX"
   private static final int VERSION = 2;
   private static final int HEADER_SIZE = 64;
-  private static final int KEY_METADATA_ENTRY_SIZE = 53;
+  private static final int KEY_METADATA_ENTRY_SIZE = 69;
 
   private final File _indexDir;
   private final String _columnName;
@@ -203,18 +204,21 @@ public class OnHeapSparseMapIndexCreator implements SparseMapIndexCreator {
     byte[] keyDictionarySection = buildKeyDictionarySection(sortedKeys);
     byte[] keyMetadataSection = new byte[numKeys * KEY_METADATA_ENTRY_SIZE];
     byte[] perKeyDataSection = buildPerKeyDataSection(sortedKeys, keyMetadataSection);
+    byte[] valueDictionarySection = buildValueDictionarySection(sortedKeys);
 
     long keyDictionaryOffset = HEADER_SIZE;
     long keyMetadataOffset = keyDictionaryOffset + keyDictionarySection.length;
     long perKeyDataOffset = keyMetadataOffset + keyMetadataSection.length;
+    long valueDictionaryOffset = perKeyDataOffset + perKeyDataSection.length;
 
     File indexFile = new File(_indexDir, _columnName + V1Constants.Indexes.SPARSE_MAP_INDEX_FILE_EXTENSION);
     try (FileOutputStream fos = new FileOutputStream(indexFile);
         DataOutputStream dos = new DataOutputStream(fos)) {
-      writeHeader(dos, numKeys, keyDictionaryOffset, keyMetadataOffset, perKeyDataOffset);
+      writeHeader(dos, numKeys, keyDictionaryOffset, keyMetadataOffset, perKeyDataOffset, valueDictionaryOffset);
       dos.write(keyDictionarySection);
       dos.write(keyMetadataSection);
       dos.write(perKeyDataSection);
+      dos.write(valueDictionarySection);
     }
   }
 
@@ -255,11 +259,30 @@ public class OnHeapSparseMapIndexCreator implements SparseMapIndexCreator {
       currentOffset += forwardBytes.length;
 
       boolean enableInverted = _config.shouldEnableInvertedIndexForKey(key);
-      byte[] invertedBytes = enableInverted ? buildInvertedIndex(presence, values, storedType) : new byte[0];
+      // Build inverted index and collect value→docId mappings for dictId forward index
+      TreeMap<String, RoaringBitmap> valueToDocIds = null;
+      byte[] invertedBytes;
+      if (enableInverted) {
+        valueToDocIds = buildValueToDocIds(presence, values, storedType);
+        invertedBytes = serializeInvertedIndex(valueToDocIds);
+      } else {
+        invertedBytes = new byte[0];
+      }
       long invertedOffset = enableInverted ? currentOffset : 0;
       if (enableInverted) {
         dos.write(invertedBytes);
         currentOffset += invertedBytes.length;
+      }
+
+      // Build dictId forward index for keys with inverted index
+      long dictIdFwdOffset = 0;
+      long dictIdFwdLength = 0;
+      if (enableInverted && valueToDocIds != null) {
+        byte[] dictIdFwdBytes = buildDictIdForwardIndex(valueToDocIds, storedType, presence);
+        dictIdFwdOffset = currentOffset;
+        dictIdFwdLength = dictIdFwdBytes.length;
+        dos.write(dictIdFwdBytes);
+        currentOffset += dictIdFwdBytes.length;
       }
 
       int entryOffset = i * KEY_METADATA_ENTRY_SIZE;
@@ -271,6 +294,8 @@ public class OnHeapSparseMapIndexCreator implements SparseMapIndexCreator {
       writeLong(keyMetadataSection, entryOffset + 29, forwardBytes.length);
       writeLong(keyMetadataSection, entryOffset + 37, invertedOffset);
       writeLong(keyMetadataSection, entryOffset + 45, invertedBytes.length);
+      writeLong(keyMetadataSection, entryOffset + 53, dictIdFwdOffset);
+      writeLong(keyMetadataSection, entryOffset + 61, dictIdFwdLength);
     }
     return baos.toByteArray();
   }
@@ -362,9 +387,9 @@ public class OnHeapSparseMapIndexCreator implements SparseMapIndexCreator {
     }
   }
 
-  private byte[] buildInvertedIndex(RoaringBitmap presence, List<Object> values, DataType storedType)
-      throws IOException {
-    Map<String, RoaringBitmap> valueToDocIds = new TreeMap<>();
+  private TreeMap<String, RoaringBitmap> buildValueToDocIds(RoaringBitmap presence, List<Object> values,
+      DataType storedType) {
+    TreeMap<String, RoaringBitmap> valueToDocIds = new TreeMap<>();
     int ordinal = 0;
     for (int docId : presence) {
       Object value = values.get(ordinal);
@@ -372,7 +397,11 @@ public class OnHeapSparseMapIndexCreator implements SparseMapIndexCreator {
       valueToDocIds.computeIfAbsent(keyRep, k -> new RoaringBitmap()).add(docId);
       ordinal++;
     }
+    return valueToDocIds;
+  }
 
+  private byte[] serializeInvertedIndex(TreeMap<String, RoaringBitmap> valueToDocIds)
+      throws IOException {
     ByteArrayOutputStream baos = new ByteArrayOutputStream();
     DataOutputStream dos = new DataOutputStream(baos);
     dos.writeInt(valueToDocIds.size());
@@ -387,7 +416,134 @@ public class OnHeapSparseMapIndexCreator implements SparseMapIndexCreator {
     return baos.toByteArray();
   }
 
-  private void writeHeader(DataOutputStream dos, int numKeys, long keyDictOffset, long keyMetaOffset, long perKeyOffset)
+  /// Builds a bit-packed dictId forward index for all numDocs documents.
+  /// Documents without the key get the default value's dictId.
+  private byte[] buildDictIdForwardIndex(TreeMap<String, RoaringBitmap> valueToDocIds,
+      DataType storedType, RoaringBitmap presence)
+      throws IOException {
+    // Build sorted distinct values array, merging default value
+    String defaultValue = getDefaultValueString(storedType);
+    String[] distinctValues = valueToDocIds.keySet().toArray(new String[0]);
+    int defaultInsertionPoint = java.util.Arrays.binarySearch(distinctValues, defaultValue);
+    String[] allValues;
+    if (defaultInsertionPoint >= 0) {
+      // Default already in the set
+      allValues = distinctValues;
+    } else {
+      int pos = -(defaultInsertionPoint + 1);
+      allValues = new String[distinctValues.length + 1];
+      System.arraycopy(distinctValues, 0, allValues, 0, pos);
+      allValues[pos] = defaultValue;
+      System.arraycopy(distinctValues, pos, allValues, pos + 1, distinctValues.length - pos);
+    }
+
+    // Build value → dictId mapping
+    Map<String, Integer> valueToDictId = new HashMap<>();
+    for (int i = 0; i < allValues.length; i++) {
+      valueToDictId.put(allValues[i], i);
+    }
+
+    int defaultDictId = valueToDictId.get(defaultValue);
+    int numBitsPerValue = PinotDataBitSet.getNumBitsPerValue(allValues.length - 1);
+
+    // Build dictId array for all docs
+    int[] dictIdArray = new int[_numDocs];
+    java.util.Arrays.fill(dictIdArray, defaultDictId);
+    for (Map.Entry<String, RoaringBitmap> entry : valueToDocIds.entrySet()) {
+      int dictId = valueToDictId.get(entry.getKey());
+      for (int docId : entry.getValue()) {
+        dictIdArray[docId] = dictId;
+      }
+    }
+
+    // Write bit-packed
+    long bufferSize = ((long) _numDocs * numBitsPerValue + Byte.SIZE - 1) / Byte.SIZE;
+    byte[] buffer = new byte[(int) bufferSize];
+    writeBitPacked(buffer, dictIdArray, _numDocs, numBitsPerValue);
+    return buffer;
+  }
+
+  /// Writes bit-packed integers into a byte array (big-endian bit order).
+  private static void writeBitPacked(byte[] buffer, int[] values, int numValues, int numBitsPerValue) {
+    long bitOffset = 0;
+    for (int i = 0; i < numValues; i++) {
+      int value = values[i];
+      for (int bit = numBitsPerValue - 1; bit >= 0; bit--) {
+        if (((value >> bit) & 1) == 1) {
+          int byteIndex = (int) (bitOffset / 8);
+          int bitIndex = (int) (7 - (bitOffset % 8));
+          buffer[byteIndex] |= (1 << bitIndex);
+        }
+        bitOffset++;
+      }
+    }
+  }
+
+  private static String getDefaultValueString(DataType storedType) {
+    switch (storedType) {
+      case INT:
+        return "0";
+      case LONG:
+        return "0";
+      case FLOAT:
+        return "0.0";
+      case DOUBLE:
+        return "0.0";
+      default:
+        return "";
+    }
+  }
+
+  /// Builds the value dictionary section written after all per-key data.
+  /// For each key with inverted index: numDistinctValues(int), numBitsPerValue(int),
+  /// then [valueLen(int) + valueBytes] × numDistinctValues.
+  private byte[] buildValueDictionarySection(List<String> sortedKeys)
+      throws IOException {
+    ByteArrayOutputStream baos = new ByteArrayOutputStream();
+    DataOutputStream dos = new DataOutputStream(baos);
+
+    for (String key : sortedKeys) {
+      boolean enableInverted = _config.shouldEnableInvertedIndexForKey(key);
+      if (!enableInverted) {
+        continue;
+      }
+
+      RoaringBitmap presence = _presenceBitmaps.get(key);
+      List<Object> values = _values.get(key);
+      DataType dataType = _keyTypes.getOrDefault(key, _defaultValueType);
+      DataType storedType = dataType.getStoredType();
+
+      TreeMap<String, RoaringBitmap> valueToDocIds = buildValueToDocIds(presence, values, storedType);
+
+      // Merge default value
+      String defaultValue = getDefaultValueString(storedType);
+      String[] distinctValues = valueToDocIds.keySet().toArray(new String[0]);
+      int insertionPoint = java.util.Arrays.binarySearch(distinctValues, defaultValue);
+      String[] allValues;
+      if (insertionPoint >= 0) {
+        allValues = distinctValues;
+      } else {
+        int pos = -(insertionPoint + 1);
+        allValues = new String[distinctValues.length + 1];
+        System.arraycopy(distinctValues, 0, allValues, 0, pos);
+        allValues[pos] = defaultValue;
+        System.arraycopy(distinctValues, pos, allValues, pos + 1, distinctValues.length - pos);
+      }
+
+      int numBitsPerValue = PinotDataBitSet.getNumBitsPerValue(allValues.length - 1);
+      dos.writeInt(allValues.length);
+      dos.writeInt(numBitsPerValue);
+      for (String v : allValues) {
+        byte[] vBytes = v.getBytes(StandardCharsets.UTF_8);
+        dos.writeInt(vBytes.length);
+        dos.write(vBytes);
+      }
+    }
+    return baos.toByteArray();
+  }
+
+  private void writeHeader(DataOutputStream dos, int numKeys, long keyDictOffset, long keyMetaOffset,
+      long perKeyOffset, long valueDictOffset)
       throws IOException {
     dos.writeInt(MAGIC);
     dos.writeInt(VERSION);
@@ -396,8 +552,9 @@ public class OnHeapSparseMapIndexCreator implements SparseMapIndexCreator {
     dos.writeLong(keyDictOffset);
     dos.writeLong(keyMetaOffset);
     dos.writeLong(perKeyOffset);
-    // 64 - (4 ints * 4 bytes) - (3 longs * 8 bytes) = 64 - 16 - 24 = 24 bytes padding
-    for (int i = 0; i < 24; i++) {
+    dos.writeLong(valueDictOffset);
+    // 64 - (4 ints * 4 bytes) - (4 longs * 8 bytes) = 64 - 16 - 32 = 16 bytes padding
+    for (int i = 0; i < 16; i++) {
       dos.write(0);
     }
   }

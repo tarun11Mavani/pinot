@@ -23,6 +23,7 @@ import java.util.Map;
 import java.util.Set;
 import java.util.concurrent.ConcurrentHashMap;
 import javax.annotation.Nullable;
+import org.apache.pinot.segment.local.io.util.FixedBitIntReaderWriter;
 import org.apache.pinot.segment.local.segment.index.datasource.BaseDataSource;
 import org.apache.pinot.segment.spi.ColumnMetadata;
 import org.apache.pinot.segment.spi.datasource.DataSource;
@@ -135,19 +136,27 @@ public class SparseMapDataSource extends BaseDataSource implements MapDataSource
 
     DimensionFieldSpec keyFieldSpec = new DimensionFieldSpec(key, keyType, true);
 
-    // Build dictionary from inverted index if available
-    String[] distinctValues = _sparseMapIndexReader.getDistinctValuesForKey(key);
+    // Try to use pre-built dictionary and dictId reader from immutable reader
     SparseMapKeyDictionary keyDictionary = null;
-    if (distinctValues != null) {
-      // Include the default value (returned for absent docs) in the dictionary so that
-      // readDictIds never returns NULL_VALUE_INDEX (-1) for absent docs.
-      String defaultValue = getDefaultValueString(keyType);
-      distinctValues = mergeDefaultValue(distinctValues, defaultValue);
-      keyDictionary = new SparseMapKeyDictionary(keyType, distinctValues);
+    FixedBitIntReaderWriter dictIdReader = null;
+    if (_sparseMapIndexReader instanceof ImmutableSparseMapIndexReader) {
+      ImmutableSparseMapIndexReader immutableReader = (ImmutableSparseMapIndexReader) _sparseMapIndexReader;
+      keyDictionary = immutableReader.getKeyDictionary(key);
+      dictIdReader = immutableReader.getDictIdReader(key);
+    }
+
+    // Fallback: build dictionary from inverted index if pre-built not available
+    if (keyDictionary == null) {
+      String[] distinctValues = _sparseMapIndexReader.getDistinctValuesForKey(key);
+      if (distinctValues != null) {
+        String defaultValue = getDefaultValueString(keyType);
+        distinctValues = mergeDefaultValue(distinctValues, defaultValue);
+        keyDictionary = new SparseMapKeyDictionary(keyType, distinctValues);
+      }
     }
 
     SparseMapKeyForwardIndexReader keyReader =
-        new SparseMapKeyForwardIndexReader(_sparseMapIndexReader, key, keyType, keyDictionary);
+        new SparseMapKeyForwardIndexReader(_sparseMapIndexReader, key, keyType, keyDictionary, dictIdReader);
 
     ColumnIndexContainer.FromMap.Builder containerBuilder =
         new ColumnIndexContainer.FromMap.Builder().with(StandardIndexes.forward(), keyReader);

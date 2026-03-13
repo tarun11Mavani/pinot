@@ -20,6 +20,7 @@ package org.apache.pinot.segment.local.segment.index.sparsemap;
 
 import java.io.IOException;
 import javax.annotation.Nullable;
+import org.apache.pinot.segment.local.io.util.FixedBitIntReaderWriter;
 import org.apache.pinot.segment.spi.index.reader.ForwardIndexReader;
 import org.apache.pinot.segment.spi.index.reader.ForwardIndexReaderContext;
 import org.apache.pinot.segment.spi.index.reader.SparseMapIndexReader;
@@ -50,18 +51,27 @@ public class SparseMapKeyForwardIndexReader implements ForwardIndexReader<Forwar
   private final DataType _storedType;
   @Nullable
   private final SparseMapKeyDictionary _dictionary;
+  @Nullable
+  private final FixedBitIntReaderWriter _dictIdReader;
 
   public SparseMapKeyForwardIndexReader(SparseMapIndexReader sparseMapIndexReader, String key,
       DataType storedType) {
-    this(sparseMapIndexReader, key, storedType, null);
+    this(sparseMapIndexReader, key, storedType, null, null);
   }
 
   public SparseMapKeyForwardIndexReader(SparseMapIndexReader sparseMapIndexReader, String key,
       DataType storedType, @Nullable SparseMapKeyDictionary dictionary) {
+    this(sparseMapIndexReader, key, storedType, dictionary, null);
+  }
+
+  public SparseMapKeyForwardIndexReader(SparseMapIndexReader sparseMapIndexReader, String key,
+      DataType storedType, @Nullable SparseMapKeyDictionary dictionary,
+      @Nullable FixedBitIntReaderWriter dictIdReader) {
     _sparseMapIndexReader = sparseMapIndexReader;
     _key = key;
     _storedType = storedType;
     _dictionary = dictionary;
+    _dictIdReader = dictIdReader;
   }
 
   @Override
@@ -84,9 +94,17 @@ public class SparseMapKeyForwardIndexReader implements ForwardIndexReader<Forwar
     if (_dictionary == null) {
       throw new UnsupportedOperationException("Dictionary not available for key: " + _key);
     }
-    for (int i = 0; i < length; i++) {
-      String rawValue = _sparseMapIndexReader.getString(docIds[i], _key);
-      dictIdBuffer[i] = _dictionary.indexOf(rawValue);
+    if (_dictIdReader != null) {
+      // Fast path: O(1) per doc via bit-packed forward index
+      for (int i = 0; i < length; i++) {
+        dictIdBuffer[i] = _dictIdReader.readInt(docIds[i]);
+      }
+    } else {
+      // Slow path: getString + indexOf for mutable segments
+      for (int i = 0; i < length; i++) {
+        String rawValue = _sparseMapIndexReader.getString(docIds[i], _key);
+        dictIdBuffer[i] = _dictionary.indexOf(rawValue);
+      }
     }
   }
 

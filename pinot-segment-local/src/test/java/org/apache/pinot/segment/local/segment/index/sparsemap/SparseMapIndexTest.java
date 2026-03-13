@@ -30,6 +30,7 @@ import java.util.concurrent.Executors;
 import java.util.concurrent.TimeUnit;
 import java.util.concurrent.atomic.AtomicBoolean;
 import org.apache.commons.io.FileUtils;
+import org.apache.pinot.segment.local.io.util.FixedBitIntReaderWriter;
 import org.apache.pinot.segment.spi.V1Constants;
 import org.apache.pinot.segment.spi.index.reader.SparseMapIndexReader;
 import org.apache.pinot.segment.spi.memory.PinotDataBuffer;
@@ -985,6 +986,149 @@ public class SparseMapIndexTest {
       // Forward index should NOT report dictionary-encoded
       org.apache.pinot.segment.spi.index.reader.ForwardIndexReader<?> fwd = ds.getForwardIndex();
       assertFalse(fwd.isDictionaryEncoded());
+    }
+  }
+
+  @Test
+  public void testDictIdForwardIndex()
+      throws IOException {
+    // Verify that bit-packed dictIds are written and readable at segment level
+    Map<String, FieldSpec.DataType> keyTypes = new HashMap<>();
+    keyTypes.put("color", FieldSpec.DataType.STRING);
+
+    @SuppressWarnings("unchecked")
+    Map<String, Object>[] docs = new Map[]{
+        Map.of("color", "red"),     // doc 0
+        Map.of("color", "blue"),    // doc 1
+        Map.of("color", "red"),     // doc 2
+        new HashMap<>(),            // doc 3 — absent, gets default ""
+        Map.of("color", "green")    // doc 4
+    };
+
+    SparseMapFieldSpec fieldSpec = buildFieldSpec(keyTypes);
+    SparseMapIndexConfig config = new SparseMapIndexConfig(true, null, true, null, 1000);
+    File indexFile =
+        new File(INDEX_DIR, COLUMN_NAME + V1Constants.Indexes.SPARSE_MAP_INDEX_FILE_EXTENSION);
+
+    try (OnHeapSparseMapIndexCreator creator = new OnHeapSparseMapIndexCreator(
+        INDEX_DIR, COLUMN_NAME, fieldSpec, config)) {
+      for (Map<String, Object> doc : docs) {
+        creator.add(doc);
+      }
+      creator.seal();
+    }
+
+    try (PinotDataBuffer buffer = PinotDataBuffer.mapReadOnlyBigEndianFile(indexFile);
+        ImmutableSparseMapIndexReader reader = new ImmutableSparseMapIndexReader(buffer, null)) {
+
+      // Verify dictId reader is available
+      FixedBitIntReaderWriter dictIdReader = reader.getDictIdReader("color");
+      assertNotNull(dictIdReader, "dictId reader should be available for key with inverted index");
+
+      // Verify key dictionary is available
+      SparseMapKeyDictionary dict = reader.getKeyDictionary("color");
+      assertNotNull(dict, "Key dictionary should be available");
+
+      // Dictionary should contain: "", "blue", "green", "red" (sorted)
+      assertEquals(dict.length(), 4);
+      assertEquals(dict.get(0), "");
+      assertEquals(dict.get(1), "blue");
+      assertEquals(dict.get(2), "green");
+      assertEquals(dict.get(3), "red");
+
+      // Verify dictIds
+      int redId = dict.indexOf("red");
+      int blueId = dict.indexOf("blue");
+      int greenId = dict.indexOf("green");
+      int defaultId = dict.indexOf("");
+
+      assertEquals(dictIdReader.readInt(0), redId);     // doc 0 = red
+      assertEquals(dictIdReader.readInt(1), blueId);    // doc 1 = blue
+      assertEquals(dictIdReader.readInt(2), redId);     // doc 2 = red
+      assertEquals(dictIdReader.readInt(3), defaultId); // doc 3 = absent → default
+      assertEquals(dictIdReader.readInt(4), greenId);   // doc 4 = green
+    }
+  }
+
+  @Test
+  public void testReadDictIdsFastPath()
+      throws IOException {
+    // Verify readDictIds uses bit-packed fast path and returns correct values
+    Map<String, FieldSpec.DataType> keyTypes = new HashMap<>();
+    keyTypes.put("status", FieldSpec.DataType.STRING);
+
+    @SuppressWarnings("unchecked")
+    Map<String, Object>[] docs = new Map[]{
+        Map.of("status", "active"),     // doc 0
+        Map.of("status", "inactive"),   // doc 1
+        Map.of("status", "active"),     // doc 2
+        new HashMap<>(),                // doc 3 — absent
+        Map.of("status", "pending")     // doc 4
+    };
+
+    SparseMapFieldSpec fieldSpec = buildFieldSpec(keyTypes);
+    SparseMapIndexConfig config = new SparseMapIndexConfig(true, null, true, null, 1000);
+    File indexFile =
+        new File(INDEX_DIR, COLUMN_NAME + V1Constants.Indexes.SPARSE_MAP_INDEX_FILE_EXTENSION);
+
+    try (OnHeapSparseMapIndexCreator creator = new OnHeapSparseMapIndexCreator(
+        INDEX_DIR, COLUMN_NAME, fieldSpec, config)) {
+      for (Map<String, Object> doc : docs) {
+        creator.add(doc);
+      }
+      creator.seal();
+    }
+
+    try (PinotDataBuffer buffer = PinotDataBuffer.mapReadOnlyBigEndianFile(indexFile);
+        ImmutableSparseMapIndexReader reader = new ImmutableSparseMapIndexReader(buffer, null)) {
+
+      // Build DataSource and get per-key DataSource
+      org.apache.pinot.segment.spi.datasource.DataSource ds =
+          new SparseMapDataSource(buildColumnMetadata(fieldSpec, 5), reader).getKeyDataSource("status");
+      assertNotNull(ds);
+
+      org.apache.pinot.segment.spi.index.reader.ForwardIndexReader<?> fwd = ds.getForwardIndex();
+      assertTrue(fwd.isDictionaryEncoded());
+
+      org.apache.pinot.segment.spi.index.reader.Dictionary dict = ds.getDictionary();
+      assertNotNull(dict);
+
+      // Read dictIds for all docs
+      int[] docIds = {0, 1, 2, 3, 4};
+      int[] dictIdBuffer = new int[5];
+      fwd.readDictIds(docIds, 5, dictIdBuffer, null);
+
+      // Verify via dictionary lookup
+      assertEquals(dict.getStringValue(dictIdBuffer[0]), "active");
+      assertEquals(dict.getStringValue(dictIdBuffer[1]), "inactive");
+      assertEquals(dict.getStringValue(dictIdBuffer[2]), "active");
+      assertEquals(dict.getStringValue(dictIdBuffer[3]), "");        // default for absent
+      assertEquals(dict.getStringValue(dictIdBuffer[4]), "pending");
+
+      // Verify same dictIds for same values
+      assertEquals(dictIdBuffer[0], dictIdBuffer[2], "Same value 'active' should have same dictId");
+    }
+  }
+
+  @Test
+  public void testDictIdForwardIndexNotAvailableWithoutInvertedIndex()
+      throws IOException {
+    // Keys without inverted index should not have dictId forward index
+    Map<String, FieldSpec.DataType> keyTypes = new HashMap<>();
+    keyTypes.put("name", FieldSpec.DataType.STRING);
+
+    @SuppressWarnings("unchecked")
+    Map<String, Object>[] docs = new Map[]{
+        Map.of("name", "alice"),
+        Map.of("name", "bob")
+    };
+
+    File indexFile = createIndex(keyTypes, docs);
+
+    try (PinotDataBuffer buffer = PinotDataBuffer.mapReadOnlyBigEndianFile(indexFile);
+        ImmutableSparseMapIndexReader reader = new ImmutableSparseMapIndexReader(buffer, null)) {
+      assertNull(reader.getDictIdReader("name"), "No dictId reader without inverted index");
+      assertNull(reader.getKeyDictionary("name"), "No key dictionary without inverted index");
     }
   }
 

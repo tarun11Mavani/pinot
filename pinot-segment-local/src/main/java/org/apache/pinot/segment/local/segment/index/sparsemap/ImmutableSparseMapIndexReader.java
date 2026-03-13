@@ -27,6 +27,8 @@ import java.util.HashSet;
 import java.util.Map;
 import java.util.Set;
 import javax.annotation.Nullable;
+import org.apache.pinot.segment.local.io.util.FixedBitIntReaderWriter;
+import org.apache.pinot.segment.local.io.util.PinotDataBitSet;
 import org.apache.pinot.segment.spi.ColumnMetadata;
 import org.apache.pinot.segment.spi.datasource.DataSource;
 import org.apache.pinot.segment.spi.index.reader.SparseMapIndexReader;
@@ -57,7 +59,7 @@ public class ImmutableSparseMapIndexReader implements SparseMapIndexReader {
   private static final int MAGIC = 0x53504D58;   // "SPMX"
   private static final int CURRENT_VERSION = 2;
   private static final int HEADER_SIZE = 64;
-  private static final int KEY_METADATA_ENTRY_SIZE = 53;
+  private static final int KEY_METADATA_ENTRY_SIZE = 69;
 
   private final PinotDataBuffer _dataBuffer;
   private final int _numDocs;
@@ -76,6 +78,12 @@ public class ImmutableSparseMapIndexReader implements SparseMapIndexReader {
   private final long[] _fwdLengths;
   private final long[] _invOffsets;
   private final long[] _invLengths;
+  private final long[] _dictIdFwdOffsets;
+  private final long[] _dictIdFwdLengths;
+
+  // value dictionary section
+  private final long _valueDictionarySectionOffset;
+  private final Map<String, SparseMapKeyDictionary> _keyDictionaries;
 
   public ImmutableSparseMapIndexReader(PinotDataBuffer dataBuffer, ColumnMetadata metadata)
       throws IOException {
@@ -100,6 +108,7 @@ public class ImmutableSparseMapIndexReader implements SparseMapIndexReader {
     long keyDictOffset = headerBuf.getLong();
     long keyMetaOffset = headerBuf.getLong();
     _perKeyDataSectionOffset = headerBuf.getLong();
+    _valueDictionarySectionOffset = headerBuf.getLong();
 
     // ---- Parse Key Dictionary (big-endian) ----
     _keys = new String[_numKeys];
@@ -121,7 +130,7 @@ public class ImmutableSparseMapIndexReader implements SparseMapIndexReader {
       dictPos += keyLen;
     }
 
-    // ---- Parse Key Metadata (BIG_ENDIAN, 53 bytes per key) ----
+    // ---- Parse Key Metadata (BIG_ENDIAN, 69 bytes per key) ----
     _keyStoredTypes = new DataType[_numKeys];
     _numDocsPerKey = new int[_numKeys];
     _presenceBitmaps = new ImmutableRoaringBitmap[_numKeys];
@@ -129,6 +138,8 @@ public class ImmutableSparseMapIndexReader implements SparseMapIndexReader {
     _fwdLengths = new long[_numKeys];
     _invOffsets = new long[_numKeys];
     _invLengths = new long[_numKeys];
+    _dictIdFwdOffsets = new long[_numKeys];
+    _dictIdFwdLengths = new long[_numKeys];
 
     byte[] metaBlock = new byte[_numKeys * KEY_METADATA_ENTRY_SIZE];
     dataBuffer.copyTo(keyMetaOffset, metaBlock, 0, metaBlock.length);
@@ -150,11 +161,46 @@ public class ImmutableSparseMapIndexReader implements SparseMapIndexReader {
       _fwdLengths[i] = metaBuf.getLong();
       _invOffsets[i] = metaBuf.getLong();
       _invLengths[i] = metaBuf.getLong();
+      _dictIdFwdOffsets[i] = metaBuf.getLong();
+      _dictIdFwdLengths[i] = metaBuf.getLong();
 
       // Load presence bitmap
       byte[] bitmapBytes = new byte[(int) presenceLen];
       dataBuffer.copyTo(_perKeyDataSectionOffset + presenceOffset, bitmapBytes, 0, bitmapBytes.length);
       _presenceBitmaps[i] = new ImmutableRoaringBitmap(ByteBuffer.wrap(bitmapBytes));
+    }
+
+    // ---- Parse Value Dictionary Section ----
+    _keyDictionaries = new HashMap<>();
+    if (_valueDictionarySectionOffset > 0) {
+      long pos = _valueDictionarySectionOffset;
+      for (int i = 0; i < _numKeys; i++) {
+        if (_dictIdFwdLengths[i] == 0) {
+          continue;
+        }
+        byte[] countBytes = new byte[4];
+        dataBuffer.copyTo(pos, countBytes, 0, 4);
+        int numDistinctValues = ByteBuffer.wrap(countBytes).order(ByteOrder.BIG_ENDIAN).getInt();
+        pos += 4;
+
+        byte[] bitsBytes = new byte[4];
+        dataBuffer.copyTo(pos, bitsBytes, 0, 4);
+        /* int numBitsPerValue = */ ByteBuffer.wrap(bitsBytes).order(ByteOrder.BIG_ENDIAN).getInt();
+        pos += 4;
+
+        String[] values = new String[numDistinctValues];
+        for (int v = 0; v < numDistinctValues; v++) {
+          byte[] vLenBytes = new byte[4];
+          dataBuffer.copyTo(pos, vLenBytes, 0, 4);
+          int vLen = ByteBuffer.wrap(vLenBytes).order(ByteOrder.BIG_ENDIAN).getInt();
+          pos += 4;
+          byte[] vBytes = new byte[vLen];
+          dataBuffer.copyTo(pos, vBytes, 0, vLen);
+          values[v] = new String(vBytes, StandardCharsets.UTF_8);
+          pos += vLen;
+        }
+        _keyDictionaries.put(_keys[i], new SparseMapKeyDictionary(_keyStoredTypes[i], values));
+      }
     }
   }
 
@@ -408,6 +454,35 @@ public class ImmutableSparseMapIndexReader implements SparseMapIndexReader {
   public DataSource getKeyDataSource(String key) {
     // Implemented in SparseMapDataSource (Task 15)
     return null;
+  }
+
+  /// Returns a FixedBitIntReaderWriter for reading bit-packed dictIds for the given key,
+  /// or null if no dictId forward index is available.
+  @Nullable
+  public FixedBitIntReaderWriter getDictIdReader(String key) {
+    Integer keyId = _keyToId.get(key);
+    if (keyId == null || _dictIdFwdLengths[keyId] == 0) {
+      return null;
+    }
+    SparseMapKeyDictionary dict = _keyDictionaries.get(key);
+    if (dict == null) {
+      return null;
+    }
+    int numBitsPerValue = PinotDataBitSet.getNumBitsPerValue(dict.length() - 1);
+    long offset = _perKeyDataSectionOffset + _dictIdFwdOffsets[keyId];
+    PinotDataBuffer slice = _dataBuffer.view(offset, offset + _dictIdFwdLengths[keyId]);
+    return new FixedBitIntReaderWriter(slice, _numDocs, numBitsPerValue);
+  }
+
+  /// Returns the cached SparseMapKeyDictionary for the given key, or null if not available.
+  @Nullable
+  public SparseMapKeyDictionary getKeyDictionary(String key) {
+    return _keyDictionaries.get(key);
+  }
+
+  /// Returns the total number of documents in this index.
+  public int getNumDocs() {
+    return _numDocs;
   }
 
   @Override
