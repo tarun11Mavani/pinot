@@ -744,4 +744,336 @@ public class SparseMapIndexTest {
     assertTrue(allWithList.shouldEnableInvertedIndexForKey("k1"));
     assertTrue(allWithList.shouldEnableInvertedIndexForKey("k999"));
   }
+
+  // ---- Dictionary-based GROUP BY tests ----
+
+  @Test
+  public void testSparseMapKeyDictionary() {
+    String[] values = {"apple", "banana", "cherry"};
+    SparseMapKeyDictionary dict = new SparseMapKeyDictionary(FieldSpec.DataType.STRING, values);
+
+    // length
+    assertEquals(dict.length(), 3);
+
+    // indexOf
+    assertEquals(dict.indexOf("apple"), 0);
+    assertEquals(dict.indexOf("banana"), 1);
+    assertEquals(dict.indexOf("cherry"), 2);
+    assertEquals(dict.indexOf("missing"), org.apache.pinot.segment.spi.index.reader.Dictionary.NULL_VALUE_INDEX);
+
+    // get / getStringValue
+    assertEquals(dict.get(0), "apple");
+    assertEquals(dict.getStringValue(1), "banana");
+
+    // isSorted
+    assertTrue(dict.isSorted());
+
+    // getValueType
+    assertEquals(dict.getValueType(), FieldSpec.DataType.STRING);
+
+    // getMinVal / getMaxVal
+    assertEquals(dict.getMinVal(), "apple");
+    assertEquals(dict.getMaxVal(), "cherry");
+
+    // insertionIndexOf
+    assertEquals(dict.insertionIndexOf("banana"), 1); // exact match
+    assertTrue(dict.insertionIndexOf("blueberry") < 0); // not found, returns negative insertion point
+  }
+
+  @Test
+  public void testSparseMapKeyDictionaryIntType() {
+    String[] values = {"10", "20", "30"};
+    SparseMapKeyDictionary dict = new SparseMapKeyDictionary(FieldSpec.DataType.INT, values);
+
+    assertEquals(dict.getIntValue(0), 10);
+    assertEquals(dict.getLongValue(1), 20L);
+    assertEquals(dict.getFloatValue(2), 30.0f, 0.001f);
+    assertEquals(dict.getDoubleValue(0), 10.0, 0.001);
+    assertEquals(dict.getMinVal(), 10);
+    assertEquals(dict.getMaxVal(), 30);
+
+    // indexOf with typed values
+    assertEquals(dict.indexOf("20"), 1);
+  }
+
+  @Test
+  public void testImmutableDistinctValues()
+      throws IOException {
+    Map<String, FieldSpec.DataType> keyTypes = new HashMap<>();
+    keyTypes.put("color", FieldSpec.DataType.STRING);
+    keyTypes.put("size", FieldSpec.DataType.INT);
+
+    @SuppressWarnings("unchecked")
+    Map<String, Object>[] docs = new Map[]{
+        Map.of("color", "red", "size", 10),
+        Map.of("color", "blue", "size", 20),
+        Map.of("color", "red", "size", 30),
+        Map.of("color", "green", "size", 10)
+    };
+
+    SparseMapFieldSpec fieldSpec = buildFieldSpec(keyTypes);
+    SparseMapIndexConfig config = new SparseMapIndexConfig(true, null, true, null, 1000);
+    File indexFile =
+        new File(INDEX_DIR, COLUMN_NAME + V1Constants.Indexes.SPARSE_MAP_INDEX_FILE_EXTENSION);
+
+    try (OnHeapSparseMapIndexCreator creator = new OnHeapSparseMapIndexCreator(
+        INDEX_DIR, COLUMN_NAME, fieldSpec, config)) {
+      for (Map<String, Object> doc : docs) {
+        creator.add(doc);
+      }
+      creator.seal();
+    }
+
+    try (PinotDataBuffer buffer = PinotDataBuffer.mapReadOnlyBigEndianFile(indexFile);
+        ImmutableSparseMapIndexReader reader = new ImmutableSparseMapIndexReader(buffer, null)) {
+
+      // hasInvertedIndex
+      assertTrue(reader.hasInvertedIndex("color"));
+      assertTrue(reader.hasInvertedIndex("size"));
+
+      // getDistinctValuesForKey - color (sorted)
+      String[] colorValues = reader.getDistinctValuesForKey("color");
+      assertNotNull(colorValues);
+      assertEquals(colorValues.length, 3);
+      // Values should be sorted
+      assertEquals(colorValues[0], "blue");
+      assertEquals(colorValues[1], "green");
+      assertEquals(colorValues[2], "red");
+
+      // getDistinctValuesForKey - size (sorted)
+      String[] sizeValues = reader.getDistinctValuesForKey("size");
+      assertNotNull(sizeValues);
+      assertEquals(sizeValues.length, 3);
+      assertEquals(sizeValues[0], "10");
+      assertEquals(sizeValues[1], "20");
+      assertEquals(sizeValues[2], "30");
+    }
+  }
+
+  @Test
+  public void testImmutableDistinctValuesNoInvertedIndex()
+      throws IOException {
+    Map<String, FieldSpec.DataType> keyTypes = new HashMap<>();
+    keyTypes.put("name", FieldSpec.DataType.STRING);
+
+    @SuppressWarnings("unchecked")
+    Map<String, Object>[] docs = new Map[]{
+        Map.of("name", "alice"),
+        Map.of("name", "bob")
+    };
+
+    // No inverted index
+    File indexFile = createIndex(keyTypes, docs);
+
+    try (PinotDataBuffer buffer = PinotDataBuffer.mapReadOnlyBigEndianFile(indexFile);
+        ImmutableSparseMapIndexReader reader = new ImmutableSparseMapIndexReader(buffer, null)) {
+
+      assertFalse(reader.hasInvertedIndex("name"));
+      assertNull(reader.getDistinctValuesForKey("name"));
+    }
+  }
+
+  @Test
+  public void testMutableDistinctValues()
+      throws IOException {
+    Map<String, FieldSpec.DataType> keyTypes = new HashMap<>();
+    keyTypes.put("brand", FieldSpec.DataType.STRING);
+    keyTypes.put("count", FieldSpec.DataType.INT);
+
+    SparseMapFieldSpec fieldSpec = buildFieldSpec(keyTypes);
+    SparseMapIndexConfig config = new SparseMapIndexConfig(true, null, true, null, 100);
+
+    try (MutableSparseMapIndexImpl mutableIndex = new MutableSparseMapIndexImpl(
+        buildMutableContext(fieldSpec), config)) {
+
+      mutableIndex.add(Map.of("brand", "acme", "count", 5), -1, 0);
+      mutableIndex.add(Map.of("brand", "beta", "count", 10), -1, 1);
+      mutableIndex.add(Map.of("brand", "acme", "count", 5), -1, 2);
+
+      // hasInvertedIndex
+      assertTrue(mutableIndex.hasInvertedIndex("brand"));
+      assertTrue(mutableIndex.hasInvertedIndex("count"));
+
+      // getDistinctValuesForKey - brand (TreeMap → sorted)
+      String[] brandValues = mutableIndex.getDistinctValuesForKey("brand");
+      assertNotNull(brandValues);
+      assertEquals(brandValues.length, 2);
+      assertEquals(brandValues[0], "acme");
+      assertEquals(brandValues[1], "beta");
+
+      // getDistinctValuesForKey - count
+      String[] countValues = mutableIndex.getDistinctValuesForKey("count");
+      assertNotNull(countValues);
+      assertEquals(countValues.length, 2);
+      assertEquals(countValues[0], "10"); // TreeMap sorts lexicographically for strings
+      assertEquals(countValues[1], "5");
+    }
+  }
+
+  @Test
+  public void testKeyDataSourceWithDictionary()
+      throws IOException {
+    Map<String, FieldSpec.DataType> keyTypes = new HashMap<>();
+    keyTypes.put("status", FieldSpec.DataType.STRING);
+
+    @SuppressWarnings("unchecked")
+    Map<String, Object>[] docs = new Map[]{
+        Map.of("status", "active"),
+        Map.of("status", "inactive"),
+        Map.of("status", "active")
+    };
+
+    SparseMapFieldSpec fieldSpec = buildFieldSpec(keyTypes);
+    SparseMapIndexConfig config = new SparseMapIndexConfig(true, null, true, null, 1000);
+    File indexFile =
+        new File(INDEX_DIR, COLUMN_NAME + V1Constants.Indexes.SPARSE_MAP_INDEX_FILE_EXTENSION);
+
+    try (OnHeapSparseMapIndexCreator creator = new OnHeapSparseMapIndexCreator(
+        INDEX_DIR, COLUMN_NAME, fieldSpec, config)) {
+      for (Map<String, Object> doc : docs) {
+        creator.add(doc);
+      }
+      creator.seal();
+    }
+
+    try (PinotDataBuffer buffer = PinotDataBuffer.mapReadOnlyBigEndianFile(indexFile);
+        ImmutableSparseMapIndexReader reader = new ImmutableSparseMapIndexReader(buffer, null)) {
+
+      org.apache.pinot.segment.spi.datasource.DataSource ds =
+          new SparseMapDataSource(buildColumnMetadata(fieldSpec, 3), reader).getKeyDataSource("status");
+      assertNotNull(ds);
+
+      // Dictionary should be non-null (includes default value "" for absent docs)
+      org.apache.pinot.segment.spi.index.reader.Dictionary dict = ds.getDictionary();
+      assertNotNull(dict, "Dictionary should be present when inverted index is available");
+      assertEquals(dict.length(), 3); // "active", "inactive", plus default "" for absent docs
+      assertTrue(dict.indexOf("active") >= 0);
+      assertTrue(dict.indexOf("inactive") >= 0);
+      assertTrue(dict.indexOf("") >= 0); // default value for absent docs
+
+      // Forward index should report dictionary-encoded
+      org.apache.pinot.segment.spi.index.reader.ForwardIndexReader<?> fwd = ds.getForwardIndex();
+      assertTrue(fwd.isDictionaryEncoded());
+    }
+  }
+
+  @Test
+  public void testKeyDataSourceWithoutDictionary()
+      throws IOException {
+    Map<String, FieldSpec.DataType> keyTypes = new HashMap<>();
+    keyTypes.put("name", FieldSpec.DataType.STRING);
+
+    @SuppressWarnings("unchecked")
+    Map<String, Object>[] docs = new Map[]{
+        Map.of("name", "alice"),
+        Map.of("name", "bob")
+    };
+
+    // No inverted index → no dictionary
+    File indexFile = createIndex(keyTypes, docs);
+
+    try (PinotDataBuffer buffer = PinotDataBuffer.mapReadOnlyBigEndianFile(indexFile);
+        ImmutableSparseMapIndexReader reader = new ImmutableSparseMapIndexReader(buffer, null)) {
+
+      org.apache.pinot.segment.spi.datasource.DataSource ds =
+          new SparseMapDataSource(buildColumnMetadata(fieldSpec(keyTypes), 2), reader).getKeyDataSource("name");
+      assertNotNull(ds);
+
+      // No dictionary
+      assertNull(ds.getDictionary(), "Dictionary should be null when no inverted index");
+
+      // Forward index should NOT report dictionary-encoded
+      org.apache.pinot.segment.spi.index.reader.ForwardIndexReader<?> fwd = ds.getForwardIndex();
+      assertFalse(fwd.isDictionaryEncoded());
+    }
+  }
+
+  private static SparseMapFieldSpec fieldSpec(Map<String, FieldSpec.DataType> keyTypes) {
+    return buildFieldSpec(keyTypes);
+  }
+
+  private static org.apache.pinot.segment.spi.ColumnMetadata buildColumnMetadata(
+      SparseMapFieldSpec fieldSpec, int numDocs) {
+    return new org.apache.pinot.segment.spi.ColumnMetadata() {
+      @Override
+      public FieldSpec getFieldSpec() {
+        return fieldSpec;
+      }
+
+      @Override
+      public int getTotalDocs() {
+        return numDocs;
+      }
+
+      @Override
+      public int getTotalNumberOfEntries() {
+        return numDocs;
+      }
+
+      @Override
+      public int getCardinality() {
+        return 0;
+      }
+
+      @Override
+      public boolean isSorted() {
+        return false;
+      }
+
+      @Override
+      public int getBitsPerElement() {
+        return 0;
+      }
+
+      @Override
+      public int getColumnMaxLength() {
+        return 0;
+      }
+
+      @Override
+      public boolean hasDictionary() {
+        return false;
+      }
+
+      @Override
+      public org.apache.pinot.segment.spi.partition.PartitionFunction getPartitionFunction() {
+        return null;
+      }
+
+      @Override
+      public Set<Integer> getPartitions() {
+        return null;
+      }
+
+      @Override
+      public Comparable getMinValue() {
+        return null;
+      }
+
+      @Override
+      public Comparable getMaxValue() {
+        return null;
+      }
+
+      @Override
+      public boolean isMinMaxValueInvalid() {
+        return true;
+      }
+
+      @Override
+      public boolean isAutoGenerated() {
+        return false;
+      }
+
+      @Override
+      public int getMaxNumberOfMultiValues() {
+        return 0;
+      }
+
+      @Override
+      public java.util.Map<org.apache.pinot.segment.spi.index.IndexType<?, ?, ?>, Long> getIndexSizeMap() {
+        return Collections.emptyMap();
+      }
+    };
+  }
 }

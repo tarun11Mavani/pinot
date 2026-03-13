@@ -337,6 +337,29 @@ public class MutableSparseMapIndexImpl implements MutableIndex, SparseMapIndexRe
   }
 
   @Override
+  public boolean hasInvertedIndex(String key) {
+    _lock.readLock().lock();
+    try {
+      TreeMap<String, MutableRoaringBitmap> inv = _invertedIndexes.get(key);
+      return inv != null && !inv.isEmpty();
+    } finally {
+      _lock.readLock().unlock();
+    }
+  }
+
+  @Nullable
+  @Override
+  public String[] getDistinctValuesForKey(String key) {
+    _lock.readLock().lock();
+    try {
+      TreeMap<String, MutableRoaringBitmap> inv = _invertedIndexes.get(key);
+      return inv != null ? inv.keySet().toArray(new String[0]) : null;
+    } finally {
+      _lock.readLock().unlock();
+    }
+  }
+
+  @Override
   public DataSource getKeyDataSource(String key) {
     // Implemented in SparseMapDataSource (Task 15)
     return null;

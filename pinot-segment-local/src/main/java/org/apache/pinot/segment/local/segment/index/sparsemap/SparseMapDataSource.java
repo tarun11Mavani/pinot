@@ -134,15 +134,62 @@ public class SparseMapDataSource extends BaseDataSource implements MapDataSource
     }
 
     DimensionFieldSpec keyFieldSpec = new DimensionFieldSpec(key, keyType, true);
-    SparseMapKeyForwardIndexReader keyReader =
-        new SparseMapKeyForwardIndexReader(_sparseMapIndexReader, key, keyType);
 
-    ColumnIndexContainer keyContainer =
-        new ColumnIndexContainer.FromMap.Builder().with(StandardIndexes.forward(), keyReader).build();
+    // Build dictionary from inverted index if available
+    String[] distinctValues = _sparseMapIndexReader.getDistinctValuesForKey(key);
+    SparseMapKeyDictionary keyDictionary = null;
+    if (distinctValues != null) {
+      // Include the default value (returned for absent docs) in the dictionary so that
+      // readDictIds never returns NULL_VALUE_INDEX (-1) for absent docs.
+      String defaultValue = getDefaultValueString(keyType);
+      distinctValues = mergeDefaultValue(distinctValues, defaultValue);
+      keyDictionary = new SparseMapKeyDictionary(keyType, distinctValues);
+    }
+
+    SparseMapKeyForwardIndexReader keyReader =
+        new SparseMapKeyForwardIndexReader(_sparseMapIndexReader, key, keyType, keyDictionary);
+
+    ColumnIndexContainer.FromMap.Builder containerBuilder =
+        new ColumnIndexContainer.FromMap.Builder().with(StandardIndexes.forward(), keyReader);
+    if (keyDictionary != null) {
+      containerBuilder.with(StandardIndexes.dictionary(), keyDictionary);
+    }
+    ColumnIndexContainer keyContainer = containerBuilder.build();
 
     int numDocs = getDataSourceMetadata().getNumDocs();
-    return new BaseDataSource(new KeyDataSourceMetadata(keyFieldSpec, numDocs), keyContainer) {
+    int cardinality = keyDictionary != null ? keyDictionary.length() : 0;
+    return new BaseDataSource(new KeyDataSourceMetadata(keyFieldSpec, numDocs, cardinality), keyContainer) {
     };
+  }
+
+  private static String getDefaultValueString(FieldSpec.DataType dataType) {
+    switch (dataType) {
+      case INT:
+        return "0";
+      case LONG:
+        return "0";
+      case FLOAT:
+        return "0.0";
+      case DOUBLE:
+        return "0.0";
+      default:
+        return "";
+    }
+  }
+
+  private static String[] mergeDefaultValue(String[] sortedValues, String defaultValue) {
+    int insertionPoint = java.util.Arrays.binarySearch(sortedValues, defaultValue);
+    if (insertionPoint >= 0) {
+      // Default value already in the array
+      return sortedValues;
+    }
+    // Insert at the correct position to maintain sorted order
+    int pos = -(insertionPoint + 1);
+    String[] merged = new String[sortedValues.length + 1];
+    System.arraycopy(sortedValues, 0, merged, 0, pos);
+    merged[pos] = defaultValue;
+    System.arraycopy(sortedValues, pos, merged, pos + 1, sortedValues.length - pos);
+    return merged;
   }
 
   // ---- Per-key DataSourceMetadata ----
@@ -150,10 +197,12 @@ public class SparseMapDataSource extends BaseDataSource implements MapDataSource
   private static class KeyDataSourceMetadata implements DataSourceMetadata {
     private final FieldSpec _keyFieldSpec;
     private final int _numDocs;
+    private final int _cardinality;
 
-    KeyDataSourceMetadata(FieldSpec keyFieldSpec, int numDocs) {
+    KeyDataSourceMetadata(FieldSpec keyFieldSpec, int numDocs, int cardinality) {
       _keyFieldSpec = keyFieldSpec;
       _numDocs = numDocs;
+      _cardinality = cardinality;
     }
 
     @Override
@@ -207,7 +256,7 @@ public class SparseMapDataSource extends BaseDataSource implements MapDataSource
 
     @Override
     public int getCardinality() {
-      return 0;
+      return _cardinality;
     }
 
     @Override

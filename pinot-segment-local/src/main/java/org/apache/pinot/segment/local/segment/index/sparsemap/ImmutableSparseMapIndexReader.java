@@ -364,6 +364,47 @@ public class ImmutableSparseMapIndexReader implements SparseMapIndexReader {
   }
 
   @Override
+  public boolean hasInvertedIndex(String key) {
+    Integer keyId = _keyToId.get(key);
+    return keyId != null && _invLengths[keyId] > 0;
+  }
+
+  @Override
+  @Nullable
+  public String[] getDistinctValuesForKey(String key) {
+    Integer keyId = _keyToId.get(key);
+    if (keyId == null || _invLengths[keyId] == 0) {
+      return null;
+    }
+
+    long invBase = _perKeyDataSectionOffset + _invOffsets[keyId];
+    byte[] numUniqueBytes = new byte[4];
+    _dataBuffer.copyTo(invBase, numUniqueBytes, 0, 4);
+    int numUnique = ByteBuffer.wrap(numUniqueBytes).order(ByteOrder.BIG_ENDIAN).getInt();
+
+    String[] distinctValues = new String[numUnique];
+    long pos = invBase + 4;
+    for (int i = 0; i < numUnique; i++) {
+      byte[] vLenBytes = new byte[4];
+      _dataBuffer.copyTo(pos, vLenBytes, 0, 4);
+      int vLen = ByteBuffer.wrap(vLenBytes).order(ByteOrder.BIG_ENDIAN).getInt();
+      pos += 4;
+
+      byte[] vBytes = new byte[vLen];
+      _dataBuffer.copyTo(pos, vBytes, 0, vLen);
+      distinctValues[i] = new String(vBytes, StandardCharsets.UTF_8);
+      pos += vLen;
+
+      // Skip bitmap: read bLen and advance past bitmap bytes
+      byte[] bLenBytes = new byte[4];
+      _dataBuffer.copyTo(pos, bLenBytes, 0, 4);
+      int bLen = ByteBuffer.wrap(bLenBytes).order(ByteOrder.BIG_ENDIAN).getInt();
+      pos += 4 + bLen;
+    }
+    return distinctValues;
+  }
+
+  @Override
   public DataSource getKeyDataSource(String key) {
     // Implemented in SparseMapDataSource (Task 15)
     return null;

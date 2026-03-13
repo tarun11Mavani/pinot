@@ -19,6 +19,7 @@
 package org.apache.pinot.segment.local.segment.index.sparsemap;
 
 import java.io.IOException;
+import javax.annotation.Nullable;
 import org.apache.pinot.segment.spi.index.reader.ForwardIndexReader;
 import org.apache.pinot.segment.spi.index.reader.ForwardIndexReaderContext;
 import org.apache.pinot.segment.spi.index.reader.SparseMapIndexReader;
@@ -33,6 +34,9 @@ import org.apache.pinot.spi.data.FieldSpec.DataType;
  * combine this with the presence bitmap ({@link SparseMapIndexReader#getPresenceBitmap}) when null
  * semantics are required.
  *
+ * <p>When a {@link SparseMapKeyDictionary} is provided, this reader supports dictionary-encoded
+ * access via {@link #readDictIds}, enabling dictionary-based GROUP BY operations.
+ *
  * <p>No context is needed because the {@link SparseMapIndexReader} implementations maintain their
  * own internal state; {@link #createContext()} therefore returns {@code null}.
  *
@@ -44,17 +48,25 @@ public class SparseMapKeyForwardIndexReader implements ForwardIndexReader<Forwar
   private final SparseMapIndexReader _sparseMapIndexReader;
   private final String _key;
   private final DataType _storedType;
+  @Nullable
+  private final SparseMapKeyDictionary _dictionary;
 
   public SparseMapKeyForwardIndexReader(SparseMapIndexReader sparseMapIndexReader, String key,
       DataType storedType) {
+    this(sparseMapIndexReader, key, storedType, null);
+  }
+
+  public SparseMapKeyForwardIndexReader(SparseMapIndexReader sparseMapIndexReader, String key,
+      DataType storedType, @Nullable SparseMapKeyDictionary dictionary) {
     _sparseMapIndexReader = sparseMapIndexReader;
     _key = key;
     _storedType = storedType;
+    _dictionary = dictionary;
   }
 
   @Override
   public boolean isDictionaryEncoded() {
-    return false;
+    return _dictionary != null;
   }
 
   @Override
@@ -65,6 +77,17 @@ public class SparseMapKeyForwardIndexReader implements ForwardIndexReader<Forwar
   @Override
   public DataType getStoredType() {
     return _storedType;
+  }
+
+  @Override
+  public void readDictIds(int[] docIds, int length, int[] dictIdBuffer, ForwardIndexReaderContext context) {
+    if (_dictionary == null) {
+      throw new UnsupportedOperationException("Dictionary not available for key: " + _key);
+    }
+    for (int i = 0; i < length; i++) {
+      String rawValue = _sparseMapIndexReader.getString(docIds[i], _key);
+      dictIdBuffer[i] = _dictionary.indexOf(rawValue);
+    }
   }
 
   @Override

@@ -91,4 +91,20 @@ public interface SparseMapIndexReader extends IndexReader {
    * and data table transport to the broker.
    */
   Map<String, Object> getMap(int docId);
+
+  /**
+   * Returns whether the given key has an inverted index available.
+   */
+  default boolean hasInvertedIndex(String key) {
+    return false;
+  }
+
+  /**
+   * Returns the sorted distinct values for the given key from the inverted index, or null if no
+   * inverted index is available. Used to build a dictionary for dictionary-based GROUP BY.
+   */
+  @Nullable
+  default String[] getDistinctValuesForKey(String key) {
+    return null;
+  }
 }
