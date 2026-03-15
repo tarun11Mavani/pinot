@@ -139,6 +139,20 @@ public class SparseMapFilterOperator extends BaseFilterOperator {
         ImmutableRoaringBitmap presence = _sparseMapReader.getPresenceBitmap(_keyName);
         return ImmutableRoaringBitmap.andNot(presence, excluded.toImmutableRoaringBitmap());
       }
+      case IS_NOT_NULL:
+        return _sparseMapReader.getPresenceBitmap(_keyName);
+
+      case IS_NULL: {
+        ImmutableRoaringBitmap presence = _sparseMapReader.getPresenceBitmap(_keyName);
+        if (presence == null) {
+          // Key never appears — all docs are NULL for this key
+          MutableRoaringBitmap allDocs = new MutableRoaringBitmap();
+          allDocs.add(0L, _numDocs);
+          return allDocs.toImmutableRoaringBitmap();
+        }
+        return ImmutableRoaringBitmap.flip(presence, 0L, _numDocs);
+      }
+
       default:
         return null;
     }

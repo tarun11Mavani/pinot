@@ -23,6 +23,7 @@ import it.unimi.dsi.fastutil.objects.Object2IntOpenHashMap;
 import java.io.IOException;
 import java.math.BigDecimal;
 import java.util.Arrays;
+import java.util.Comparator;
 import org.apache.pinot.segment.spi.index.reader.Dictionary;
 import org.apache.pinot.spi.data.FieldSpec.DataType;
 import org.apache.pinot.spi.utils.ByteArray;
@@ -109,6 +110,10 @@ public class SparseMapKeyDictionary implements Dictionary {
     int index = _valueToIdMap.getInt(stringValue);
     if (index != NULL_VALUE_INDEX) {
       return index;
+    }
+    Comparator<String> cmp = getComparator(_valueType);
+    if (cmp != null) {
+      return Arrays.binarySearch(_sortedValues, stringValue, cmp);
     }
     return Arrays.binarySearch(_sortedValues, stringValue);
   }
@@ -203,6 +208,24 @@ public class SparseMapKeyDictionary implements Dictionary {
         return Double.parseDouble(stringValue);
       default:
         return stringValue;
+    }
+  }
+
+  /**
+   * Returns a numeric comparator for the given type, or null for STRING/BYTES (lexicographic).
+   */
+  private static Comparator<String> getComparator(DataType valueType) {
+    switch (valueType) {
+      case INT:
+        return Comparator.comparingInt(Integer::parseInt);
+      case LONG:
+        return Comparator.comparingLong(Long::parseLong);
+      case FLOAT:
+        return (a, b) -> Float.compare(Float.parseFloat(a), Float.parseFloat(b));
+      case DOUBLE:
+        return Comparator.comparingDouble(Double::parseDouble);
+      default:
+        return null;
     }
   }
 }

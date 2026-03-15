@@ -53,3 +53,6 @@ pinotClusterSpecs:
 pushJobSpec:
   pushAttempts: 2
   pushRetryIntervalMillis: 1000
+
+segmentCreationJobConfig:
+  maxNumRecordsPerSegment: 20

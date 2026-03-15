@@ -28,7 +28,7 @@ import org.apache.pinot.tools.admin.command.QuickstartRunner;
 /**
  * Quickstart demonstrating SPARSE_MAP column type vs JSON column type on identical data.
  *
- * <p>Two tables are loaded with the same 20-row user-metrics dataset:
+ * <p>Two tables are loaded with the same 200-row user-metrics dataset:
  * <ul>
  *   <li>{@code userMetrics} — {@code metrics} column is {@code SPARSE_MAP} with declared keys
  *       {@code clicks} (LONG), {@code spend} (DOUBLE), {@code sessions} (INT), and
@@ -185,7 +185,8 @@ public class SparseMapQuickStart extends Quickstart {
     String q6json =
         "SELECT userId, JSON_EXTRACT_SCALAR(metrics, '$.clicks', 'LONG') FROM userMetricsJson"
             + " WHERE JSON_EXTRACT_SCALAR(metrics, '$.clicks', 'LONG') >= 5 LIMIT 100";
-    printStatus(Color.YELLOW, "[JSON] Filter clicks >= 5 via JSON_EXTRACT_SCALAR (range — JSON_MATCH not used for numeric range)");
+    printStatus(Color.YELLOW,
+        "[JSON] Filter clicks >= 5 via JSON_EXTRACT_SCALAR (range — no JSON_MATCH for numeric range)");
     printStatus(Color.CYAN, "Query : " + q6json);
     printStatus(Color.YELLOW, prettyPrintResponse(runner.runQuery(q6json)));
     printStatus(Color.GREEN, "***************************************************");
@@ -229,7 +230,8 @@ public class SparseMapQuickStart extends Quickstart {
     String q9sm =
         "SELECT metrics['country'], COUNT(*) AS cnt FROM userMetrics"
             + " WHERE metrics['country'] != '' GROUP BY metrics['country'] ORDER BY cnt DESC";
-    printStatus(Color.YELLOW, "[SPARSE_MAP] GROUP BY metrics['country'] — per-key forward index, inverted index assists filter");
+    printStatus(Color.YELLOW,
+        "[SPARSE_MAP] GROUP BY metrics['country'] — per-key forward index, inverted index assists filter");
     printStatus(Color.CYAN, "Query : " + q9sm);
     printStatus(Color.YELLOW, prettyPrintResponse(runner.runQuery(q9sm)));
     printStatus(Color.GREEN, "***************************************************");
@@ -242,6 +244,71 @@ public class SparseMapQuickStart extends Quickstart {
     printStatus(Color.YELLOW, "[JSON] GROUP BY country — JSON_MATCH IS NOT NULL uses JSON index to skip missing docs");
     printStatus(Color.CYAN, "Query : " + q9json);
     printStatus(Color.YELLOW, prettyPrintResponse(runner.runQuery(q9json)));
+    printStatus(Color.GREEN, "***************************************************");
+
+    // -----------------------------------------------------------------------
+    // Q10: IS NOT NULL on map key — SPARSE_MAP uses presence bitmap (O(1));
+    //      JSON uses JSON_MATCH IS NOT NULL
+    // -----------------------------------------------------------------------
+    String q10sm = "SELECT COUNT(*) FROM userMetrics WHERE metrics['clicks'] IS NOT NULL";
+    printStatus(Color.YELLOW,
+        "[SPARSE_MAP] COUNT where metrics['clicks'] IS NOT NULL — presence bitmap, zero doc scan");
+    printStatus(Color.CYAN, "Query : " + q10sm);
+    printStatus(Color.YELLOW, prettyPrintResponse(runner.runQuery(q10sm)));
+    printStatus(Color.GREEN, "***************************************************");
+
+    String q10json = "SELECT COUNT(*) FROM userMetricsJson"
+        + " WHERE JSON_MATCH(metrics, '\"$.clicks\" IS NOT NULL')";
+    printStatus(Color.YELLOW, "[JSON] COUNT where clicks IS NOT NULL via JSON_MATCH");
+    printStatus(Color.CYAN, "Query : " + q10json);
+    printStatus(Color.YELLOW, prettyPrintResponse(runner.runQuery(q10json)));
+    printStatus(Color.GREEN, "***************************************************");
+
+    // -----------------------------------------------------------------------
+    // Q11: IS NULL on map key — SPARSE_MAP flips presence bitmap;
+    //      JSON uses JSON_MATCH IS NULL
+    // -----------------------------------------------------------------------
+    String q11sm = "SELECT COUNT(*) FROM userMetrics WHERE metrics['clicks'] IS NULL";
+    printStatus(Color.YELLOW, "[SPARSE_MAP] COUNT where metrics['clicks'] IS NULL — flipped presence bitmap");
+    printStatus(Color.CYAN, "Query : " + q11sm);
+    printStatus(Color.YELLOW, prettyPrintResponse(runner.runQuery(q11sm)));
+    printStatus(Color.GREEN, "***************************************************");
+
+    String q11json = "SELECT COUNT(*) FROM userMetricsJson"
+        + " WHERE JSON_MATCH(metrics, '\"$.clicks\" IS NULL')";
+    printStatus(Color.YELLOW, "[JSON] COUNT where clicks IS NULL via JSON_MATCH");
+    printStatus(Color.CYAN, "Query : " + q11json);
+    printStatus(Color.YELLOW, prettyPrintResponse(runner.runQuery(q11json)));
+    printStatus(Color.GREEN, "***************************************************");
+
+    // -----------------------------------------------------------------------
+    // Q12: IS NOT NULL + aggregation
+    // -----------------------------------------------------------------------
+    String q12sm = "SELECT SUM(metrics['clicks']) FROM userMetrics WHERE metrics['clicks'] IS NOT NULL";
+    printStatus(Color.YELLOW, "[SPARSE_MAP] SUM clicks WHERE IS NOT NULL — bitmap-filtered aggregation");
+    printStatus(Color.CYAN, "Query : " + q12sm);
+    printStatus(Color.YELLOW, prettyPrintResponse(runner.runQuery(q12sm)));
+    printStatus(Color.GREEN, "***************************************************");
+
+    // -----------------------------------------------------------------------
+    // Q13: IS NOT NULL + GROUP BY
+    // -----------------------------------------------------------------------
+    String q13sm = "SELECT region, COUNT(*) FROM userMetrics"
+        + " WHERE metrics['country'] IS NOT NULL GROUP BY region ORDER BY COUNT(*) DESC";
+    printStatus(Color.YELLOW, "[SPARSE_MAP] GROUP BY region WHERE country IS NOT NULL — bitmap + group-by");
+    printStatus(Color.CYAN, "Query : " + q13sm);
+    printStatus(Color.YELLOW, prettyPrintResponse(runner.runQuery(q13sm)));
+    printStatus(Color.GREEN, "***************************************************");
+
+    // -----------------------------------------------------------------------
+    // Q14: IS NOT NULL + IS NULL complement verification
+    //      COUNT(IS_NOT_NULL) + COUNT(IS_NULL) must equal COUNT(*)
+    // -----------------------------------------------------------------------
+    String q14sm = "SELECT COUNT(*) FROM userMetrics WHERE metrics['sessions'] IS NULL";
+    printStatus(Color.YELLOW,
+        "[SPARSE_MAP] COUNT where sessions IS NULL — complement check: IS_NOT_NULL + IS_NULL = total");
+    printStatus(Color.CYAN, "Query : " + q14sm);
+    printStatus(Color.YELLOW, prettyPrintResponse(runner.runQuery(q14sm)));
     printStatus(Color.GREEN, "***************************************************");
   }
 

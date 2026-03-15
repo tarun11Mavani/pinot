@@ -24,6 +24,8 @@ import java.util.Collections;
 import java.util.HashMap;
 import java.util.Map;
 import org.apache.pinot.common.request.context.ExpressionContext;
+import org.apache.pinot.common.request.context.predicate.IsNotNullPredicate;
+import org.apache.pinot.common.request.context.predicate.IsNullPredicate;
 import org.apache.pinot.common.request.context.predicate.NotEqPredicate;
 import org.apache.pinot.common.request.context.predicate.NotInPredicate;
 import org.apache.pinot.segment.local.segment.index.sparsemap.ImmutableSparseMapIndexReader;
@@ -39,6 +41,7 @@ import org.testng.annotations.Test;
 
 import static org.testng.Assert.assertEquals;
 import static org.testng.Assert.assertFalse;
+import static org.testng.Assert.assertTrue;
 
 
 /**
@@ -173,5 +176,91 @@ public class SparseMapFilterOperatorTest {
 
     ImmutableRoaringBitmap result = op.getBitmaps().reduce();
     assertEquals(result.getCardinality(), 0, "All docs absent → empty result for NOT_EQ");
+  }
+
+  /**
+   * IS_NOT_NULL: returns docs where the key is present.
+   * color IS NOT NULL → {0, 1, 3} (excludes doc 2 which has no color key)
+   */
+  @Test
+  public void testIsNotNullReturnsOnlyDocsWithKey()
+      throws Exception {
+    ImmutableSparseMapIndexReader reader = buildColorIndex("color_is_not_null");
+    IsNotNullPredicate predicate = new IsNotNullPredicate(ExpressionContext.forIdentifier("color"));
+    SparseMapFilterOperator op = new SparseMapFilterOperator(reader, predicate, "color", 4);
+
+    ImmutableRoaringBitmap result = op.getBitmaps().reduce();
+    assertEquals(result.getCardinality(), 3, "Expected exactly 3 matching docs: {0, 1, 3}");
+    assertTrue(result.contains(0), "doc 0 (color=red) must be included");
+    assertTrue(result.contains(1), "doc 1 (color=blue) must be included");
+    assertFalse(result.contains(2), "doc 2 (color absent) must be excluded");
+    assertTrue(result.contains(3), "doc 3 (color=green) must be included");
+    assertEquals(result.toArray(), new int[]{0, 1, 3});
+  }
+
+  /**
+   * IS_NULL: returns docs where the key is absent.
+   * color IS NULL → {2} (only doc 2 has no color key)
+   */
+  @Test
+  public void testIsNullReturnsOnlyDocsWithoutKey()
+      throws Exception {
+    ImmutableSparseMapIndexReader reader = buildColorIndex("color_is_null");
+    IsNullPredicate predicate = new IsNullPredicate(ExpressionContext.forIdentifier("color"));
+    SparseMapFilterOperator op = new SparseMapFilterOperator(reader, predicate, "color", 4);
+
+    ImmutableRoaringBitmap result = op.getBitmaps().reduce();
+    assertEquals(result.getCardinality(), 1, "Expected exactly 1 matching doc: {2}");
+    assertTrue(result.contains(2), "doc 2 (color absent) must be included");
+    assertFalse(result.contains(0), "doc 0 (color=red) must be excluded");
+    assertEquals(result.toArray(), new int[]{2});
+  }
+
+  /**
+   * IS_NOT_NULL on a key that no doc has → empty result.
+   */
+  @Test
+  public void testIsNotNullOnAbsentKeyReturnsEmpty()
+      throws Exception {
+    ImmutableSparseMapIndexReader reader = buildColorIndex("color_absent_key");
+    IsNotNullPredicate predicate = new IsNotNullPredicate(ExpressionContext.forIdentifier("nonexistent_key"));
+    SparseMapFilterOperator op = new SparseMapFilterOperator(reader, predicate, "nonexistent_key", 4);
+
+    ImmutableRoaringBitmap result = op.getBitmaps().reduce();
+    assertEquals(result.getCardinality(), 0, "No doc has 'nonexistent_key' → empty result");
+  }
+
+  /**
+   * IS_NULL on a key that every doc has → empty result.
+   * Build a 3-doc index where all docs have the key.
+   */
+  @Test
+  public void testIsNullOnFullPresenceReturnsEmpty()
+      throws Exception {
+    String colName = "color_full_presence";
+    SparseMapFieldSpec fieldSpec = new SparseMapFieldSpec(colName);
+    SparseMapIndexConfig config = new SparseMapIndexConfig(true, null, true, null, 10);
+    OnHeapSparseMapIndexCreator creator = new OnHeapSparseMapIndexCreator(_tmpDir, colName, fieldSpec, config);
+    Map<String, Object> doc = new HashMap<>();
+    doc.put("color", "red");
+    creator.add(doc);
+    doc.clear();
+    doc.put("color", "blue");
+    creator.add(doc);
+    doc.clear();
+    doc.put("color", "green");
+    creator.add(doc);
+    creator.seal();
+    creator.close();
+
+    File indexFile = new File(_tmpDir, colName + V1Constants.Indexes.SPARSE_MAP_INDEX_FILE_EXTENSION);
+    PinotDataBuffer buf = PinotDataBuffer.mapReadOnlyBigEndianFile(indexFile);
+    ImmutableSparseMapIndexReader reader = new ImmutableSparseMapIndexReader(buf, null);
+
+    IsNullPredicate predicate = new IsNullPredicate(ExpressionContext.forIdentifier("color"));
+    SparseMapFilterOperator op = new SparseMapFilterOperator(reader, predicate, "color", 3);
+
+    ImmutableRoaringBitmap result = op.getBitmaps().reduce();
+    assertEquals(result.getCardinality(), 0, "All docs have 'color' → IS NULL returns empty");
   }
 }

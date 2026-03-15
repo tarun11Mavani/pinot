@@ -252,6 +252,8 @@ public class MapFilterOperator extends BaseFilterOperator {
       case NOT_EQ:
       case IN:
       case NOT_IN:
+      case IS_NULL:
+      case IS_NOT_NULL:
         return true;
       default:
         return false;

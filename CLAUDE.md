@@ -94,7 +94,7 @@ Example:
 
 ### Single integration test
 
-Integration tests start a full embedded cluster (ZK + controller + broker + server). Run only for cross-role validation.
+Integration tests start a full embedded cluster (ZK + controller + broker + server). Run only for cross-role validation. They take ~30s each.
 
 ```bash
 ./mvnw test -pl pinot-integration-tests \
@@ -102,6 +102,8 @@ Integration tests start a full embedded cluster (ZK + controller + broker + serv
   -Dsurefire.failIfNoSpecifiedTests=false \
   -Dlicense.skip -Dcheckstyle.skip -Drat.ignoreErrors=true
 ```
+
+**Note:** `-Dsurefire.failIfNoSpecifiedTests=false` is required for integration tests — without it Maven fails if the test class doesn't match surefire's default includes.
 
 ### Quickstart
 
@@ -130,7 +132,7 @@ Or run all at once:
   -Dlicense.skip
 ```
 
-Checkstyle rules live under `config/`.
+Checkstyle rules live under `config/`. Checkstyle enforces a **120 character line limit** — long `printStatus()` calls and string concatenations are common offenders. Break them across lines.
 
 ## Coding Conventions
 
@@ -150,3 +152,11 @@ Checkstyle rules live under `config/`.
 - **Config or API changes** should update relevant configs and docs.
 - Preserve backward compatibility across mixed-version broker/server/controller deployments.
 - Timezones: when defining `STANDARD_TIMEZONES`, use format `PDT(America/Los_Angeles)`, sorted by UTC offset.
+
+## Common Pitfalls
+
+- **Dictionary sort order matters.** Any dictionary that claims `isSorted() = true` must sort values in the type's natural order (numeric for INT/LONG/FLOAT/DOUBLE, lexicographic for STRING). Lexicographic sorting of numeric strings (e.g. `"5" > "42"`) silently breaks range predicates and BETWEEN filters via `insertionIndexOf()`.
+- **TreeMap keys are always lexicographic.** When building dictId mappings or value dictionaries from a `TreeMap<String, ...>`, re-sort the extracted keys numerically for numeric types before assigning dictIds.
+- **Rebuild before testing.** The `install` step for changed modules must complete before running tests — Maven won't automatically rebuild transitive dependencies within `-pl`. Use `./mvnw install -pl <modules> -DskipTests` then `./mvnw test -pl <module> -Dtest=<Test>`.
+- **Stale JARs in distribution.** After `./mvnw package -Pbin-dist`, the assembled `pinot-tools-pkg/lib/` may contain stale JARs. Copy freshly built JARs manually (see Targeted Rebuild step 3) before running QuickStart.
+- **Integration test data is self-contained.** Integration tests embed their own test data as string arrays — they do not read from `src/main/resources`. QuickStart data files and integration test data are independent and must be updated separately.

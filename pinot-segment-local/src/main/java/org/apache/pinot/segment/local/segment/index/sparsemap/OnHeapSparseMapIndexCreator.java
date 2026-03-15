@@ -25,6 +25,7 @@ import java.io.FileOutputStream;
 import java.io.IOException;
 import java.nio.charset.StandardCharsets;
 import java.util.ArrayList;
+import java.util.Comparator;
 import java.util.HashMap;
 import java.util.HashSet;
 import java.util.List;
@@ -424,18 +425,14 @@ public class OnHeapSparseMapIndexCreator implements SparseMapIndexCreator {
     // Build sorted distinct values array, merging default value
     String defaultValue = getDefaultValueString(storedType);
     String[] distinctValues = valueToDocIds.keySet().toArray(new String[0]);
-    int defaultInsertionPoint = java.util.Arrays.binarySearch(distinctValues, defaultValue);
-    String[] allValues;
-    if (defaultInsertionPoint >= 0) {
-      // Default already in the set
-      allValues = distinctValues;
-    } else {
-      int pos = -(defaultInsertionPoint + 1);
-      allValues = new String[distinctValues.length + 1];
-      System.arraycopy(distinctValues, 0, allValues, 0, pos);
-      allValues[pos] = defaultValue;
-      System.arraycopy(distinctValues, pos, allValues, pos + 1, distinctValues.length - pos);
-    }
+
+    // Merge default value into sorted array
+    Set<String> allSet = new HashSet<>(java.util.Arrays.asList(distinctValues));
+    allSet.add(defaultValue);
+    String[] allValues = allSet.toArray(new String[0]);
+
+    // Sort numerically for numeric types, lexicographically for strings
+    sortValues(allValues, storedType);
 
     // Build value → dictId mapping
     Map<String, Integer> valueToDictId = new HashMap<>();
@@ -494,6 +491,36 @@ public class OnHeapSparseMapIndexCreator implements SparseMapIndexCreator {
     }
   }
 
+  /**
+   * Sorts string-encoded values using numeric comparison for numeric types,
+   * or lexicographic comparison for STRING/BYTES.
+   */
+  private static void sortValues(String[] values, DataType storedType) {
+    Comparator<String> cmp;
+    switch (storedType) {
+      case INT:
+        cmp = Comparator.comparingInt(Integer::parseInt);
+        break;
+      case LONG:
+        cmp = Comparator.comparingLong(Long::parseLong);
+        break;
+      case FLOAT:
+        cmp = (a, b) -> Float.compare(Float.parseFloat(a), Float.parseFloat(b));
+        break;
+      case DOUBLE:
+        cmp = Comparator.comparingDouble(Double::parseDouble);
+        break;
+      default:
+        cmp = null;
+        break;
+    }
+    if (cmp != null) {
+      java.util.Arrays.sort(values, cmp);
+    } else {
+      java.util.Arrays.sort(values);
+    }
+  }
+
   /// Builds the value dictionary section written after all per-key data.
   /// For each key with inverted index: numDistinctValues(int), numBitsPerValue(int),
   /// then [valueLen(int) + valueBytes] × numDistinctValues.
@@ -518,17 +545,13 @@ public class OnHeapSparseMapIndexCreator implements SparseMapIndexCreator {
       // Merge default value
       String defaultValue = getDefaultValueString(storedType);
       String[] distinctValues = valueToDocIds.keySet().toArray(new String[0]);
-      int insertionPoint = java.util.Arrays.binarySearch(distinctValues, defaultValue);
-      String[] allValues;
-      if (insertionPoint >= 0) {
-        allValues = distinctValues;
-      } else {
-        int pos = -(insertionPoint + 1);
-        allValues = new String[distinctValues.length + 1];
-        System.arraycopy(distinctValues, 0, allValues, 0, pos);
-        allValues[pos] = defaultValue;
-        System.arraycopy(distinctValues, pos, allValues, pos + 1, distinctValues.length - pos);
-      }
+
+      Set<String> allSet = new HashSet<>(java.util.Arrays.asList(distinctValues));
+      allSet.add(defaultValue);
+      String[] allValues = allSet.toArray(new String[0]);
+
+      // Sort numerically for numeric types, lexicographically for strings
+      sortValues(allValues, storedType);
 
       int numBitsPerValue = PinotDataBitSet.getNumBitsPerValue(allValues.length - 1);
       dos.writeInt(allValues.length);

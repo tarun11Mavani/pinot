@@ -131,6 +131,16 @@ public class SparseMapClusterIntegrationTest extends BaseClusterIntegrationTest 
   private static final long CLICKS_GTE_100_COUNT = 3;  // u005(150), u010(210), u013(330)
   private static final double CLICKS_SUM = 1008.0;
 
+  // IS_NOT_NULL / IS_NULL counts derived from the JSON_RECORDS:
+  // clicks present: u001,u003,u005,u006,u008,u010,u011,u013,u015,u017,u018,u020 = 12
+  // clicks absent: u002,u004,u007,u009,u012,u014,u016,u019 = 8
+  // country present: u001,u002,u004,u005,u006,u009,u010,u011,u012,u015,u016,u017,u018,u019,u020 = 15
+  // country absent: u003,u007,u008,u013,u014 = 5
+  private static final long CLICKS_NOT_NULL_COUNT = 12;
+  private static final long CLICKS_NULL_COUNT = 8;
+  private static final long COUNTRY_NOT_NULL_COUNT = 15;
+  private static final long COUNTRY_NULL_COUNT = 5;
+
   @Override
   protected long getCountStarResult() {
     return TOTAL_DOCS;
@@ -581,5 +591,70 @@ public class SparseMapClusterIntegrationTest extends BaseClusterIntegrationTest 
       }
     }
     Assert.assertTrue(foundU001, "Row for u001 not found");
+  }
+
+  /**
+   * IS NOT NULL on a SPARSE_MAP key must return docs that have the key present.
+   * Uses the presence bitmap — O(1), zero doc scanning.
+   */
+  @Test
+  public void testIsNotNullFilter()
+      throws Exception {
+    JsonNode response = postQuery(
+        "SELECT COUNT(*) FROM " + TABLE_NAME + " WHERE metrics['clicks'] IS NOT NULL");
+    Assert.assertEquals(response.get("exceptions").size(), 0, "Query had exceptions: " + response);
+    long count = response.get("resultTable").get("rows").get(0).get(0).longValue();
+    Assert.assertEquals(count, CLICKS_NOT_NULL_COUNT);
+  }
+
+  /**
+   * IS NULL on a SPARSE_MAP key must return docs where the key is absent.
+   * Uses the flipped presence bitmap.
+   */
+  @Test
+  public void testIsNullFilter()
+      throws Exception {
+    JsonNode response = postQuery(
+        "SELECT COUNT(*) FROM " + TABLE_NAME + " WHERE metrics['clicks'] IS NULL");
+    Assert.assertEquals(response.get("exceptions").size(), 0, "Query had exceptions: " + response);
+    long count = response.get("resultTable").get("rows").get(0).get(0).longValue();
+    Assert.assertEquals(count, CLICKS_NULL_COUNT);
+  }
+
+  /**
+   * IS NOT NULL + IS NULL must be complements: their counts must sum to COUNT(*).
+   */
+  @Test
+  public void testIsNotNullPlusIsNullEqualsTotal()
+      throws Exception {
+    JsonNode notNullResponse = postQuery(
+        "SELECT COUNT(*) FROM " + TABLE_NAME + " WHERE metrics['country'] IS NOT NULL");
+    Assert.assertEquals(notNullResponse.get("exceptions").size(), 0);
+    long notNullCount = notNullResponse.get("resultTable").get("rows").get(0).get(0).longValue();
+    Assert.assertEquals(notNullCount, COUNTRY_NOT_NULL_COUNT);
+
+    JsonNode nullResponse = postQuery(
+        "SELECT COUNT(*) FROM " + TABLE_NAME + " WHERE metrics['country'] IS NULL");
+    Assert.assertEquals(nullResponse.get("exceptions").size(), 0);
+    long nullCount = nullResponse.get("resultTable").get("rows").get(0).get(0).longValue();
+    Assert.assertEquals(nullCount, COUNTRY_NULL_COUNT);
+
+    Assert.assertEquals(notNullCount + nullCount, TOTAL_DOCS,
+        "IS_NOT_NULL + IS_NULL must equal total doc count");
+  }
+
+  /**
+   * IS NOT NULL combined with aggregation: SUM should only aggregate non-null docs.
+   */
+  @Test
+  public void testIsNotNullWithAggregation()
+      throws Exception {
+    JsonNode response = postQuery(
+        "SELECT SUM(metrics['clicks']) FROM " + TABLE_NAME
+            + " WHERE metrics['clicks'] IS NOT NULL");
+    Assert.assertEquals(response.get("exceptions").size(), 0, "Query had exceptions: " + response);
+    double sum = response.get("resultTable").get("rows").get(0).get(0).doubleValue();
+    // The sum should be the same as the total clicks sum since absent keys contribute 0
+    Assert.assertEquals(sum, CLICKS_SUM, 0.001);
   }
 }
