@@ -18,6 +18,7 @@
  */
 package org.apache.pinot.segment.local.segment.index.sparsemap;
 
+import java.util.Comparator;
 import java.util.HashMap;
 import java.util.Map;
 import java.util.Set;
@@ -87,11 +88,13 @@ public class SparseMapDataSource extends BaseDataSource implements MapDataSource
   // ---- MapDataSource implementation ----
 
   /**
-   * Not used by query execution; thrown to prevent accidental misuse.
+   * SPARSE_MAP columns use {@link org.apache.pinot.spi.data.SparseMapFieldSpec}, not
+   * {@link ComplexFieldSpec.MapFieldSpec}. Returns {@code null} because the types are incompatible.
    */
+  @Nullable
   @Override
   public ComplexFieldSpec.MapFieldSpec getFieldSpec() {
-    throw new UnsupportedOperationException("SPARSE_MAP columns use SparseMapFieldSpec, not MapFieldSpec");
+    return null;
   }
 
   /**
@@ -103,7 +106,18 @@ public class SparseMapDataSource extends BaseDataSource implements MapDataSource
   @Override
   @Nullable
   public DataSource getKeyDataSource(String key) {
-    return _keyDataSourceCache.computeIfAbsent(key, this::buildKeyDataSource);
+    // ConcurrentHashMap.computeIfAbsent does not allow null values, so we cannot
+    // cache unknown keys that way. Check the cache first, then build on miss.
+    DataSource cached = _keyDataSourceCache.get(key);
+    if (cached != null) {
+      return cached;
+    }
+    DataSource ds = buildKeyDataSource(key);
+    if (ds == null) {
+      return null;
+    }
+    DataSource existing = _keyDataSourceCache.putIfAbsent(key, ds);
+    return existing != null ? existing : ds;
   }
 
   @Override
@@ -149,8 +163,8 @@ public class SparseMapDataSource extends BaseDataSource implements MapDataSource
     if (keyDictionary == null) {
       String[] distinctValues = _sparseMapIndexReader.getDistinctValuesForKey(key);
       if (distinctValues != null) {
-        String defaultValue = getDefaultValueString(keyType);
-        distinctValues = mergeDefaultValue(distinctValues, defaultValue);
+        String defaultValue = SparseMapKeyDictionary.getDefaultValueString(keyType);
+        distinctValues = mergeDefaultValue(distinctValues, defaultValue, keyType);
         keyDictionary = new SparseMapKeyDictionary(keyType, distinctValues);
       }
     }
@@ -171,23 +185,12 @@ public class SparseMapDataSource extends BaseDataSource implements MapDataSource
     };
   }
 
-  private static String getDefaultValueString(FieldSpec.DataType dataType) {
-    switch (dataType) {
-      case INT:
-        return "0";
-      case LONG:
-        return "0";
-      case FLOAT:
-        return "0.0";
-      case DOUBLE:
-        return "0.0";
-      default:
-        return "";
-    }
-  }
-
-  private static String[] mergeDefaultValue(String[] sortedValues, String defaultValue) {
-    int insertionPoint = java.util.Arrays.binarySearch(sortedValues, defaultValue);
+  private static String[] mergeDefaultValue(String[] sortedValues, String defaultValue,
+      FieldSpec.DataType keyType) {
+    Comparator<String> cmp = SparseMapKeyDictionary.getComparator(keyType);
+    int insertionPoint = cmp != null
+        ? java.util.Arrays.binarySearch(sortedValues, defaultValue, cmp)
+        : java.util.Arrays.binarySearch(sortedValues, defaultValue);
     if (insertionPoint >= 0) {
       // Default value already in the array
       return sortedValues;

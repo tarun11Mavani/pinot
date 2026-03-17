@@ -53,6 +53,7 @@ public class SparseMapKeyForwardIndexReader implements ForwardIndexReader<Forwar
   private final SparseMapKeyDictionary _dictionary;
   @Nullable
   private final FixedBitIntReaderWriter _dictIdReader;
+  private final int _defaultDictId;
 
   public SparseMapKeyForwardIndexReader(SparseMapIndexReader sparseMapIndexReader, String key,
       DataType storedType) {
@@ -72,6 +73,13 @@ public class SparseMapKeyForwardIndexReader implements ForwardIndexReader<Forwar
     _storedType = storedType;
     _dictionary = dictionary;
     _dictIdReader = dictIdReader;
+    if (dictionary != null) {
+      String defaultValueStr = SparseMapKeyDictionary.getDefaultValueString(storedType);
+      int idx = dictionary.indexOf(defaultValueStr);
+      _defaultDictId = idx >= 0 ? idx : 0;
+    } else {
+      _defaultDictId = 0;
+    }
   }
 
   @Override
@@ -103,7 +111,11 @@ public class SparseMapKeyForwardIndexReader implements ForwardIndexReader<Forwar
       // Slow path: getString + indexOf for mutable segments
       for (int i = 0; i < length; i++) {
         String rawValue = _sparseMapIndexReader.getString(docIds[i], _key);
-        dictIdBuffer[i] = _dictionary.indexOf(rawValue);
+        if (rawValue == null || rawValue.isEmpty()) {
+          dictIdBuffer[i] = _defaultDictId; // default value position in dictionary
+        } else {
+          dictIdBuffer[i] = _dictionary.indexOf(rawValue);
+        }
       }
     }
   }

@@ -25,6 +25,7 @@ import java.io.FileOutputStream;
 import java.io.IOException;
 import java.nio.charset.StandardCharsets;
 import java.util.ArrayList;
+import java.util.Collections;
 import java.util.Comparator;
 import java.util.HashMap;
 import java.util.HashSet;
@@ -126,7 +127,17 @@ public class OnHeapSparseMapIndexCreator implements SparseMapIndexCreator {
           _distinctKeyCount++;
         }
         _presenceBitmaps.get(key).add(_numDocs);
-        Object coerced = coerceValue(rawValue, valueType);
+        Object coerced;
+        try {
+          coerced = coerceValue(rawValue, valueType);
+        } catch (ClassCastException | NumberFormatException e) {
+          LOGGER.warn(
+              "OnHeapSparseMapIndexCreator for column '{}': failed to coerce value '{}' (type {}) to {} for key '{}'."
+                  + " Skipping key for this document.",
+              _columnName, rawValue, rawValue.getClass().getSimpleName(), valueType, key, e);
+          _presenceBitmaps.get(key).remove(_numDocs);
+          continue;
+        }
         _values.get(key).add(coerced);
       }
     }
@@ -136,14 +147,24 @@ public class OnHeapSparseMapIndexCreator implements SparseMapIndexCreator {
   @Override
   public void add(Object value, int dictId)
       throws IOException {
-    add((Map<String, Object>) value);
+    if (!(value instanceof Map)) {
+      return;
+    }
+    @SuppressWarnings("unchecked")
+    Map<String, Object> sparseMap = (Map<String, Object>) value;
+    add(sparseMap);
   }
 
   @Override
   public void add(Object[] values, @Nullable int[] dictIds)
       throws IOException {
     for (Object v : values) {
-      add((Map<String, Object>) v);
+      if (!(v instanceof Map)) {
+        continue;
+      }
+      @SuppressWarnings("unchecked")
+      Map<String, Object> sparseMap = (Map<String, Object>) v;
+      add(sparseMap);
     }
   }
 
@@ -157,13 +178,25 @@ public class OnHeapSparseMapIndexCreator implements SparseMapIndexCreator {
         if (value instanceof Boolean) {
           return (Boolean) value ? 1 : 0;
         }
-        return ((Number) value).intValue();
+        if (value instanceof Number) {
+          return ((Number) value).intValue();
+        }
+        return Integer.parseInt(value.toString().trim());
       case LONG:
-        return ((Number) value).longValue();
+        if (value instanceof Number) {
+          return ((Number) value).longValue();
+        }
+        return Long.parseLong(value.toString().trim());
       case FLOAT:
-        return ((Number) value).floatValue();
+        if (value instanceof Number) {
+          return ((Number) value).floatValue();
+        }
+        return Float.parseFloat(value.toString().trim());
       case DOUBLE:
-        return ((Number) value).doubleValue();
+        if (value instanceof Number) {
+          return ((Number) value).doubleValue();
+        }
+        return Double.parseDouble(value.toString().trim());
       case STRING:
         return value.toString();
       case BYTES:
@@ -199,13 +232,15 @@ public class OnHeapSparseMapIndexCreator implements SparseMapIndexCreator {
   @Override
   public void seal()
       throws IOException {
-    List<String> sortedKeys = new ArrayList<>(new TreeMap<>(_presenceBitmaps).keySet());
+    List<String> sortedKeys = new ArrayList<>(_presenceBitmaps.keySet());
+    Collections.sort(sortedKeys);
     int numKeys = sortedKeys.size();
 
     byte[] keyDictionarySection = buildKeyDictionarySection(sortedKeys);
     byte[] keyMetadataSection = new byte[numKeys * KEY_METADATA_ENTRY_SIZE];
-    byte[] perKeyDataSection = buildPerKeyDataSection(sortedKeys, keyMetadataSection);
-    byte[] valueDictionarySection = buildValueDictionarySection(sortedKeys);
+    Map<String, TreeMap<String, RoaringBitmap>> cachedValueToDocIds = new HashMap<>();
+    byte[] perKeyDataSection = buildPerKeyDataSection(sortedKeys, keyMetadataSection, cachedValueToDocIds);
+    byte[] valueDictionarySection = buildValueDictionarySection(sortedKeys, cachedValueToDocIds);
 
     long keyDictionaryOffset = HEADER_SIZE;
     long keyMetadataOffset = keyDictionaryOffset + keyDictionarySection.length;
@@ -226,77 +261,81 @@ public class OnHeapSparseMapIndexCreator implements SparseMapIndexCreator {
   private byte[] buildKeyDictionarySection(List<String> sortedKeys)
       throws IOException {
     ByteArrayOutputStream baos = new ByteArrayOutputStream();
-    DataOutputStream dos = new DataOutputStream(baos);
-    dos.writeInt(sortedKeys.size());
-    for (String key : sortedKeys) {
-      byte[] keyBytes = key.getBytes(StandardCharsets.UTF_8);
-      dos.writeInt(keyBytes.length);
-      dos.write(keyBytes);
+    try (DataOutputStream dos = new DataOutputStream(baos)) {
+      dos.writeInt(sortedKeys.size());
+      for (String key : sortedKeys) {
+        byte[] keyBytes = key.getBytes(StandardCharsets.UTF_8);
+        dos.writeInt(keyBytes.length);
+        dos.write(keyBytes);
+      }
     }
     return baos.toByteArray();
   }
 
-  private byte[] buildPerKeyDataSection(List<String> sortedKeys, byte[] keyMetadataSection)
+  private byte[] buildPerKeyDataSection(List<String> sortedKeys, byte[] keyMetadataSection,
+      Map<String, TreeMap<String, RoaringBitmap>> cachedValueToDocIds)
       throws IOException {
     ByteArrayOutputStream baos = new ByteArrayOutputStream();
-    DataOutputStream dos = new DataOutputStream(baos);
-    long currentOffset = 0;
+    try (DataOutputStream dos = new DataOutputStream(baos)) {
+      long currentOffset = 0;
 
-    for (int i = 0; i < sortedKeys.size(); i++) {
-      String key = sortedKeys.get(i);
-      RoaringBitmap presence = _presenceBitmaps.get(key);
-      List<Object> values = _values.get(key);
-      DataType dataType = _keyTypes.getOrDefault(key, _defaultValueType);
-      DataType storedType = dataType.getStoredType();
+      for (int i = 0; i < sortedKeys.size(); i++) {
+        String key = sortedKeys.get(i);
+        RoaringBitmap presence = _presenceBitmaps.get(key);
+        List<Object> values = _values.get(key);
+        DataType dataType = _keyTypes.getOrDefault(key, _defaultValueType);
+        DataType storedType = dataType.getStoredType();
 
-      byte[] presenceBytes = RoaringBitmapUtils.serialize(presence);
-      long presenceOffset = currentOffset;
-      dos.write(presenceBytes);
-      currentOffset += presenceBytes.length;
+        byte[] presenceBytes = RoaringBitmapUtils.serialize(presence);
+        long presenceOffset = currentOffset;
+        dos.write(presenceBytes);
+        currentOffset += presenceBytes.length;
 
-      byte[] forwardBytes = buildForwardIndex(values, storedType);
-      long forwardOffset = currentOffset;
-      dos.write(forwardBytes);
-      currentOffset += forwardBytes.length;
+        byte[] forwardBytes = buildForwardIndex(values, storedType);
+        long forwardOffset = currentOffset;
+        dos.write(forwardBytes);
+        currentOffset += forwardBytes.length;
 
-      boolean enableInverted = _config.shouldEnableInvertedIndexForKey(key);
-      // Build inverted index and collect value→docId mappings for dictId forward index
-      TreeMap<String, RoaringBitmap> valueToDocIds = null;
-      byte[] invertedBytes;
-      if (enableInverted) {
-        valueToDocIds = buildValueToDocIds(presence, values, storedType);
-        invertedBytes = serializeInvertedIndex(valueToDocIds);
-      } else {
-        invertedBytes = new byte[0];
+        boolean enableInverted = _config.shouldEnableInvertedIndexForKey(key);
+        // Build inverted index and collect value→docId mappings for dictId forward index
+        TreeMap<String, RoaringBitmap> valueToDocIds = null;
+        byte[] invertedBytes;
+        if (enableInverted) {
+          valueToDocIds = buildValueToDocIds(presence, values, storedType);
+          cachedValueToDocIds.put(key, valueToDocIds);
+          invertedBytes = serializeInvertedIndex(valueToDocIds);
+        } else {
+          invertedBytes = new byte[0];
+        }
+        long invertedOffset = enableInverted ? currentOffset : 0;
+        if (enableInverted) {
+          dos.write(invertedBytes);
+          currentOffset += invertedBytes.length;
+        }
+
+        // Build dictId forward index for keys with inverted index
+        long dictIdFwdOffset = 0;
+        long dictIdFwdLength = 0;
+        if (enableInverted && valueToDocIds != null) {
+          byte[] dictIdFwdBytes = buildDictIdForwardIndex(valueToDocIds, storedType, presence);
+          dictIdFwdOffset = currentOffset;
+          dictIdFwdLength = dictIdFwdBytes.length;
+          dos.write(dictIdFwdBytes);
+          currentOffset += dictIdFwdBytes.length;
+        }
+
+        int entryOffset = i * KEY_METADATA_ENTRY_SIZE;
+        keyMetadataSection[entryOffset] = (byte) storedType.ordinal();
+        writeInt(keyMetadataSection, entryOffset + 1, values.size());
+        writeLong(keyMetadataSection, entryOffset + 5, presenceOffset);
+        writeLong(keyMetadataSection, entryOffset + 13, presenceBytes.length);
+        writeLong(keyMetadataSection, entryOffset + 21, forwardOffset);
+        writeLong(keyMetadataSection, entryOffset + 29, forwardBytes.length);
+        writeLong(keyMetadataSection, entryOffset + 37, invertedOffset);
+        writeLong(keyMetadataSection, entryOffset + 45, invertedBytes.length);
+        writeLong(keyMetadataSection, entryOffset + 53, dictIdFwdOffset);
+        writeLong(keyMetadataSection, entryOffset + 61, dictIdFwdLength);
       }
-      long invertedOffset = enableInverted ? currentOffset : 0;
-      if (enableInverted) {
-        dos.write(invertedBytes);
-        currentOffset += invertedBytes.length;
-      }
-
-      // Build dictId forward index for keys with inverted index
-      long dictIdFwdOffset = 0;
-      long dictIdFwdLength = 0;
-      if (enableInverted && valueToDocIds != null) {
-        byte[] dictIdFwdBytes = buildDictIdForwardIndex(valueToDocIds, storedType, presence);
-        dictIdFwdOffset = currentOffset;
-        dictIdFwdLength = dictIdFwdBytes.length;
-        dos.write(dictIdFwdBytes);
-        currentOffset += dictIdFwdBytes.length;
-      }
-
-      int entryOffset = i * KEY_METADATA_ENTRY_SIZE;
-      keyMetadataSection[entryOffset] = (byte) storedType.ordinal();
-      writeInt(keyMetadataSection, entryOffset + 1, values.size());
-      writeLong(keyMetadataSection, entryOffset + 5, presenceOffset);
-      writeLong(keyMetadataSection, entryOffset + 13, presenceBytes.length);
-      writeLong(keyMetadataSection, entryOffset + 21, forwardOffset);
-      writeLong(keyMetadataSection, entryOffset + 29, forwardBytes.length);
-      writeLong(keyMetadataSection, entryOffset + 37, invertedOffset);
-      writeLong(keyMetadataSection, entryOffset + 45, invertedBytes.length);
-      writeLong(keyMetadataSection, entryOffset + 53, dictIdFwdOffset);
-      writeLong(keyMetadataSection, entryOffset + 61, dictIdFwdLength);
     }
     return baos.toByteArray();
   }
@@ -423,7 +462,7 @@ public class OnHeapSparseMapIndexCreator implements SparseMapIndexCreator {
       DataType storedType, RoaringBitmap presence)
       throws IOException {
     // Build sorted distinct values array, merging default value
-    String defaultValue = getDefaultValueString(storedType);
+    String defaultValue = SparseMapKeyDictionary.getDefaultValueString(storedType);
     String[] distinctValues = valueToDocIds.keySet().toArray(new String[0]);
 
     // Merge default value into sorted array
@@ -476,21 +515,6 @@ public class OnHeapSparseMapIndexCreator implements SparseMapIndexCreator {
     }
   }
 
-  private static String getDefaultValueString(DataType storedType) {
-    switch (storedType) {
-      case INT:
-        return "0";
-      case LONG:
-        return "0";
-      case FLOAT:
-        return "0.0";
-      case DOUBLE:
-        return "0.0";
-      default:
-        return "";
-    }
-  }
-
   /**
    * Sorts string-encoded values using numeric comparison for numeric types,
    * or lexicographic comparison for STRING/BYTES.
@@ -524,7 +548,8 @@ public class OnHeapSparseMapIndexCreator implements SparseMapIndexCreator {
   /// Builds the value dictionary section written after all per-key data.
   /// For each key with inverted index: numDistinctValues(int), numBitsPerValue(int),
   /// then [valueLen(int) + valueBytes] × numDistinctValues.
-  private byte[] buildValueDictionarySection(List<String> sortedKeys)
+  private byte[] buildValueDictionarySection(List<String> sortedKeys,
+      Map<String, TreeMap<String, RoaringBitmap>> cachedValueToDocIds)
       throws IOException {
     ByteArrayOutputStream baos = new ByteArrayOutputStream();
     DataOutputStream dos = new DataOutputStream(baos);
@@ -535,16 +560,14 @@ public class OnHeapSparseMapIndexCreator implements SparseMapIndexCreator {
         continue;
       }
 
-      RoaringBitmap presence = _presenceBitmaps.get(key);
-      List<Object> values = _values.get(key);
       DataType dataType = _keyTypes.getOrDefault(key, _defaultValueType);
       DataType storedType = dataType.getStoredType();
 
-      TreeMap<String, RoaringBitmap> valueToDocIds = buildValueToDocIds(presence, values, storedType);
+      TreeMap<String, RoaringBitmap> valueToDocIds = cachedValueToDocIds.get(key);
 
       // Merge default value
-      String defaultValue = getDefaultValueString(storedType);
-      String[] distinctValues = valueToDocIds.keySet().toArray(new String[0]);
+      String defaultValue = SparseMapKeyDictionary.getDefaultValueString(storedType);
+      String[] distinctValues = valueToDocIds != null ? valueToDocIds.keySet().toArray(new String[0]) : new String[0];
 
       Set<String> allSet = new HashSet<>(java.util.Arrays.asList(distinctValues));
       allSet.add(defaultValue);

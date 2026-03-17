@@ -54,5 +54,6 @@ pushJobSpec:
   pushAttempts: 2
   pushRetryIntervalMillis: 1000
 
-segmentCreationJobConfig:
-  maxNumRecordsPerSegment: 20
+segmentNameGeneratorSpec:
+  configs:
+    segment.name.postfix: '0'

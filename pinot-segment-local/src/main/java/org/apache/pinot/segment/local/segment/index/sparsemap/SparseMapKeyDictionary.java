@@ -18,12 +18,17 @@
  */
 package org.apache.pinot.segment.local.segment.index.sparsemap;
 
+import com.google.common.base.Preconditions;
+import it.unimi.dsi.fastutil.ints.IntOpenHashSet;
 import it.unimi.dsi.fastutil.ints.IntSet;
+import it.unimi.dsi.fastutil.ints.IntSets;
 import it.unimi.dsi.fastutil.objects.Object2IntOpenHashMap;
 import java.io.IOException;
 import java.math.BigDecimal;
+import java.nio.charset.StandardCharsets;
 import java.util.Arrays;
 import java.util.Comparator;
+import org.apache.pinot.common.request.context.predicate.RangePredicate;
 import org.apache.pinot.segment.spi.index.reader.Dictionary;
 import org.apache.pinot.spi.data.FieldSpec.DataType;
 import org.apache.pinot.spi.utils.ByteArray;
@@ -120,8 +125,59 @@ public class SparseMapKeyDictionary implements Dictionary {
 
   @Override
   public IntSet getDictIdsInRange(String lower, String upper, boolean includeLower, boolean includeUpper) {
-    // Sorted dictionary — this method should not be called
-    throw new UnsupportedOperationException();
+    int numValues = _sortedValues.length;
+    if (numValues == 0) {
+      return IntSets.EMPTY_SET;
+    }
+
+    // Determine the start index (inclusive) using binary search on the sorted array.
+    int startIndex;
+    if (lower.equals(RangePredicate.UNBOUNDED)) {
+      startIndex = 0;
+    } else {
+      int idx = binarySearch(lower);
+      if (idx >= 0) {
+        // Exact match found
+        startIndex = includeLower ? idx : idx + 1;
+      } else {
+        // Not found: insertion point is -(idx + 1), the first element greater than lower
+        startIndex = -(idx + 1);
+      }
+    }
+
+    // Determine the end index (exclusive) using binary search on the sorted array.
+    int endIndex;
+    if (upper.equals(RangePredicate.UNBOUNDED)) {
+      endIndex = numValues;
+    } else {
+      int idx = binarySearch(upper);
+      if (idx >= 0) {
+        // Exact match found
+        endIndex = includeUpper ? idx + 1 : idx;
+      } else {
+        // Not found: insertion point is the first element greater than upper
+        endIndex = -(idx + 1);
+      }
+    }
+
+    int count = endIndex - startIndex;
+    if (count <= 0) {
+      return IntSets.EMPTY_SET;
+    }
+    IntSet dictIds = new IntOpenHashSet(count);
+    for (int i = startIndex; i < endIndex; i++) {
+      dictIds.add(i);
+    }
+    return dictIds;
+  }
+
+  /// Performs a binary search on the sorted values array using the type-appropriate comparator.
+  private int binarySearch(String value) {
+    Comparator<String> cmp = getComparator(_valueType);
+    if (cmp != null) {
+      return Arrays.binarySearch(_sortedValues, value, cmp);
+    }
+    return Arrays.binarySearch(_sortedValues, value);
   }
 
   @Override
@@ -152,42 +208,55 @@ public class SparseMapKeyDictionary implements Dictionary {
 
   @Override
   public Object get(int dictId) {
+    checkDictId(dictId);
     return parseValue(_sortedValues[dictId]);
   }
 
   @Override
   public int getIntValue(int dictId) {
+    checkDictId(dictId);
     return Integer.parseInt(_sortedValues[dictId]);
   }
 
   @Override
   public long getLongValue(int dictId) {
+    checkDictId(dictId);
     return Long.parseLong(_sortedValues[dictId]);
   }
 
   @Override
   public float getFloatValue(int dictId) {
+    checkDictId(dictId);
     return Float.parseFloat(_sortedValues[dictId]);
   }
 
   @Override
   public double getDoubleValue(int dictId) {
+    checkDictId(dictId);
     return Double.parseDouble(_sortedValues[dictId]);
   }
 
   @Override
   public BigDecimal getBigDecimalValue(int dictId) {
+    checkDictId(dictId);
     return new BigDecimal(_sortedValues[dictId]);
   }
 
   @Override
   public String getStringValue(int dictId) {
+    checkDictId(dictId);
     return _sortedValues[dictId];
   }
 
   @Override
   public byte[] getBytesValue(int dictId) {
-    return _sortedValues[dictId].getBytes(java.nio.charset.StandardCharsets.UTF_8);
+    checkDictId(dictId);
+    return _sortedValues[dictId].getBytes(StandardCharsets.UTF_8);
+  }
+
+  private void checkDictId(int dictId) {
+    Preconditions.checkArgument(dictId >= 0 && dictId < _sortedValues.length,
+        "Invalid dictId: %s, dictionary size: %s", dictId, _sortedValues.length);
   }
 
   @Override
@@ -212,9 +281,28 @@ public class SparseMapKeyDictionary implements Dictionary {
   }
 
   /**
+   * Returns the string representation of the default (null-substitute) value for the given type.
+   * INT/LONG default to "0", FLOAT/DOUBLE to "0.0", and STRING/BYTES to "".
+   */
+  static String getDefaultValueString(DataType dataType) {
+    switch (dataType) {
+      case INT:
+        return "0";
+      case LONG:
+        return "0";
+      case FLOAT:
+        return "0.0";
+      case DOUBLE:
+        return "0.0";
+      default:
+        return "";
+    }
+  }
+
+  /**
    * Returns a numeric comparator for the given type, or null for STRING/BYTES (lexicographic).
    */
-  private static Comparator<String> getComparator(DataType valueType) {
+  static Comparator<String> getComparator(DataType valueType) {
     switch (valueType) {
       case INT:
         return Comparator.comparingInt(Integer::parseInt);

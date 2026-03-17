@@ -113,15 +113,14 @@ public class ImmutableSparseMapIndexReader implements SparseMapIndexReader {
     // ---- Parse Key Dictionary (big-endian) ----
     _keys = new String[_numKeys];
     _keyToId = new HashMap<>(_numKeys * 2);
-    int dictPos = (int) keyDictOffset;
-    byte[] dictCountBytes = new byte[4];
-    dataBuffer.copyTo(dictPos, dictCountBytes, 0, 4);
-    /* int dictNumKeys = */ ByteBuffer.wrap(dictCountBytes).order(ByteOrder.BIG_ENDIAN).getInt();
+    long dictPos = keyDictOffset;
+    int dictNumKeys = _dataBuffer.getInt(dictPos);
+    if (dictNumKeys != _numKeys) {
+      throw new IOException("Key dictionary count mismatch: header=" + _numKeys + ", dict=" + dictNumKeys);
+    }
     dictPos += 4;
     for (int i = 0; i < _numKeys; i++) {
-      byte[] lenBytes = new byte[4];
-      dataBuffer.copyTo(dictPos, lenBytes, 0, 4);
-      int keyLen = ByteBuffer.wrap(lenBytes).order(ByteOrder.BIG_ENDIAN).getInt();
+      int keyLen = _dataBuffer.getInt(dictPos);
       dictPos += 4;
       byte[] keyBytes = new byte[keyLen];
       dataBuffer.copyTo(dictPos, keyBytes, 0, keyLen);
@@ -178,21 +177,15 @@ public class ImmutableSparseMapIndexReader implements SparseMapIndexReader {
         if (_dictIdFwdLengths[i] == 0) {
           continue;
         }
-        byte[] countBytes = new byte[4];
-        dataBuffer.copyTo(pos, countBytes, 0, 4);
-        int numDistinctValues = ByteBuffer.wrap(countBytes).order(ByteOrder.BIG_ENDIAN).getInt();
+        int numDistinctValues = dataBuffer.getInt(pos);
         pos += 4;
 
-        byte[] bitsBytes = new byte[4];
-        dataBuffer.copyTo(pos, bitsBytes, 0, 4);
-        /* int numBitsPerValue = */ ByteBuffer.wrap(bitsBytes).order(ByteOrder.BIG_ENDIAN).getInt();
+        // skip numBitsPerValue (recomputed from dictionary size when needed)
         pos += 4;
 
         String[] values = new String[numDistinctValues];
         for (int v = 0; v < numDistinctValues; v++) {
-          byte[] vLenBytes = new byte[4];
-          dataBuffer.copyTo(pos, vLenBytes, 0, 4);
-          int vLen = ByteBuffer.wrap(vLenBytes).order(ByteOrder.BIG_ENDIAN).getInt();
+          int vLen = dataBuffer.getInt(pos);
           pos += 4;
           byte[] vBytes = new byte[vLen];
           dataBuffer.copyTo(pos, vBytes, 0, vLen);
@@ -244,9 +237,7 @@ public class ImmutableSparseMapIndexReader implements SparseMapIndexReader {
     }
     int ordinal = bitmap.rank(docId) - 1;
     long bufOffset = _perKeyDataSectionOffset + _fwdOffsets[keyId] + (long) ordinal * Integer.BYTES;
-    byte[] bytes = new byte[Integer.BYTES];
-    _dataBuffer.copyTo(bufOffset, bytes, 0, Integer.BYTES);
-    return ByteBuffer.wrap(bytes).order(ByteOrder.BIG_ENDIAN).getInt();
+    return _dataBuffer.getInt(bufOffset);
   }
 
   @Override
@@ -261,9 +252,7 @@ public class ImmutableSparseMapIndexReader implements SparseMapIndexReader {
     }
     int ordinal = bitmap.rank(docId) - 1;
     long bufOffset = _perKeyDataSectionOffset + _fwdOffsets[keyId] + (long) ordinal * Long.BYTES;
-    byte[] bytes = new byte[Long.BYTES];
-    _dataBuffer.copyTo(bufOffset, bytes, 0, Long.BYTES);
-    return ByteBuffer.wrap(bytes).order(ByteOrder.BIG_ENDIAN).getLong();
+    return _dataBuffer.getLong(bufOffset);
   }
 
   @Override
@@ -278,9 +267,7 @@ public class ImmutableSparseMapIndexReader implements SparseMapIndexReader {
     }
     int ordinal = bitmap.rank(docId) - 1;
     long bufOffset = _perKeyDataSectionOffset + _fwdOffsets[keyId] + (long) ordinal * Float.BYTES;
-    byte[] bytes = new byte[Float.BYTES];
-    _dataBuffer.copyTo(bufOffset, bytes, 0, Float.BYTES);
-    return ByteBuffer.wrap(bytes).order(ByteOrder.BIG_ENDIAN).getFloat();
+    return _dataBuffer.getFloat(bufOffset);
   }
 
   @Override
@@ -295,9 +282,7 @@ public class ImmutableSparseMapIndexReader implements SparseMapIndexReader {
     }
     int ordinal = bitmap.rank(docId) - 1;
     long bufOffset = _perKeyDataSectionOffset + _fwdOffsets[keyId] + (long) ordinal * Double.BYTES;
-    byte[] bytes = new byte[Double.BYTES];
-    _dataBuffer.copyTo(bufOffset, bytes, 0, Double.BYTES);
-    return ByteBuffer.wrap(bytes).order(ByteOrder.BIG_ENDIAN).getDouble();
+    return _dataBuffer.getDouble(bufOffset);
   }
 
   @Override
@@ -377,36 +362,74 @@ public class ImmutableSparseMapIndexReader implements SparseMapIndexReader {
       return null;
     }
     String valueStr = _keyStoredTypes[keyId].toString(value);
+
+    // Fast O(1) negative check: if the in-memory value dictionary is loaded and does not
+    // contain the value, we can return null immediately without any I/O.
+    SparseMapKeyDictionary dict = _keyDictionaries.get(key);
+    if (dict != null && dict.indexOf(valueStr) < 0) {
+      return null;
+    }
+
+    // Scan the inverted index entries using binary search on the sorted values.
+    // Format: numUnique(int), then per entry: valueLen(int), valueBytes, bitmapLen(int), bitmapBytes.
+    // Values are sorted (lexicographic for STRING, numeric order for numeric types via TreeMap),
+    // so we first load all entry offsets, then binary search by value.
     byte[] valueBytes = valueStr.getBytes(StandardCharsets.UTF_8);
-
     long invBase = _perKeyDataSectionOffset + _invOffsets[keyId];
-    byte[] numUniqueBytes = new byte[4];
-    _dataBuffer.copyTo(invBase, numUniqueBytes, 0, 4);
-    int numUnique = ByteBuffer.wrap(numUniqueBytes).order(ByteOrder.BIG_ENDIAN).getInt();
+    int numUnique = _dataBuffer.getInt(invBase);
 
+    // Build an offset table for all entries so we can binary search by value
+    long[] entryOffsets = new long[numUnique];
     long pos = invBase + 4;
     for (int i = 0; i < numUnique; i++) {
-      byte[] vLenBytes = new byte[4];
-      _dataBuffer.copyTo(pos, vLenBytes, 0, 4);
-      int vLen = ByteBuffer.wrap(vLenBytes).order(ByteOrder.BIG_ENDIAN).getInt();
-      pos += 4;
+      entryOffsets[i] = pos;
+      int vLen = _dataBuffer.getInt(pos);
+      pos += 4 + vLen;
+
+      int bLen = _dataBuffer.getInt(pos);
+      pos += 4 + bLen;
+    }
+
+    // Binary search over the sorted inverted index entries.
+    // The inverted index uses a TreeMap which sorts lexicographically for all types.
+    int lo = 0;
+    int hi = numUnique - 1;
+    while (lo <= hi) {
+      int mid = (lo + hi) >>> 1;
+      long entryPos = entryOffsets[mid];
+      int vLen = _dataBuffer.getInt(entryPos);
+      entryPos += 4;
       byte[] vBytes = new byte[vLen];
-      _dataBuffer.copyTo(pos, vBytes, 0, vLen);
-      pos += vLen;
+      _dataBuffer.copyTo(entryPos, vBytes, 0, vLen);
+      entryPos += vLen;
 
-      byte[] bLenBytes = new byte[4];
-      _dataBuffer.copyTo(pos, bLenBytes, 0, 4);
-      int bLen = ByteBuffer.wrap(bLenBytes).order(ByteOrder.BIG_ENDIAN).getInt();
-      pos += 4;
-
-      if (vLen == valueBytes.length && java.util.Arrays.equals(vBytes, valueBytes)) {
+      int cmp = compareBytes(vBytes, valueBytes);
+      if (cmp < 0) {
+        lo = mid + 1;
+      } else if (cmp > 0) {
+        hi = mid - 1;
+      } else {
+        // Found the matching value; read the bitmap
+        int bLen = _dataBuffer.getInt(entryPos);
+        entryPos += 4;
         byte[] bitmapBytes = new byte[bLen];
-        _dataBuffer.copyTo(pos, bitmapBytes, 0, bLen);
+        _dataBuffer.copyTo(entryPos, bitmapBytes, 0, bLen);
         return new ImmutableRoaringBitmap(ByteBuffer.wrap(bitmapBytes));
       }
-      pos += bLen;
     }
     return null;
+  }
+
+  /// Lexicographic comparison of two byte arrays, equivalent to comparing the UTF-8 strings.
+  private static int compareBytes(byte[] a, byte[] b) {
+    int len = Math.min(a.length, b.length);
+    for (int i = 0; i < len; i++) {
+      int diff = (a[i] & 0xFF) - (b[i] & 0xFF);
+      if (diff != 0) {
+        return diff;
+      }
+    }
+    return a.length - b.length;
   }
 
   @Override
@@ -424,16 +447,12 @@ public class ImmutableSparseMapIndexReader implements SparseMapIndexReader {
     }
 
     long invBase = _perKeyDataSectionOffset + _invOffsets[keyId];
-    byte[] numUniqueBytes = new byte[4];
-    _dataBuffer.copyTo(invBase, numUniqueBytes, 0, 4);
-    int numUnique = ByteBuffer.wrap(numUniqueBytes).order(ByteOrder.BIG_ENDIAN).getInt();
+    int numUnique = _dataBuffer.getInt(invBase);
 
     String[] distinctValues = new String[numUnique];
     long pos = invBase + 4;
     for (int i = 0; i < numUnique; i++) {
-      byte[] vLenBytes = new byte[4];
-      _dataBuffer.copyTo(pos, vLenBytes, 0, 4);
-      int vLen = ByteBuffer.wrap(vLenBytes).order(ByteOrder.BIG_ENDIAN).getInt();
+      int vLen = _dataBuffer.getInt(pos);
       pos += 4;
 
       byte[] vBytes = new byte[vLen];
@@ -442,9 +461,7 @@ public class ImmutableSparseMapIndexReader implements SparseMapIndexReader {
       pos += vLen;
 
       // Skip bitmap: read bLen and advance past bitmap bytes
-      byte[] bLenBytes = new byte[4];
-      _dataBuffer.copyTo(pos, bLenBytes, 0, 4);
-      int bLen = ByteBuffer.wrap(bLenBytes).order(ByteOrder.BIG_ENDIAN).getInt();
+      int bLen = _dataBuffer.getInt(pos);
       pos += 4 + bLen;
     }
     return distinctValues;
@@ -485,6 +502,38 @@ public class ImmutableSparseMapIndexReader implements SparseMapIndexReader {
     return _numDocs;
   }
 
+  /**
+   * Returns the value for the given (docId, keyId) pair without any HashMap lookup.
+   * The keyId must be valid and the caller must have already confirmed the doc is present
+   * via the presence bitmap. The ordinal (rank - 1) is computed here.
+   */
+  private Object getValueByKeyId(int docId, int keyId) {
+    ImmutableRoaringBitmap bitmap = _presenceBitmaps[keyId];
+    int ordinal = bitmap.rank(docId) - 1;
+    switch (_keyStoredTypes[keyId]) {
+      case INT: {
+        long bufOffset = _perKeyDataSectionOffset + _fwdOffsets[keyId] + (long) ordinal * Integer.BYTES;
+        return _dataBuffer.getInt(bufOffset);
+      }
+      case LONG: {
+        long bufOffset = _perKeyDataSectionOffset + _fwdOffsets[keyId] + (long) ordinal * Long.BYTES;
+        return _dataBuffer.getLong(bufOffset);
+      }
+      case FLOAT: {
+        long bufOffset = _perKeyDataSectionOffset + _fwdOffsets[keyId] + (long) ordinal * Float.BYTES;
+        return _dataBuffer.getFloat(bufOffset);
+      }
+      case DOUBLE: {
+        long bufOffset = _perKeyDataSectionOffset + _fwdOffsets[keyId] + (long) ordinal * Double.BYTES;
+        return _dataBuffer.getDouble(bufOffset);
+      }
+      case BYTES:
+        return readBytesAtOrdinal(keyId, ordinal);
+      default:
+        return readStringAtOrdinal(keyId, ordinal);
+    }
+  }
+
   @Override
   public Map<String, Object> getMap(int docId) {
     Map<String, Object> result = new HashMap<>();
@@ -492,29 +541,7 @@ public class ImmutableSparseMapIndexReader implements SparseMapIndexReader {
       if (!_presenceBitmaps[i].contains(docId)) {
         continue;
       }
-      String key = _keys[i];
-      Object value;
-      switch (_keyStoredTypes[i]) {
-        case INT:
-          value = getInt(docId, key);
-          break;
-        case LONG:
-          value = getLong(docId, key);
-          break;
-        case FLOAT:
-          value = getFloat(docId, key);
-          break;
-        case DOUBLE:
-          value = getDouble(docId, key);
-          break;
-        case BYTES:
-          value = getBytes(docId, key);
-          break;
-        default:
-          value = getString(docId, key);
-          break;
-      }
-      result.put(key, value);
+      result.put(_keys[i], getValueByKeyId(docId, i));
     }
     return result;
   }

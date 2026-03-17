@@ -126,8 +126,17 @@ public class MutableSparseMapIndexImpl implements MutableIndex, SparseMapIndexRe
           }
           _distinctKeyCount++;
         }
+        Object coerced;
+        try {
+          coerced = coerceValue(rawValue, valueType);
+        } catch (ClassCastException | NumberFormatException e) {
+          LOGGER.warn(
+              "MutableSparseMapIndex for column '{}': failed to coerce value '{}' (type {}) to {} for key '{}'"
+                  + " in docId {}. Skipping key for this document.",
+              _columnName, rawValue, rawValue.getClass().getSimpleName(), valueType, key, docId, e);
+          continue;
+        }
         _presenceBitmaps.get(key).add(docId);
-        Object coerced = coerceValue(rawValue, valueType);
         _values.get(key).add(coerced);
         if (_config.shouldEnableInvertedIndexForKey(key)) {
           String valueStr = valueType.toString(coerced);
@@ -139,6 +148,13 @@ public class MutableSparseMapIndexImpl implements MutableIndex, SparseMapIndexRe
     }
   }
 
+  /// Coerces a raw value to the target stored type.
+  ///
+  /// For numeric types, if the value is already a {@link Number} the conversion is direct.
+  /// Otherwise the value is parsed from its {@code toString()} representation, which handles
+  /// the common case of JSON-decoded string numerics (e.g. {@code "42"} to INT).
+  ///
+  /// @throws NumberFormatException if a non-numeric string is provided for a numeric target type
   private Object coerceValue(Object value, DataType dataType) {
     DataType storedType = dataType.getStoredType();
     switch (storedType) {
@@ -146,13 +162,25 @@ public class MutableSparseMapIndexImpl implements MutableIndex, SparseMapIndexRe
         if (value instanceof Boolean) {
           return (Boolean) value ? 1 : 0;
         }
-        return ((Number) value).intValue();
+        if (value instanceof Number) {
+          return ((Number) value).intValue();
+        }
+        return Integer.parseInt(value.toString().trim());
       case LONG:
-        return ((Number) value).longValue();
+        if (value instanceof Number) {
+          return ((Number) value).longValue();
+        }
+        return Long.parseLong(value.toString().trim());
       case FLOAT:
-        return ((Number) value).floatValue();
+        if (value instanceof Number) {
+          return ((Number) value).floatValue();
+        }
+        return Float.parseFloat(value.toString().trim());
       case DOUBLE:
-        return ((Number) value).doubleValue();
+        if (value instanceof Number) {
+          return ((Number) value).doubleValue();
+        }
+        return Double.parseDouble(value.toString().trim());
       case STRING:
         return value.toString();
       case BYTES:
@@ -212,7 +240,7 @@ public class MutableSparseMapIndexImpl implements MutableIndex, SparseMapIndexRe
     _lock.readLock().lock();
     try {
       MutableRoaringBitmap bitmap = _presenceBitmaps.get(key);
-      return bitmap != null ? bitmap.toImmutableRoaringBitmap() : ImmutableRoaringBitmap.bitmapOf();
+      return bitmap != null ? bitmap.clone().toImmutableRoaringBitmap() : ImmutableRoaringBitmap.bitmapOf();
     } finally {
       _lock.readLock().unlock();
     }
@@ -330,7 +358,7 @@ public class MutableSparseMapIndexImpl implements MutableIndex, SparseMapIndexRe
       DataType type = _keyTypes.getOrDefault(key, _defaultValueType);
       String valueStr = type.toString(value);
       MutableRoaringBitmap bitmap = inv.get(valueStr);
-      return bitmap != null ? bitmap.toImmutableRoaringBitmap() : ImmutableRoaringBitmap.bitmapOf();
+      return bitmap != null ? bitmap.clone().toImmutableRoaringBitmap() : ImmutableRoaringBitmap.bitmapOf();
     } finally {
       _lock.readLock().unlock();
     }
