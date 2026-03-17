@@ -855,6 +855,55 @@ public enum PinotDataType {
     }
   },
 
+  SPARSE_MAP {
+    @Override
+    public Object convert(Object value, PinotDataType sourceType) {
+      switch (sourceType) {
+        case STRING:
+          try {
+            return JsonUtils.stringToObject(value.toString(), Map.class);
+          } catch (Exception e) {
+            throw new RuntimeException("Unable to convert String to Map. Input value: " + value, e);
+          }
+        case BYTES:
+          return MapUtils.deserializeMap((byte[]) value);
+        case OBJECT:
+        case MAP:
+        case SPARSE_MAP:
+          if (value instanceof Map) {
+            return value;
+          } else {
+            throw new UnsupportedOperationException(
+                String.format("Cannot convert '%s' (Class of value: '%s') to SPARSE_MAP",
+                    sourceType, value.getClass()));
+          }
+        default:
+          throw new UnsupportedOperationException(
+              String.format("Cannot convert '%s' (Class of value: '%s') to SPARSE_MAP",
+                  sourceType, value.getClass()));
+      }
+    }
+
+    @SuppressWarnings("unchecked")
+    @Override
+    public byte[] toBytes(Object value) {
+      if (!(value instanceof Map)) {
+        throw new UnsupportedOperationException("Cannot convert non-Map value to BYTES for SPARSE_MAP type: "
+            + (value == null ? "null" : value.getClass()));
+      }
+      return MapUtils.serializeMap((Map<String, Object>) value);
+    }
+
+    @Override
+    public String toString(Object value) {
+      try {
+        return JsonUtils.objectToString(value);
+      } catch (Exception e) {
+        throw new RuntimeException("Unable to convert SPARSE_MAP to String. Input value: " + value, e);
+      }
+    }
+  },
+
   BYTE_ARRAY {
     @Override
     public byte[] toBytes(Object value) {
@@ -1515,6 +1564,11 @@ public enum PinotDataType {
           return MAP;
         }
         throw new IllegalStateException("There is no multi-value type for MAP");
+      case SPARSE_MAP:
+        if (fieldSpec.isSingleValueField()) {
+          return SPARSE_MAP;
+        }
+        throw new IllegalStateException("There is no multi-value type for SPARSE_MAP");
       default:
         throw new UnsupportedOperationException(
             "Unsupported data type: " + dataType + " in field: " + fieldSpec.getName());
@@ -1547,6 +1601,8 @@ public enum PinotDataType {
         return JSON;
       case BYTES:
         return BYTES;
+      case SPARSE_MAP:
+        return SPARSE_MAP;
       case OBJECT:
         return OBJECT;
       case INT_ARRAY:

@@ -70,7 +70,8 @@ import org.apache.pinot.spi.utils.TimestampUtils;
     @JsonSubTypes.Type(value = MetricFieldSpec.class, name = "METRIC"),
     @JsonSubTypes.Type(value = TimeFieldSpec.class, name = "TIME"),
     @JsonSubTypes.Type(value = DateTimeFieldSpec.class, name = "DATE_TIME"),
-    @JsonSubTypes.Type(value = ComplexFieldSpec.class, name = "COMPLEX")
+    @JsonSubTypes.Type(value = ComplexFieldSpec.class, name = "COMPLEX"),
+    @JsonSubTypes.Type(value = SparseMapFieldSpec.class, name = "SPARSE_MAP")
 })
 @JsonInclude(JsonInclude.Include.NON_NULL)
 public abstract class FieldSpec implements Comparable<FieldSpec>, Serializable {
@@ -96,6 +97,7 @@ public abstract class FieldSpec implements Comparable<FieldSpec>, Serializable {
 
   public static final Map DEFAULT_COMPLEX_NULL_VALUE_OF_MAP = Map.of();
   public static final List DEFAULT_COMPLEX_NULL_VALUE_OF_LIST = List.of();
+  public static final Map DEFAULT_DIMENSION_NULL_VALUE_OF_SPARSE_MAP = Map.of();
   public static final int DEFAULT_MAX_LENGTH = 512;
 
   private static MaxLengthExceedStrategy _defaultJsonMaxLengthExceedStrategy = MaxLengthExceedStrategy.NO_ACTION;
@@ -433,6 +435,8 @@ public abstract class FieldSpec implements Comparable<FieldSpec>, Serializable {
               return DEFAULT_DIMENSION_NULL_VALUE_OF_BYTES;
             case BIG_DECIMAL:
               return DEFAULT_DIMENSION_NULL_VALUE_OF_BIG_DECIMAL;
+            case SPARSE_MAP:
+              return DEFAULT_DIMENSION_NULL_VALUE_OF_SPARSE_MAP;
             default:
               throw new IllegalStateException("Unsupported dimension/time data type: " + dataType);
           }
@@ -445,6 +449,13 @@ public abstract class FieldSpec implements Comparable<FieldSpec>, Serializable {
             case STRUCT:
             default:
               throw new IllegalStateException("Unsupported complex data type: " + dataType);
+          }
+        case SPARSE_MAP:
+          switch (dataType) {
+            case SPARSE_MAP:
+              return DEFAULT_DIMENSION_NULL_VALUE_OF_SPARSE_MAP;
+            default:
+              throw new IllegalStateException("Unsupported sparse map data type: " + dataType);
           }
         default:
           throw new IllegalStateException("Unsupported field type: " + fieldType);
@@ -557,6 +568,7 @@ public abstract class FieldSpec implements Comparable<FieldSpec>, Serializable {
           break;
         case MAP:
         case LIST:
+        case SPARSE_MAP:
           jsonNode.set(key, JsonUtils.objectToJsonNode(_defaultNullValue));
           break;
         default:
@@ -608,7 +620,7 @@ public abstract class FieldSpec implements Comparable<FieldSpec>, Serializable {
    * segments, otherwise treated the same as <code>DIMENSION</code> field.
    */
   public enum FieldType {
-    DIMENSION, METRIC, TIME, DATE_TIME, COMPLEX
+    DIMENSION, METRIC, TIME, DATE_TIME, COMPLEX, SPARSE_MAP
   }
 
   /**
@@ -630,6 +642,7 @@ public abstract class FieldSpec implements Comparable<FieldSpec>, Serializable {
     BYTES(false, false),
     STRUCT(false, false),
     MAP(false, false),
+    SPARSE_MAP(false, false),
     LIST(false, false),
     UNKNOWN(false, true);
 
@@ -731,6 +744,8 @@ public abstract class FieldSpec implements Comparable<FieldSpec>, Serializable {
             return JsonUtils.stringToObject(value, Map.class);
           case LIST:
             return JsonUtils.stringToObject(value, List.class);
+          case SPARSE_MAP:
+            return JsonUtils.stringToObject(value, Map.class);
           default:
             throw new IllegalStateException();
         }
@@ -777,6 +792,7 @@ public abstract class FieldSpec implements Comparable<FieldSpec>, Serializable {
           return ByteArray.compare((byte[]) value1, (byte[]) value2);
         case MAP:
         case LIST:
+        case SPARSE_MAP:
           throw new UnsupportedOperationException("Cannot compare complex data types: " + this);
         default:
           throw new IllegalStateException();
@@ -793,7 +809,7 @@ public abstract class FieldSpec implements Comparable<FieldSpec>, Serializable {
       if (this == BYTES) {
         return BytesUtils.toHexString((byte[]) value);
       }
-      if (this == MAP || this == LIST) {
+      if (this == MAP || this == LIST || this == SPARSE_MAP) {
         try {
           return JsonUtils.objectToString(value);
         } catch (JsonProcessingException e) {
@@ -830,6 +846,7 @@ public abstract class FieldSpec implements Comparable<FieldSpec>, Serializable {
             return BytesUtils.toByteArray(value);
           case MAP:
           case LIST:
+          case SPARSE_MAP:
             throw new UnsupportedOperationException("Cannot convert complex data types: " + this);
           default:
             throw new IllegalStateException();

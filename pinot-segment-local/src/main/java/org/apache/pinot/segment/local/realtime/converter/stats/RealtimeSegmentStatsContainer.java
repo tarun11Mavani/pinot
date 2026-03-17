@@ -22,7 +22,9 @@ import java.util.HashMap;
 import java.util.Map;
 import javax.annotation.Nullable;
 import org.apache.pinot.segment.local.segment.creator.impl.stats.MapColumnPreIndexStatsCollector;
+import org.apache.pinot.segment.local.segment.creator.impl.stats.SparseMapColumnPreIndexStatsCollector;
 import org.apache.pinot.segment.local.segment.index.map.MutableMapDataSource;
+import org.apache.pinot.segment.local.segment.index.sparsemap.SparseMapDataSource;
 import org.apache.pinot.segment.local.segment.readers.CompactedPinotSegmentRecordReader;
 import org.apache.pinot.segment.spi.MutableSegment;
 import org.apache.pinot.segment.spi.creator.ColumnStatistics;
@@ -85,6 +87,21 @@ public class RealtimeSegmentStatsContainer implements SegmentPreIndexStatsContai
       if (dataSource instanceof MutableMapDataSource) {
         _columnStatisticsMap.put(columnName,
             createMapColumnStatistics(dataSource, isUsingCompactedReader, validDocIdsSnapshot, statsCollectorConfig));
+        continue;
+      }
+
+      // Handle SPARSE_MAP columns
+      if (dataSource instanceof SparseMapDataSource) {
+        SparseMapColumnPreIndexStatsCollector collector =
+            new SparseMapColumnPreIndexStatsCollector(columnName, statsCollectorConfig);
+        int numDocs = isUsingCompactedReader
+            ? validDocIdsSnapshot.getMutableRoaringBitmap().getCardinality()
+            : dataSource.getDataSourceMetadata().getNumDocs();
+        for (int i = 0; i < numDocs; i++) {
+          collector.collect((Object) null);
+        }
+        collector.seal();
+        _columnStatisticsMap.put(columnName, collector);
         continue;
       }
 

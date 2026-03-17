@@ -79,6 +79,7 @@ public class StandardIndexes {
   public static final String TEXT_ID = "text_index";
   public static final String H3_ID = "h3_index";
   public static final String VECTOR_ID = "vector_index";
+  public static final String SPARSE_MAP_ID = "sparse_map_index";
 
   private StandardIndexes() {
   }
@@ -141,5 +142,10 @@ public class StandardIndexes {
   public static IndexType<VectorIndexConfig, VectorIndexReader, VectorIndexCreator> vector() {
     return (IndexType<VectorIndexConfig, VectorIndexReader, VectorIndexCreator>)
         IndexService.getInstance().get(VECTOR_ID);
+  }
+
+  @SuppressWarnings("unchecked")
+  public static IndexType sparseMap() {
+    return IndexService.getInstance().get(SPARSE_MAP_ID);
   }
 }

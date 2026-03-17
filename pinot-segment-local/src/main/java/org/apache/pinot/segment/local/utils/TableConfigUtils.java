@@ -1640,6 +1640,8 @@ public final class TableConfigUtils {
             "Failed to find column: %s specified in star-tree index config in schema", column);
         Preconditions.checkState(fieldSpec.getDataType() != DataType.MAP,
             "Star-tree index cannot be created on MAP column: %s", column);
+        Preconditions.checkState(fieldSpec.getDataType() != DataType.SPARSE_MAP,
+            "Star-tree index cannot be created on SPARSE_MAP column: %s", column);
       }
 
       for (String column : dimensionColumns) {
