@@ -1,0 +1,33 @@
+{
+  "dimensionFieldSpecs": [
+    {
+      "name": "userId",
+      "dataType": "STRING"
+    },
+    {
+      "name": "region",
+      "dataType": "STRING"
+    }
+  ],
+  "sparseMapFieldSpecs": [
+    {
+      "name": "metrics",
+      "keyTypes": {
+        "clicks": "LONG",
+        "spend": "DOUBLE",
+        "sessions": "INT",
+        "country": "STRING"
+      },
+      "defaultValueType": "STRING"
+    }
+  ],
+  "dateTimeFieldSpecs": [
+    {
+      "name": "ts",
+      "dataType": "TIMESTAMP",
+      "format": "1:MILLISECONDS:TIMESTAMP",
+      "granularity": "1:SECONDS"
+    }
+  ],
+  "schemaName": "userMetrics"
+}

@@ -1,0 +1,29 @@
+{
+  "tableName": "userMetrics",
+  "tableType": "OFFLINE",
+  "segmentsConfig": {
+    "replication": "1",
+    "timeColumnName": "ts"
+  },
+  "tableIndexConfig": {
+    "loadMode": "MMAP"
+  },
+  "fieldConfigList": [
+    {
+      "name": "metrics",
+      "indexes": {
+        "sparse_map": {
+          "enabled": true,
+          "enableInvertedIndexForAll": false,
+          "invertedIndexKeys": ["country", "sessions"],
+          "maxKeys": 100
+        }
+      }
+    }
+  ],
+  "tenants": {
+    "broker": "DefaultTenant",
+    "server": "DefaultTenant"
+  },
+  "metadata": {}
+}
