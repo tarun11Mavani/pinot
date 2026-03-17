@@ -88,6 +88,7 @@ import org.apache.pinot.spi.data.FieldSpec;
 import org.apache.pinot.spi.data.FieldSpec.DataType;
 import org.apache.pinot.spi.data.FieldSpec.FieldType;
 import org.apache.pinot.spi.data.Schema;
+import org.apache.pinot.spi.data.SparseMapFieldSpec;
 import org.apache.pinot.spi.env.CommonsConfigurationUtils;
 import org.apache.pinot.spi.env.PinotConfiguration;
 import org.apache.pinot.spi.utils.ReadMode;
@@ -340,7 +341,10 @@ public abstract class BaseSegmentCreator implements SegmentCreator {
       throws Exception {
     C config = fieldIndexConfigs.getConfig(index);
     if (config.isEnabled()) {
-      creatorsByIndex.put(index, index.createIndexCreator(context, config));
+      IndexCreator creator = index.createIndexCreator(context, config);
+      if (creator != null) {
+        creatorsByIndex.put(index, creator);
+      }
     }
   }
 
@@ -361,7 +365,7 @@ public abstract class BaseSegmentCreator implements SegmentCreator {
    */
   private boolean createDictionaryForColumn(ColumnIndexCreationInfo info, SegmentGeneratorConfig config,
       FieldSpec spec) {
-    if (spec instanceof ComplexFieldSpec) {
+    if (spec instanceof ComplexFieldSpec || spec.getDataType() == FieldSpec.DataType.SPARSE_MAP) {
       return false;
     }
 
@@ -427,6 +431,7 @@ public abstract class BaseSegmentCreator implements SegmentCreator {
     properties.setProperty(METRICS, _config.getMetrics());
     properties.setProperty(DATETIME_COLUMNS, _config.getDateTimeColumnNames());
     properties.setProperty(COMPLEX_COLUMNS, _config.getComplexColumnNames());
+    properties.setProperty(SPARSE_MAP_COLUMNS, _config.getSparseMapColumnNames());
     String timeColumnName = _config.getTimeColumnName();
     properties.setProperty(TIME_COLUMN_NAME, timeColumnName);
     properties.setProperty(SEGMENT_TOTAL_DOCS, String.valueOf(_totalDocs));
@@ -610,6 +615,26 @@ public abstract class BaseSegmentCreator implements SegmentCreator {
       DateTimeFieldSpec dateTimeFieldSpec = (DateTimeFieldSpec) fieldSpec;
       properties.setProperty(getKeyFor(column, DATETIME_FORMAT), dateTimeFieldSpec.getFormat());
       properties.setProperty(getKeyFor(column, DATETIME_GRANULARITY), dateTimeFieldSpec.getGranularity());
+    }
+
+    // SPARSE_MAP field: persist key-type declarations so they survive segment reload.
+    // Each key name and its type are stored as separate properties to avoid comma-delimiter
+    // issues in PropertiesConfiguration multi-value parsing.
+    if (dataType == DataType.SPARSE_MAP && fieldSpec instanceof SparseMapFieldSpec) {
+      SparseMapFieldSpec sparseMapSpec = (SparseMapFieldSpec) fieldSpec;
+      if (sparseMapSpec.getKeyTypes() != null && !sparseMapSpec.getKeyTypes().isEmpty()) {
+        properties.setProperty(getKeyFor(column, SPARSE_MAP_KEY_NAMES),
+            new ArrayList<>(sparseMapSpec.getKeyTypes().keySet()));
+        for (Map.Entry<String, DataType> entry : sparseMapSpec.getKeyTypes().entrySet()) {
+          properties.setProperty(
+              getKeyFor(column, SPARSE_MAP_KEY_TYPE_PREFIX + "." + entry.getKey()),
+              entry.getValue().name());
+        }
+      }
+      if (sparseMapSpec.getDefaultValueType() != null) {
+        properties.setProperty(getKeyFor(column, SPARSE_MAP_DEFAULT_VALUE_TYPE),
+            sparseMapSpec.getDefaultValueType().name());
+      }
     }
 
     if (fieldType != FieldType.COMPLEX) {
