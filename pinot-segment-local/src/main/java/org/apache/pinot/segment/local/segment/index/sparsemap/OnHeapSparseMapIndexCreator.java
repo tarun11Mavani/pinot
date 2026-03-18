@@ -158,14 +158,7 @@ public class OnHeapSparseMapIndexCreator implements SparseMapIndexCreator {
   @Override
   public void add(Object[] values, @Nullable int[] dictIds)
       throws IOException {
-    for (Object v : values) {
-      if (!(v instanceof Map)) {
-        continue;
-      }
-      @SuppressWarnings("unchecked")
-      Map<String, Object> sparseMap = (Map<String, Object>) v;
-      add(sparseMap);
-    }
+    throw new UnsupportedOperationException("SPARSE_MAP is single-value only");
   }
 
   private Object coerceValue(Object value, DataType dataType) {
