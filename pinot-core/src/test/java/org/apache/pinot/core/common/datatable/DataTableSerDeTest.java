@@ -68,6 +68,7 @@ public class DataTableSerDeTest {
   private static final long[][] TIMESTAMP_ARRAYS = new long[NUM_ROWS][];
   private static final String[][] STRING_ARRAYS = new String[NUM_ROWS][];
   private static final Map<String, Object>[] MAPS = new Map[NUM_ROWS];
+  private static final Map<String, Object>[] SPARSE_MAPS = new Map[NUM_ROWS];
 
   @Test(dataProvider = "versionProvider")
   public void testException(int dataTableVersion)
@@ -431,7 +432,7 @@ public class DataTableSerDeTest {
             STRING_ARRAYS[rowId] = stringArray;
             dataTableBuilder.setColumn(colId, stringArray);
             break;
-          case MAP:
+          case MAP: {
             Map<String, Object> map = new HashMap<>();
             for (int j = 0; j < 1 + RANDOM.nextInt(20); j++) {
               map.put("k" + j, RandomStringUtils.random(RANDOM.nextInt(20)));
@@ -439,6 +440,16 @@ public class DataTableSerDeTest {
             MAPS[rowId] = map;
             dataTableBuilder.setColumn(colId, map);
             break;
+          }
+          case SPARSE_MAP: {
+            Map<String, Object> sparseMap = new HashMap<>();
+            for (int j = 0; j < 1 + RANDOM.nextInt(20); j++) {
+              sparseMap.put("k" + j, RandomStringUtils.random(RANDOM.nextInt(20)));
+            }
+            SPARSE_MAPS[rowId] = sparseMap;
+            dataTableBuilder.setColumn(colId, sparseMap);
+            break;
+          }
           case OBJECT:
           case UNKNOWN:
             dataTableBuilder.setNull(colId);
@@ -534,6 +545,9 @@ public class DataTableSerDeTest {
             break;
           case MAP:
             Assert.assertEquals(newDataTable.getMap(rowId, colId), MAPS[rowId], ERROR_MESSAGE);
+            break;
+          case SPARSE_MAP:
+            Assert.assertEquals(newDataTable.getMap(rowId, colId), SPARSE_MAPS[rowId], ERROR_MESSAGE);
             break;
           case OBJECT:
           case UNKNOWN:
