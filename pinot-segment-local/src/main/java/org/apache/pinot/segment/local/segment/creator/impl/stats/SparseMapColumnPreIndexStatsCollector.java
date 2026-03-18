@@ -58,21 +58,6 @@ public class SparseMapColumnPreIndexStatsCollector extends AbstractColumnStatist
   }
 
   @Override
-  public int getLengthOfShortestElement() {
-    return -1;
-  }
-
-  @Override
-  public int getLengthOfLargestElement() {
-    return -1;
-  }
-
-  @Override
-  public int getMaxRowLengthInBytes() {
-    return 0;
-  }
-
-  @Override
   public int getCardinality() {
     return 0;
   }

@@ -81,16 +81,9 @@ public class RealtimeSegmentStatsContainer implements SegmentPreIndexStatsContai
 
       // Handle SPARSE_MAP columns
       if (dataSource instanceof SparseMapDataSource) {
-        SparseMapColumnPreIndexStatsCollector collector =
-            new SparseMapColumnPreIndexStatsCollector(columnName, statsCollectorConfig);
-        int numDocs = isUsingCompactedReader
-            ? validDocIdsSnapshot.getMutableRoaringBitmap().getCardinality()
-            : dataSource.getDataSourceMetadata().getNumDocs();
-        for (int i = 0; i < numDocs; i++) {
-          collector.collect((Object) null);
-        }
-        collector.seal();
-        _columnStatisticsMap.put(columnName, collector);
+        _columnStatisticsMap.put(columnName,
+            createSparseMapColumnStatistics(columnName, dataSource, isUsingCompactedReader, validDocIdsSnapshot,
+                statsCollectorConfig));
         continue;
       }
 
@@ -135,6 +128,24 @@ public class RealtimeSegmentStatsContainer implements SegmentPreIndexStatsContai
 
     mapColumnPreIndexStatsCollector.seal();
     return mapColumnPreIndexStatsCollector;
+  }
+
+  /**
+   * Creates column statistics for SPARSE_MAP columns.
+   */
+  private ColumnStatistics createSparseMapColumnStatistics(String columnName, DataSource dataSource,
+      boolean useCompactedStatistics, ThreadSafeMutableRoaringBitmap validDocIds,
+      StatsCollectorConfig statsCollectorConfig) {
+    SparseMapColumnPreIndexStatsCollector collector =
+        new SparseMapColumnPreIndexStatsCollector(columnName, statsCollectorConfig);
+    int numDocs = useCompactedStatistics && validDocIds != null
+        ? validDocIds.getMutableRoaringBitmap().getCardinality()
+        : dataSource.getDataSourceMetadata().getNumDocs();
+    for (int i = 0; i < numDocs; i++) {
+      collector.collect((Object) null);
+    }
+    collector.seal();
+    return collector;
   }
 
   /**
