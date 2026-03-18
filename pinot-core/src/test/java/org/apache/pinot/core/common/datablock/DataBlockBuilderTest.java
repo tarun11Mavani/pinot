@@ -107,6 +107,7 @@ public class DataBlockBuilderTest {
         }
         break;
       case MAP:
+      case SPARSE_MAP:
         for (int i = 0; i < numRows; i++) {
           Map<String, String> map = new HashMap<>();
           for (int j = 0; j < 10; j++) {
@@ -243,6 +244,15 @@ public class DataBlockBuilderTest {
           result[i] = new String[]{String.valueOf(r.nextInt()), String.valueOf(r.nextInt())};
         }
         break;
+      case SPARSE_MAP:
+        for (int i = 0; i < numRows; i++) {
+          Map<String, Object> sparseMap = new HashMap<>();
+          for (int j = 0; j < 3; j++) {
+            sparseMap.put("key" + j, String.valueOf(r.nextInt()));
+          }
+          result[i] = sparseMap;
+        }
+        break;
       case OBJECT:
       case UNKNOWN:
         break;
@@ -315,6 +325,7 @@ public class DataBlockBuilderTest {
         }
         break;
       case MAP:
+      case SPARSE_MAP:
         for (int i = 0; i < numRows; i++) {
           Object expected = rowToData.apply(i);
           if (expected != null) {
