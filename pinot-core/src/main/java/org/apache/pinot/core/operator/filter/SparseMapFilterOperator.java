@@ -109,6 +109,9 @@ public class SparseMapFilterOperator extends BaseFilterOperator {
         String value = ((NotEqPredicate) _predicate).getValue();
         ImmutableRoaringBitmap matching = _sparseMapReader.getDocsWithKeyValue(_keyName, value);
         ImmutableRoaringBitmap presence = _sparseMapReader.getPresenceBitmap(_keyName);
+        if (presence == null) {
+          return ImmutableRoaringBitmap.bitmapOf();
+        }
         if (matching == null) {
           return presence;
         }
@@ -137,6 +140,9 @@ public class SparseMapFilterOperator extends BaseFilterOperator {
           }
         }
         ImmutableRoaringBitmap presence = _sparseMapReader.getPresenceBitmap(_keyName);
+        if (presence == null) {
+          return ImmutableRoaringBitmap.bitmapOf();
+        }
         return ImmutableRoaringBitmap.andNot(presence, excluded.toImmutableRoaringBitmap());
       }
       case IS_NOT_NULL:
