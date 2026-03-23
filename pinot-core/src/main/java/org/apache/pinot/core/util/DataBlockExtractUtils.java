@@ -84,6 +84,7 @@ public final class DataBlockExtractUtils {
       case BYTES:
         return dataBlock.getBytes(rowId, colId);
       case MAP:
+      case SPARSE_MAP:
         return MapUtils.deserializeMap(dataBlock.getBytes(rowId, colId).getBytes());
 
       // Multi-value column
