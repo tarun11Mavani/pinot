@@ -83,7 +83,11 @@ public class SparseMapIndexTest {
       throws IOException {
     ComplexFieldSpec fieldSpec = buildMapFieldSpec(COLUMN_NAME);
     SparseMapIndexConfig config = new SparseMapIndexConfig(true, null, false, null, 1000);
+    return createIndex(fieldSpec, config, docs);
+  }
 
+  private File createIndex(SparseMapFieldSpec fieldSpec, SparseMapIndexConfig config, Map<String, Object>[] docs)
+      throws IOException {
     File indexFile =
         new File(INDEX_DIR, COLUMN_NAME + V1Constants.Indexes.SPARSE_MAP_INDEX_FILE_EXTENSION);
 
@@ -951,13 +955,12 @@ public class SparseMapIndexTest {
           new SparseMapDataSource(buildColumnMetadata(fieldSpec, 3), reader).getKeyDataSource("status");
       assertNotNull(ds);
 
-      // Dictionary should be non-null (includes default value "" for absent docs)
+      // Dictionary contains only actual values (no default value in sparse dictId)
       org.apache.pinot.segment.spi.index.reader.Dictionary dict = ds.getDictionary();
       assertNotNull(dict, "Dictionary should be present when inverted index is available");
-      assertEquals(dict.length(), 3); // "active", "inactive", plus default "" for absent docs
+      assertEquals(dict.length(), 2); // "active", "inactive"
       assertTrue(dict.indexOf("active") >= 0);
       assertTrue(dict.indexOf("inactive") >= 0);
-      assertTrue(dict.indexOf("") >= 0); // default value for absent docs
 
       // Forward index should report dictionary-encoded
       org.apache.pinot.segment.spi.index.reader.ForwardIndexReader<?> fwd = ds.getForwardIndex();
@@ -977,8 +980,10 @@ public class SparseMapIndexTest {
         Map.of("name", "bob")
     };
 
-    // No inverted index → no dictionary
-    File indexFile = createIndex(keyTypes, docs);
+    // Force raw encoding via noDictionaryKeys
+    SparseMapFieldSpec fieldSpec = buildFieldSpec(keyTypes);
+    SparseMapIndexConfig config = new SparseMapIndexConfig(true, null, false, null, Set.of("name"), 1000);
+    File indexFile = createIndex(fieldSpec, config, docs);
 
     try (PinotDataBuffer buffer = PinotDataBuffer.mapReadOnlyBigEndianFile(indexFile);
         ImmutableSparseMapIndexReader reader = new ImmutableSparseMapIndexReader(buffer, null)) {
@@ -987,8 +992,8 @@ public class SparseMapIndexTest {
           new SparseMapDataSource(buildColumnMetadata(fieldSpec(keyTypes), 2), reader).getKeyDataSource("name");
       assertNotNull(ds);
 
-      // No dictionary
-      assertNull(ds.getDictionary(), "Dictionary should be null when no inverted index");
+      // No dictionary when noDictionaryKeys is set
+      assertNull(ds.getDictionary(), "Dictionary should be null when noDictionaryKeys forces raw");
 
       // Forward index should NOT report dictionary-encoded
       org.apache.pinot.segment.spi.index.reader.ForwardIndexReader<?> fwd = ds.getForwardIndex();
@@ -1036,24 +1041,21 @@ public class SparseMapIndexTest {
       SparseMapKeyDictionary dict = reader.getKeyDictionary("color");
       assertNotNull(dict, "Key dictionary should be available");
 
-      // Dictionary should contain: "", "blue", "green", "red" (sorted)
-      assertEquals(dict.length(), 4);
-      assertEquals(dict.get(0), "");
-      assertEquals(dict.get(1), "blue");
-      assertEquals(dict.get(2), "green");
-      assertEquals(dict.get(3), "red");
+      // Dictionary contains only actual values: "blue", "green", "red" (sorted, no default)
+      assertEquals(dict.length(), 3);
+      assertEquals(dict.get(0), "blue");
+      assertEquals(dict.get(1), "green");
+      assertEquals(dict.get(2), "red");
 
-      // Verify dictIds
+      // DictId forward index is sparse: 4 entries for docs 0,1,2,4 (doc 3 absent)
       int redId = dict.indexOf("red");
       int blueId = dict.indexOf("blue");
       int greenId = dict.indexOf("green");
-      int defaultId = dict.indexOf("");
 
-      assertEquals(dictIdReader.readInt(0), redId);     // doc 0 = red
-      assertEquals(dictIdReader.readInt(1), blueId);    // doc 1 = blue
-      assertEquals(dictIdReader.readInt(2), redId);     // doc 2 = red
-      assertEquals(dictIdReader.readInt(3), defaultId); // doc 3 = absent → default
-      assertEquals(dictIdReader.readInt(4), greenId);   // doc 4 = green
+      assertEquals(dictIdReader.readInt(0), redId);     // ordinal 0 (doc 0) = red
+      assertEquals(dictIdReader.readInt(1), blueId);    // ordinal 1 (doc 1) = blue
+      assertEquals(dictIdReader.readInt(2), redId);     // ordinal 2 (doc 2) = red
+      assertEquals(dictIdReader.readInt(3), greenId);   // ordinal 3 (doc 4) = green
     }
   }
 
@@ -1100,17 +1102,16 @@ public class SparseMapIndexTest {
       org.apache.pinot.segment.spi.index.reader.Dictionary dict = ds.getDictionary();
       assertNotNull(dict);
 
-      // Read dictIds for all docs
-      int[] docIds = {0, 1, 2, 3, 4};
-      int[] dictIdBuffer = new int[5];
-      fwd.readDictIds(docIds, 5, dictIdBuffer, null);
+      // Read dictIds only for present docs (doc 3 is absent)
+      int[] docIds = {0, 1, 2, 4};
+      int[] dictIdBuffer = new int[4];
+      fwd.readDictIds(docIds, 4, dictIdBuffer, null);
 
       // Verify via dictionary lookup
       assertEquals(dict.getStringValue(dictIdBuffer[0]), "active");
       assertEquals(dict.getStringValue(dictIdBuffer[1]), "inactive");
       assertEquals(dict.getStringValue(dictIdBuffer[2]), "active");
-      assertEquals(dict.getStringValue(dictIdBuffer[3]), "");        // default for absent
-      assertEquals(dict.getStringValue(dictIdBuffer[4]), "pending");
+      assertEquals(dict.getStringValue(dictIdBuffer[3]), "pending");
 
       // Verify same dictIds for same values
       assertEquals(dictIdBuffer[0], dictIdBuffer[2], "Same value 'active' should have same dictId");
@@ -1118,9 +1119,9 @@ public class SparseMapIndexTest {
   }
 
   @Test
-  public void testDictIdForwardIndexNotAvailableWithoutInvertedIndex()
+  public void testDictIdForwardIndexAvailableByDefault()
       throws IOException {
-    // Keys without inverted index should not have dictId forward index
+    // Dictionary encoding is now the default for all keys (even without inverted index)
     Map<String, FieldSpec.DataType> keyTypes = new HashMap<>();
     keyTypes.put("name", FieldSpec.DataType.STRING);
 
@@ -1134,8 +1135,11 @@ public class SparseMapIndexTest {
 
     try (PinotDataBuffer buffer = PinotDataBuffer.mapReadOnlyBigEndianFile(indexFile);
         ImmutableSparseMapIndexReader reader = new ImmutableSparseMapIndexReader(buffer, null)) {
-      assertNull(reader.getDictIdReader("name"), "No dictId reader without inverted index");
-      assertNull(reader.getKeyDictionary("name"), "No key dictionary without inverted index");
+      assertNotNull(reader.getDictIdReader("name"), "DictId reader should be available by default");
+      assertNotNull(reader.getKeyDictionary("name"), "Key dictionary should be available by default");
+
+      assertEquals(reader.getString(0, "name"), "alice");
+      assertEquals(reader.getString(1, "name"), "bob");
     }
   }
 

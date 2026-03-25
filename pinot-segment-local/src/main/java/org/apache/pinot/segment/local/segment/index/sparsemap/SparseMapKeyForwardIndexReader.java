@@ -25,6 +25,7 @@ import org.apache.pinot.segment.spi.index.reader.ForwardIndexReader;
 import org.apache.pinot.segment.spi.index.reader.ForwardIndexReaderContext;
 import org.apache.pinot.segment.spi.index.reader.SparseMapIndexReader;
 import org.apache.pinot.spi.data.FieldSpec.DataType;
+import org.roaringbitmap.buffer.ImmutableRoaringBitmap;
 
 
 /**
@@ -53,26 +54,36 @@ public class SparseMapKeyForwardIndexReader implements ForwardIndexReader<Forwar
   private final SparseMapKeyDictionary _dictionary;
   @Nullable
   private final FixedBitIntReaderWriter _dictIdReader;
+  @Nullable
+  private final ImmutableRoaringBitmap _presenceBitmap;
   private final int _defaultDictId;
 
   public SparseMapKeyForwardIndexReader(SparseMapIndexReader sparseMapIndexReader, String key,
       DataType storedType) {
-    this(sparseMapIndexReader, key, storedType, null, null);
+    this(sparseMapIndexReader, key, storedType, null, null, null);
   }
 
   public SparseMapKeyForwardIndexReader(SparseMapIndexReader sparseMapIndexReader, String key,
       DataType storedType, @Nullable SparseMapKeyDictionary dictionary) {
-    this(sparseMapIndexReader, key, storedType, dictionary, null);
+    this(sparseMapIndexReader, key, storedType, dictionary, null, null);
   }
 
   public SparseMapKeyForwardIndexReader(SparseMapIndexReader sparseMapIndexReader, String key,
       DataType storedType, @Nullable SparseMapKeyDictionary dictionary,
       @Nullable FixedBitIntReaderWriter dictIdReader) {
+    this(sparseMapIndexReader, key, storedType, dictionary, dictIdReader, null);
+  }
+
+  public SparseMapKeyForwardIndexReader(SparseMapIndexReader sparseMapIndexReader, String key,
+      DataType storedType, @Nullable SparseMapKeyDictionary dictionary,
+      @Nullable FixedBitIntReaderWriter dictIdReader,
+      @Nullable ImmutableRoaringBitmap presenceBitmap) {
     _sparseMapIndexReader = sparseMapIndexReader;
     _key = key;
     _storedType = storedType;
     _dictionary = dictionary;
     _dictIdReader = dictIdReader;
+    _presenceBitmap = presenceBitmap;
     if (dictionary != null) {
       String defaultValueStr = SparseMapKeyDictionary.getDefaultValueString(storedType);
       int idx = dictionary.indexOf(defaultValueStr);
@@ -103,9 +114,14 @@ public class SparseMapKeyForwardIndexReader implements ForwardIndexReader<Forwar
       throw new UnsupportedOperationException("Dictionary not available for key: " + _key);
     }
     if (_dictIdReader != null) {
-      // Fast path: O(1) per doc via bit-packed forward index
+      // Fast path: sparse dictId forward index — use presence bitmap rank to get ordinal
       for (int i = 0; i < length; i++) {
-        dictIdBuffer[i] = _dictIdReader.readInt(docIds[i]);
+        if (_presenceBitmap != null && _presenceBitmap.contains(docIds[i])) {
+          int ordinal = _presenceBitmap.rank(docIds[i]) - 1;
+          dictIdBuffer[i] = _dictIdReader.readInt(ordinal);
+        } else {
+          dictIdBuffer[i] = _defaultDictId;
+        }
       }
     } else {
       // Slow path: getString + indexOf for mutable segments

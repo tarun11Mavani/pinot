@@ -70,8 +70,12 @@ public class OnHeapSparseMapIndexCreator implements SparseMapIndexCreator {
   private final Set<String> _indexedKeys;
   private final int _maxKeys;
 
+  private static final double NO_DICTIONARY_SIZE_RATIO_THRESHOLD = 0.85;
+
   private final Map<String, RoaringBitmap> _presenceBitmaps = new HashMap<>();
   private final Map<String, List<Object>> _values = new HashMap<>();
+  private final Map<String, Set<String>> _distinctValuesPerKey = new HashMap<>();
+  private final Map<String, Long> _totalRawBytesPerKey = new HashMap<>();
   private int _numDocs;
   private int _distinctKeyCount;
   private final Set<String> _droppedKeys = new HashSet<>();
@@ -153,6 +157,20 @@ public class OnHeapSparseMapIndexCreator implements SparseMapIndexCreator {
           continue;
         }
         _values.get(key).add(coerced);
+
+        // Track per-key stats for dictionary optimization decision
+        DataType storedType = valueType.getStoredType();
+        String stringRep = storedType.toString(coerced);
+        _distinctValuesPerKey.computeIfAbsent(key, k -> new HashSet<>()).add(stringRep);
+        if (storedType == DataType.STRING || storedType == DataType.BYTES) {
+          byte[] rawBytes;
+          if (storedType == DataType.BYTES) {
+            rawBytes = (byte[]) coerced;
+          } else {
+            rawBytes = ((String) coerced).getBytes(StandardCharsets.UTF_8);
+          }
+          _totalRawBytesPerKey.merge(key, (long) rawBytes.length, Long::sum);
+        }
       }
     }
     _numDocs++;
@@ -236,6 +254,79 @@ public class OnHeapSparseMapIndexCreator implements SparseMapIndexCreator {
     }
   }
 
+  /**
+   * Decides whether to use dictionary encoding for a sparse map key.
+   * Mirrors the logic in DictionaryIndexType.canSafelyCreateDictionaryWithinThreshold.
+   * Returns true if dictionary+dictIdFwd is more compact than raw forward index.
+   */
+  private boolean shouldUseDictionary(String key, DataType storedType, int numDocsForKey) {
+    // Explicit override: noDictionaryKeys forces raw encoding
+    if (!_config.shouldUseDictionaryForKey(key)) {
+      return false;
+    }
+
+    // Keys with inverted index always get dictionary (inverted index requires it)
+    if (_config.shouldEnableInvertedIndexForKey(key)) {
+      return true;
+    }
+
+    Set<String> distinctValues = _distinctValuesPerKey.get(key);
+    if (distinctValues == null || distinctValues.isEmpty()) {
+      return false;
+    }
+
+    // Cardinality is just the distinct values (no default value in sparse dictId forward index)
+    int cardinality = distinctValues.size();
+    if (cardinality == 0) {
+      return false;
+    }
+
+    int numBitsPerValue = PinotDataBitSet.getNumBitsPerValue(Math.max(cardinality - 1, 0));
+    // Sparse dictId forward index: only stores entries for docs that have the key,
+    // same as the raw forward index. Both cover numDocsForKey entries.
+    long dictIdFwdSize = ((long) numDocsForKey * numBitsPerValue + Byte.SIZE - 1) / Byte.SIZE;
+
+    long rawSize;
+    long dictSize;
+
+    switch (storedType) {
+      case INT:
+        rawSize = (long) numDocsForKey * Integer.BYTES;
+        dictSize = (long) cardinality * Integer.BYTES;
+        break;
+      case LONG:
+        rawSize = (long) numDocsForKey * Long.BYTES;
+        dictSize = (long) cardinality * Long.BYTES;
+        break;
+      case FLOAT:
+        rawSize = (long) numDocsForKey * Float.BYTES;
+        dictSize = (long) cardinality * Float.BYTES;
+        break;
+      case DOUBLE:
+        rawSize = (long) numDocsForKey * Double.BYTES;
+        dictSize = (long) cardinality * Double.BYTES;
+        break;
+      case STRING:
+      case BYTES: {
+        // Raw size: numValues(int) + offsets[numDocsForKey+1](int[]) + totalRawBytes
+        long totalRawBytes = _totalRawBytesPerKey.getOrDefault(key, 0L);
+        rawSize = Integer.BYTES + (long) (numDocsForKey + 1) * Integer.BYTES + totalRawBytes;
+        // Dict size: sum of (int + bytes) per distinct value in the value dictionary section
+        dictSize = 0;
+        for (String v : distinctValues) {
+          dictSize += Integer.BYTES + v.getBytes(StandardCharsets.UTF_8).length;
+        }
+        break;
+      }
+      default:
+        return true;
+    }
+
+    // If raw is cheaper than dict+dictIdFwd (within threshold), use raw
+    double ratio = (double) rawSize / (dictSize + dictIdFwdSize);
+    return ratio > NO_DICTIONARY_SIZE_RATIO_THRESHOLD;
+  }
+
   @Override
   public void seal()
       throws IOException {
@@ -293,42 +384,56 @@ public class OnHeapSparseMapIndexCreator implements SparseMapIndexCreator {
         DataType dataType = _keyTypes.getOrDefault(key, _defaultValueType);
         DataType storedType = dataType.getStoredType();
 
+        // Always write presence bitmap
         byte[] presenceBytes = RoaringBitmapUtils.serialize(presence);
         long presenceOffset = currentOffset;
         dos.write(presenceBytes);
         currentOffset += presenceBytes.length;
 
-        byte[] forwardBytes = buildForwardIndex(values, storedType);
-        long forwardOffset = currentOffset;
-        dos.write(forwardBytes);
-        currentOffset += forwardBytes.length;
-
+        boolean useDictionary = shouldUseDictionary(key, storedType, values.size());
         boolean enableInverted = _config.shouldEnableInvertedIndexForKey(key);
-        // Build inverted index and collect value→docId mappings for dictId forward index
-        TreeMap<String, RoaringBitmap> valueToDocIds = null;
-        byte[] invertedBytes;
-        if (enableInverted) {
-          valueToDocIds = buildValueToDocIds(presence, values, storedType);
-          cachedValueToDocIds.put(key, valueToDocIds);
-          invertedBytes = serializeInvertedIndex(valueToDocIds);
-        } else {
-          invertedBytes = new byte[0];
-        }
-        long invertedOffset = enableInverted ? currentOffset : 0;
-        if (enableInverted) {
-          dos.write(invertedBytes);
-          currentOffset += invertedBytes.length;
-        }
 
-        // Build dictId forward index for keys with inverted index
+        // Write forward index: either raw OR dictId, never both
+        long forwardOffset = 0;
+        long forwardLength = 0;
         long dictIdFwdOffset = 0;
         long dictIdFwdLength = 0;
-        if (enableInverted && valueToDocIds != null) {
+
+        TreeMap<String, RoaringBitmap> valueToDocIds = null;
+
+        if (useDictionary) {
+          // Dictionary-encoded path: build valueToDocIds and dictId forward index
+          valueToDocIds = buildValueToDocIds(presence, values, storedType);
+          cachedValueToDocIds.put(key, valueToDocIds);
+
           byte[] dictIdFwdBytes = buildDictIdForwardIndex(valueToDocIds, storedType, presence);
           dictIdFwdOffset = currentOffset;
           dictIdFwdLength = dictIdFwdBytes.length;
           dos.write(dictIdFwdBytes);
           currentOffset += dictIdFwdBytes.length;
+        } else {
+          // Raw forward index path
+          byte[] forwardBytes = buildForwardIndex(values, storedType);
+          forwardOffset = currentOffset;
+          forwardLength = forwardBytes.length;
+          dos.write(forwardBytes);
+          currentOffset += forwardBytes.length;
+        }
+
+        // Inverted index (independent of dictionary decision)
+        byte[] invertedBytes;
+        long invertedOffset = 0;
+        long invertedLength = 0;
+        if (enableInverted) {
+          if (valueToDocIds == null) {
+            valueToDocIds = buildValueToDocIds(presence, values, storedType);
+            cachedValueToDocIds.put(key, valueToDocIds);
+          }
+          invertedBytes = serializeInvertedIndex(valueToDocIds);
+          invertedOffset = currentOffset;
+          invertedLength = invertedBytes.length;
+          dos.write(invertedBytes);
+          currentOffset += invertedBytes.length;
         }
 
         int entryOffset = i * KEY_METADATA_ENTRY_SIZE;
@@ -337,9 +442,9 @@ public class OnHeapSparseMapIndexCreator implements SparseMapIndexCreator {
         writeLong(keyMetadataSection, entryOffset + 5, presenceOffset);
         writeLong(keyMetadataSection, entryOffset + 13, presenceBytes.length);
         writeLong(keyMetadataSection, entryOffset + 21, forwardOffset);
-        writeLong(keyMetadataSection, entryOffset + 29, forwardBytes.length);
+        writeLong(keyMetadataSection, entryOffset + 29, forwardLength);
         writeLong(keyMetadataSection, entryOffset + 37, invertedOffset);
-        writeLong(keyMetadataSection, entryOffset + 45, invertedBytes.length);
+        writeLong(keyMetadataSection, entryOffset + 45, invertedLength);
         writeLong(keyMetadataSection, entryOffset + 53, dictIdFwdOffset);
         writeLong(keyMetadataSection, entryOffset + 61, dictIdFwdLength);
       }
@@ -463,46 +568,48 @@ public class OnHeapSparseMapIndexCreator implements SparseMapIndexCreator {
     return baos.toByteArray();
   }
 
-  /// Builds a bit-packed dictId forward index for all numDocs documents.
-  /// Documents without the key get the default value's dictId.
+  /// Builds a sparse bit-packed dictId forward index for only the docs that have the key.
+  /// Uses presence bitmap rank to map docId → ordinal, same as the raw forward index.
+  /// This preserves the space benefit of sparse_map by not wasting space on absent docs.
   private byte[] buildDictIdForwardIndex(TreeMap<String, RoaringBitmap> valueToDocIds,
       DataType storedType, RoaringBitmap presence)
       throws IOException {
-    // Build sorted distinct values array, merging default value
-    String defaultValue = SparseMapKeyDictionary.getDefaultValueString(storedType);
+    // Build sorted distinct values array (no default value needed — absent docs use presence bitmap)
     String[] distinctValues = valueToDocIds.keySet().toArray(new String[0]);
-
-    // Merge default value into sorted array
-    Set<String> allSet = new HashSet<>(java.util.Arrays.asList(distinctValues));
-    allSet.add(defaultValue);
-    String[] allValues = allSet.toArray(new String[0]);
-
-    // Sort numerically for numeric types, lexicographically for strings
-    sortValues(allValues, storedType);
+    sortValues(distinctValues, storedType);
 
     // Build value → dictId mapping
     Map<String, Integer> valueToDictId = new HashMap<>();
-    for (int i = 0; i < allValues.length; i++) {
-      valueToDictId.put(allValues[i], i);
+    for (int i = 0; i < distinctValues.length; i++) {
+      valueToDictId.put(distinctValues[i], i);
     }
 
-    int defaultDictId = valueToDictId.get(defaultValue);
-    int numBitsPerValue = PinotDataBitSet.getNumBitsPerValue(allValues.length - 1);
+    int numDocsForKey = (int) presence.getCardinality();
+    int numBitsPerValue = PinotDataBitSet.getNumBitsPerValue(Math.max(distinctValues.length - 1, 0));
 
-    // Build dictId array for all docs
-    int[] dictIdArray = new int[_numDocs];
-    java.util.Arrays.fill(dictIdArray, defaultDictId);
-    for (Map.Entry<String, RoaringBitmap> entry : valueToDocIds.entrySet()) {
-      int dictId = valueToDictId.get(entry.getKey());
-      for (int docId : entry.getValue()) {
-        dictIdArray[docId] = dictId;
+    // Build sparse dictId array: one entry per doc that has the key, in bitmap iteration order
+    int[] dictIdArray = new int[numDocsForKey];
+    int ordinal = 0;
+    for (int docId : presence) {
+      // Find which value this doc has by checking valueToDocIds bitmaps
+      boolean found = false;
+      for (Map.Entry<String, RoaringBitmap> entry : valueToDocIds.entrySet()) {
+        if (entry.getValue().contains(docId)) {
+          dictIdArray[ordinal] = valueToDictId.get(entry.getKey());
+          found = true;
+          break;
+        }
       }
+      if (!found) {
+        dictIdArray[ordinal] = 0;
+      }
+      ordinal++;
     }
 
     // Write bit-packed
-    long bufferSize = ((long) _numDocs * numBitsPerValue + Byte.SIZE - 1) / Byte.SIZE;
+    long bufferSize = ((long) numDocsForKey * numBitsPerValue + Byte.SIZE - 1) / Byte.SIZE;
     byte[] buffer = new byte[(int) bufferSize];
-    writeBitPacked(buffer, dictIdArray, _numDocs, numBitsPerValue);
+    writeBitPacked(buffer, dictIdArray, numDocsForKey, numBitsPerValue);
     return buffer;
   }
 
@@ -553,7 +660,7 @@ public class OnHeapSparseMapIndexCreator implements SparseMapIndexCreator {
   }
 
   /// Builds the value dictionary section written after all per-key data.
-  /// For each key with inverted index: numDistinctValues(int), numBitsPerValue(int),
+  /// For each key with dictionary encoding: numDistinctValues(int), numBitsPerValue(int),
   /// then [valueLen(int) + valueBytes] × numDistinctValues.
   private byte[] buildValueDictionarySection(List<String> sortedKeys,
       Map<String, TreeMap<String, RoaringBitmap>> cachedValueToDocIds)
@@ -562,8 +669,9 @@ public class OnHeapSparseMapIndexCreator implements SparseMapIndexCreator {
     DataOutputStream dos = new DataOutputStream(baos);
 
     for (String key : sortedKeys) {
-      boolean enableInverted = _config.shouldEnableInvertedIndexForKey(key);
-      if (!enableInverted) {
+      // Write value dictionary for all keys that have cached valueToDocIds
+      // (includes both dictionary-encoded keys and inverted-index keys)
+      if (!cachedValueToDocIds.containsKey(key)) {
         continue;
       }
 
@@ -572,13 +680,8 @@ public class OnHeapSparseMapIndexCreator implements SparseMapIndexCreator {
 
       TreeMap<String, RoaringBitmap> valueToDocIds = cachedValueToDocIds.get(key);
 
-      // Merge default value
-      String defaultValue = SparseMapKeyDictionary.getDefaultValueString(storedType);
-      String[] distinctValues = valueToDocIds != null ? valueToDocIds.keySet().toArray(new String[0]) : new String[0];
-
-      Set<String> allSet = new HashSet<>(java.util.Arrays.asList(distinctValues));
-      allSet.add(defaultValue);
-      String[] allValues = allSet.toArray(new String[0]);
+      // Use only the actual distinct values (no default value needed for sparse dictId forward index)
+      String[] allValues = valueToDocIds != null ? valueToDocIds.keySet().toArray(new String[0]) : new String[0];
 
       // Sort numerically for numeric types, lexicographically for strings
       sortValues(allValues, storedType);
