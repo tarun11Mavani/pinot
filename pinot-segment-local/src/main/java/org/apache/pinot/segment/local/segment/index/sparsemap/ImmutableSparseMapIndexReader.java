@@ -85,6 +85,9 @@ public class ImmutableSparseMapIndexReader implements SparseMapIndexReader {
   private final long _valueDictionarySectionOffset;
   private final Map<String, SparseMapKeyDictionary> _keyDictionaries;
 
+  // Pre-built dictId readers for keys with dictionary encoding (indexed by keyId)
+  private final FixedBitIntReaderWriter[] _dictIdReaders;
+
   public ImmutableSparseMapIndexReader(PinotDataBuffer dataBuffer, ColumnMetadata metadata)
       throws IOException {
     _dataBuffer = dataBuffer;
@@ -195,6 +198,22 @@ public class ImmutableSparseMapIndexReader implements SparseMapIndexReader {
         _keyDictionaries.put(_keys[i], new SparseMapKeyDictionary(_keyStoredTypes[i], values));
       }
     }
+
+    // Pre-build dictId readers for all keys with dictId forward index
+    // The dictId forward index is sparse: it only contains entries for docs that have the key.
+    // Use _numDocsPerKey[i] (not _numDocs) as the number of entries.
+    _dictIdReaders = new FixedBitIntReaderWriter[_numKeys];
+    for (int i = 0; i < _numKeys; i++) {
+      if (_dictIdFwdLengths[i] > 0) {
+        SparseMapKeyDictionary dict = _keyDictionaries.get(_keys[i]);
+        if (dict != null) {
+          int numBitsPerValue = PinotDataBitSet.getNumBitsPerValue(Math.max(dict.length() - 1, 0));
+          long offset = _perKeyDataSectionOffset + _dictIdFwdOffsets[i];
+          PinotDataBuffer slice = _dataBuffer.view(offset, offset + _dictIdFwdLengths[i]);
+          _dictIdReaders[i] = new FixedBitIntReaderWriter(slice, _numDocsPerKey[i], numBitsPerValue);
+        }
+      }
+    }
   }
 
   @Override
@@ -235,6 +254,13 @@ public class ImmutableSparseMapIndexReader implements SparseMapIndexReader {
     if (!bitmap.contains(docId)) {
       return 0;
     }
+    // Dictionary-encoded path: use bitmap rank to find ordinal in sparse dictId array
+    if (_dictIdReaders[keyId] != null) {
+      int ordinal = bitmap.rank(docId) - 1;
+      int dictId = _dictIdReaders[keyId].readInt(ordinal);
+      return _keyDictionaries.get(_keys[keyId]).getIntValue(dictId);
+    }
+    // Raw forward index path
     int ordinal = bitmap.rank(docId) - 1;
     long bufOffset = _perKeyDataSectionOffset + _fwdOffsets[keyId] + (long) ordinal * Integer.BYTES;
     return _dataBuffer.getInt(bufOffset);
@@ -249,6 +275,11 @@ public class ImmutableSparseMapIndexReader implements SparseMapIndexReader {
     ImmutableRoaringBitmap bitmap = _presenceBitmaps[keyId];
     if (!bitmap.contains(docId)) {
       return 0L;
+    }
+    if (_dictIdReaders[keyId] != null) {
+      int ordinal = bitmap.rank(docId) - 1;
+      int dictId = _dictIdReaders[keyId].readInt(ordinal);
+      return _keyDictionaries.get(_keys[keyId]).getLongValue(dictId);
     }
     int ordinal = bitmap.rank(docId) - 1;
     long bufOffset = _perKeyDataSectionOffset + _fwdOffsets[keyId] + (long) ordinal * Long.BYTES;
@@ -265,6 +296,11 @@ public class ImmutableSparseMapIndexReader implements SparseMapIndexReader {
     if (!bitmap.contains(docId)) {
       return 0.0f;
     }
+    if (_dictIdReaders[keyId] != null) {
+      int ordinal = bitmap.rank(docId) - 1;
+      int dictId = _dictIdReaders[keyId].readInt(ordinal);
+      return _keyDictionaries.get(_keys[keyId]).getFloatValue(dictId);
+    }
     int ordinal = bitmap.rank(docId) - 1;
     long bufOffset = _perKeyDataSectionOffset + _fwdOffsets[keyId] + (long) ordinal * Float.BYTES;
     return _dataBuffer.getFloat(bufOffset);
@@ -279,6 +315,11 @@ public class ImmutableSparseMapIndexReader implements SparseMapIndexReader {
     ImmutableRoaringBitmap bitmap = _presenceBitmaps[keyId];
     if (!bitmap.contains(docId)) {
       return 0.0;
+    }
+    if (_dictIdReaders[keyId] != null) {
+      int ordinal = bitmap.rank(docId) - 1;
+      int dictId = _dictIdReaders[keyId].readInt(ordinal);
+      return _keyDictionaries.get(_keys[keyId]).getDoubleValue(dictId);
     }
     int ordinal = bitmap.rank(docId) - 1;
     long bufOffset = _perKeyDataSectionOffset + _fwdOffsets[keyId] + (long) ordinal * Double.BYTES;
@@ -295,6 +336,11 @@ public class ImmutableSparseMapIndexReader implements SparseMapIndexReader {
     if (!bitmap.contains(docId)) {
       return "";
     }
+    if (_dictIdReaders[keyId] != null) {
+      int ordinal = bitmap.rank(docId) - 1;
+      int dictId = _dictIdReaders[keyId].readInt(ordinal);
+      return _keyDictionaries.get(_keys[keyId]).getStringValue(dictId);
+    }
     int ordinal = bitmap.rank(docId) - 1;
     return readStringAtOrdinal(keyId, ordinal);
   }
@@ -308,6 +354,11 @@ public class ImmutableSparseMapIndexReader implements SparseMapIndexReader {
     ImmutableRoaringBitmap bitmap = _presenceBitmaps[keyId];
     if (!bitmap.contains(docId)) {
       return new byte[0];
+    }
+    if (_dictIdReaders[keyId] != null) {
+      int ordinal = bitmap.rank(docId) - 1;
+      int dictId = _dictIdReaders[keyId].readInt(ordinal);
+      return _keyDictionaries.get(_keys[keyId]).getBytesValue(dictId);
     }
     int ordinal = bitmap.rank(docId) - 1;
     return readBytesAtOrdinal(keyId, ordinal);
@@ -478,17 +529,7 @@ public class ImmutableSparseMapIndexReader implements SparseMapIndexReader {
   @Nullable
   public FixedBitIntReaderWriter getDictIdReader(String key) {
     Integer keyId = _keyToId.get(key);
-    if (keyId == null || _dictIdFwdLengths[keyId] == 0) {
-      return null;
-    }
-    SparseMapKeyDictionary dict = _keyDictionaries.get(key);
-    if (dict == null) {
-      return null;
-    }
-    int numBitsPerValue = PinotDataBitSet.getNumBitsPerValue(dict.length() - 1);
-    long offset = _perKeyDataSectionOffset + _dictIdFwdOffsets[keyId];
-    PinotDataBuffer slice = _dataBuffer.view(offset, offset + _dictIdFwdLengths[keyId]);
-    return new FixedBitIntReaderWriter(slice, _numDocs, numBitsPerValue);
+    return keyId != null ? _dictIdReaders[keyId] : null;
   }
 
   /// Returns the cached SparseMapKeyDictionary for the given key, or null if not available.
@@ -508,6 +549,27 @@ public class ImmutableSparseMapIndexReader implements SparseMapIndexReader {
    * via the presence bitmap. The ordinal (rank - 1) is computed here.
    */
   private Object getValueByKeyId(int docId, int keyId) {
+    // Dictionary-encoded path: use bitmap rank for sparse dictId lookup
+    if (_dictIdReaders[keyId] != null) {
+      int ordinal = _presenceBitmaps[keyId].rank(docId) - 1;
+      int dictId = _dictIdReaders[keyId].readInt(ordinal);
+      SparseMapKeyDictionary dict = _keyDictionaries.get(_keys[keyId]);
+      switch (_keyStoredTypes[keyId]) {
+        case INT:
+          return dict.getIntValue(dictId);
+        case LONG:
+          return dict.getLongValue(dictId);
+        case FLOAT:
+          return dict.getFloatValue(dictId);
+        case DOUBLE:
+          return dict.getDoubleValue(dictId);
+        case BYTES:
+          return dict.getBytesValue(dictId);
+        default:
+          return dict.getStringValue(dictId);
+      }
+    }
+    // Raw forward index path
     ImmutableRoaringBitmap bitmap = _presenceBitmaps[keyId];
     int ordinal = bitmap.rank(docId) - 1;
     switch (_keyStoredTypes[keyId]) {
@@ -549,6 +611,10 @@ public class ImmutableSparseMapIndexReader implements SparseMapIndexReader {
   @Override
   public void close()
       throws IOException {
-    // PinotDataBuffer is closed by the segment
+    for (FixedBitIntReaderWriter reader : _dictIdReaders) {
+      if (reader != null) {
+        reader.close();
+      }
+    }
   }
 }

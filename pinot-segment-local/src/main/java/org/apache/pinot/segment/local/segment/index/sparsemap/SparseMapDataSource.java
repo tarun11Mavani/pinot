@@ -170,7 +170,8 @@ public class SparseMapDataSource extends BaseDataSource implements MapDataSource
     }
 
     SparseMapKeyForwardIndexReader keyReader =
-        new SparseMapKeyForwardIndexReader(_sparseMapIndexReader, key, keyType, keyDictionary, dictIdReader);
+        new SparseMapKeyForwardIndexReader(_sparseMapIndexReader, key, keyType, keyDictionary, dictIdReader,
+            _sparseMapIndexReader.getPresenceBitmap(key));
 
     ColumnIndexContainer.FromMap.Builder containerBuilder =
         new ColumnIndexContainer.FromMap.Builder().with(StandardIndexes.forward(), keyReader);
