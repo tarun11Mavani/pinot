@@ -46,10 +46,19 @@ public class SparseMapIndexConfig extends IndexConfig {
   private final Set<String> _indexedKeys;
   private final boolean _enableInvertedIndexForAll;
   private final Set<String> _invertedIndexKeys;
+  private final Set<String> _noDictionaryKeys;
   private final int _maxKeys;
 
   public SparseMapIndexConfig(boolean enabled) {
-    this(enabled, null, false, null, 1000);
+    this(enabled, null, false, null, null, 1000);
+  }
+
+  /**
+   * Backward-compatible constructor without noDictionaryKeys.
+   */
+  public SparseMapIndexConfig(boolean enabled, @Nullable Set<String> indexedKeys,
+      boolean enableInvertedIndexForAll, @Nullable Set<String> invertedIndexKeys, int maxKeys) {
+    this(enabled, indexedKeys, enableInvertedIndexForAll, invertedIndexKeys, null, maxKeys);
   }
 
   @JsonCreator
@@ -58,11 +67,13 @@ public class SparseMapIndexConfig extends IndexConfig {
       @JsonProperty("indexedKeys") @Nullable Set<String> indexedKeys,
       @JsonProperty("enableInvertedIndexForAll") boolean enableInvertedIndexForAll,
       @JsonProperty("invertedIndexKeys") @Nullable Set<String> invertedIndexKeys,
+      @JsonProperty("noDictionaryKeys") @Nullable Set<String> noDictionaryKeys,
       @JsonProperty("maxKeys") int maxKeys) {
     super(!enabled);
     _indexedKeys = indexedKeys;
     _enableInvertedIndexForAll = enableInvertedIndexForAll;
     _invertedIndexKeys = invertedIndexKeys;
+    _noDictionaryKeys = noDictionaryKeys;
     _maxKeys = maxKeys > 0 ? maxKeys : 1000;
   }
 
@@ -98,6 +109,23 @@ public class SparseMapIndexConfig extends IndexConfig {
   public boolean shouldEnableInvertedIndexForKey(String key) {
     return _enableInvertedIndexForAll
         || (_invertedIndexKeys != null && _invertedIndexKeys.contains(key));
+  }
+
+  /**
+   * Returns the set of keys that should always use raw encoding (no dictionary),
+   * or null if not specified (all keys eligible for dictionary encoding).
+   */
+  @Nullable
+  public Set<String> getNoDictionaryKeys() {
+    return _noDictionaryKeys;
+  }
+
+  /**
+   * Returns true if dictionary encoding is allowed for the given key.
+   * Returns false if the key is in the {@code noDictionaryKeys} set.
+   */
+  public boolean shouldUseDictionaryForKey(String key) {
+    return _noDictionaryKeys == null || !_noDictionaryKeys.contains(key);
   }
 
   /**
