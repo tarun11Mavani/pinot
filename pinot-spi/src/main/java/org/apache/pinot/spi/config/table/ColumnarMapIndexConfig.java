@@ -53,20 +53,20 @@ public class ColumnarMapIndexConfig extends IndexConfig {
 
   /**
    * Creates a ColumnarMapIndexConfig from FieldConfig properties map.
-   * Reads the MAP_INDEX_* property constants from {@link FieldConfig}.
+   * Reads the COLUMNAR_MAP_INDEX_* property constants from {@link FieldConfig}.
    */
   public static ColumnarMapIndexConfig fromProperties(@Nullable Map<String, String> properties) {
     if (properties == null || properties.isEmpty()) {
       return DEFAULT;
     }
     int maxKeys = Integer.parseInt(
-        properties.getOrDefault(FieldConfig.MAP_INDEX_MAX_KEYS, "1000"));
+        properties.getOrDefault(FieldConfig.COLUMNAR_MAP_INDEX_MAX_KEYS, "1000"));
     Set<String> invertedIndexKeys = parseCommaSeparated(
-        properties.get(FieldConfig.MAP_INDEX_INVERTED_INDEX_KEYS));
+        properties.get(FieldConfig.COLUMNAR_MAP_INDEX_INVERTED_INDEX_KEYS));
     Set<String> noDictionaryKeys = parseCommaSeparated(
-        properties.get(FieldConfig.MAP_INDEX_NO_DICTIONARY_KEYS));
+        properties.get(FieldConfig.COLUMNAR_MAP_INDEX_NO_DICTIONARY_KEYS));
     boolean enableInvertedForAll = Boolean.parseBoolean(
-        properties.getOrDefault(FieldConfig.MAP_INDEX_ENABLE_INVERTED_FOR_ALL, "false"));
+        properties.getOrDefault(FieldConfig.COLUMNAR_MAP_INDEX_ENABLE_INVERTED_FOR_ALL, "false"));
     return new ColumnarMapIndexConfig(true, null, enableInvertedForAll, invertedIndexKeys, noDictionaryKeys, maxKeys);
   }
 
@@ -76,7 +76,7 @@ public class ColumnarMapIndexConfig extends IndexConfig {
       return null;
     }
     Set<String> result = new HashSet<>();
-    for (String part : value.split(FieldConfig.MAP_INDEX_KEY_SEPARATOR)) {
+    for (String part : value.split(FieldConfig.COLUMNAR_MAP_INDEX_KEY_SEPARATOR)) {
       String trimmed = part.trim();
       if (!trimmed.isEmpty()) {
         result.add(trimmed);
