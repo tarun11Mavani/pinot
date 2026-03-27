@@ -19,6 +19,7 @@
 package org.apache.pinot.tools.admin.command;
 
 import java.lang.reflect.InvocationTargetException;
+import org.apache.pinot.tools.ColumnarMapQuickStart;
 import org.apache.pinot.tools.EmptyQuickstart;
 import org.apache.pinot.tools.HybridQuickstart;
 import org.apache.pinot.tools.JoinQuickStart;
@@ -111,6 +112,12 @@ public class TestQuickStartCommand {
 
     Assert.assertEquals(quickStartClassFor("TIMESTAMP"),
         TimestampIndexQuickstart.class);
+
+    Assert.assertEquals(quickStartClassFor("COLUMNAR_MAP"), ColumnarMapQuickStart.class);
+    Assert.assertEquals(quickStartClassFor("BATCH_COLUMNAR_MAP"), ColumnarMapQuickStart.class);
+    Assert.assertEquals(quickStartClassFor("BATCH-SPARSE-MAP"), ColumnarMapQuickStart.class);
+    Assert.assertEquals(quickStartClassFor("OFFLINE_COLUMNAR_MAP"), ColumnarMapQuickStart.class);
+    Assert.assertEquals(quickStartClassFor("OFFLINE-SPARSE-MAP"), ColumnarMapQuickStart.class);
 
     Assert.assertEquals(quickStartClassFor("MULTI_CLUSTER"),
         MultiClusterQuickstart.class);
