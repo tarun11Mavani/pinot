@@ -75,7 +75,7 @@ public class ColumnarMapIndexType
 
   @Override
   protected ColumnConfigDeserializer<ColumnarMapIndexConfig> createDeserializerForLegacyConfigs() {
-    return IndexConfigDeserializer.fromIndexTypes(FieldConfig.IndexType.MAP,
+    return IndexConfigDeserializer.fromIndexTypes(FieldConfig.IndexType.COLUMNAR_MAP,
         (tableConfig, fieldConfig) -> ColumnarMapIndexConfig.fromProperties(fieldConfig.getProperties()));
   }
 

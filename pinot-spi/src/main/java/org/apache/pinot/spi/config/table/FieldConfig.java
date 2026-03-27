@@ -69,12 +69,12 @@ public class FieldConfig extends BaseJsonConfig {
   public static final String FORWARD_INDEX_DISABLED = "forwardIndexDisabled";
   public static final String DEFAULT_FORWARD_INDEX_DISABLED = Boolean.FALSE.toString();
 
-  // Config for MAP columnar storage index
-  public static final String MAP_INDEX_MAX_KEYS = "maxKeys";
-  public static final String MAP_INDEX_INVERTED_INDEX_KEYS = "invertedIndexKeys";
-  public static final String MAP_INDEX_NO_DICTIONARY_KEYS = "noDictionaryKeys";
-  public static final String MAP_INDEX_ENABLE_INVERTED_FOR_ALL = "enableInvertedIndexForAll";
-  public static final String MAP_INDEX_KEY_SEPARATOR = ",";
+  // Config for COLUMNAR_MAP index (columnar per-key storage for MAP columns)
+  public static final String COLUMNAR_MAP_INDEX_MAX_KEYS = "maxKeys";
+  public static final String COLUMNAR_MAP_INDEX_INVERTED_INDEX_KEYS = "invertedIndexKeys";
+  public static final String COLUMNAR_MAP_INDEX_NO_DICTIONARY_KEYS = "noDictionaryKeys";
+  public static final String COLUMNAR_MAP_INDEX_ENABLE_INVERTED_FOR_ALL = "enableInvertedIndexForAll";
+  public static final String COLUMNAR_MAP_INDEX_KEY_SEPARATOR = ",";
   public static final String TEXT_INDEX_ENABLE_PREFIX_SUFFIX_PHRASE_QUERIES =
       "enablePrefixSuffixMatchingInPhraseQueries";
   public static final String TEXT_INDEX_LUCENE_REUSE_MUTABLE_INDEX = "reuseMutableIndex";
@@ -138,7 +138,7 @@ public class FieldConfig extends BaseJsonConfig {
   // If null, there won't be any index
   // NOTE: TIMESTAMP is ignored. In order to create TIMESTAMP index, configure 'timestampConfig' instead.
   public enum IndexType {
-    INVERTED, SORTED, TEXT, FST, IFST, H3, JSON, TIMESTAMP, VECTOR, RANGE, MAP
+    INVERTED, SORTED, TEXT, FST, IFST, H3, JSON, TIMESTAMP, VECTOR, RANGE, COLUMNAR_MAP
   }
 
   public enum CompressionCodec {
