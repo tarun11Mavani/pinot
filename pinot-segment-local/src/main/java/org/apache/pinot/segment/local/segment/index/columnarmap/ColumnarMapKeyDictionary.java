@@ -36,11 +36,28 @@ import org.apache.pinot.spi.utils.ByteArray;
 
 /**
  * In-memory {@link Dictionary} implementation backed by sorted distinct values extracted from the
- * sparse map inverted index. Enables dictionary-based GROUP BY for sparse map key columns.
+ * columnar map value dictionary section. Enables dictionary-based GROUP BY for columnar map key columns.
  *
- * <p>Values are stored as sorted strings and parsed on demand for typed access. The reverse map
- * provides O(1) string-to-dictId lookup. Since the source values come from a sorted inverted
- * index (TreeMap or sorted binary scan), the dictionary is always sorted.
+ * <p>All values are stored as sorted strings regardless of the key's declared type, with typed
+ * parsing on demand (e.g. {@code Integer.parseInt} in {@link #getIntValue}). This string-based
+ * approach was chosen because:
+ * <ul>
+ *   <li>SQL predicates arrive as strings ({@code WHERE metrics['clicks'] = '42'}) — even with
+ *       native typed arrays, the predicate string would need parsing for binary search</li>
+ *   <li>Dictionary value reads only happen when materializing final results (small result set);
+ *       the hot path for GROUP BY is {@code readDictIds()} on the bit-packed forward index</li>
+ *   <li>A single code path for all types keeps the writer, reader, and dictionary simple —
+ *       typed arrays would mean 4+ code paths with more surface area for bugs</li>
+ * </ul>
+ *
+ * <p>TODO: If profiling shows dictionary value access is a bottleneck, switch to native typed
+ * arrays (int[], long[], double[], String[]) for zero-parse forward lookups and type-aware
+ * binary search for indexOf. This would require corresponding changes in
+ * {@link OnHeapColumnarMapIndexCreator#buildValueDictionarySection} (write fixed-width values)
+ * and {@link ImmutableColumnarMapIndexReader} (read into typed arrays).
+ *
+ * <p>The reverse map provides O(1) string-to-dictId lookup. Since the source values come from a
+ * sorted inverted index (TreeMap or sorted binary scan), the dictionary is always sorted.
  *
  * <p>Thread safety: this class is immutable after construction and safe for concurrent reads.
  */

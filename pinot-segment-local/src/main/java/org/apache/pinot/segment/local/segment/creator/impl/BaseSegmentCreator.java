@@ -364,7 +364,7 @@ public abstract class BaseSegmentCreator implements SegmentCreator {
    */
   private boolean createDictionaryForColumn(ColumnIndexCreationInfo info, SegmentGeneratorConfig config,
       FieldSpec spec) {
-    if (spec instanceof ComplexFieldSpec || spec.getDataType() == FieldSpec.DataType.MAP) {
+    if (spec instanceof ComplexFieldSpec) {
       return false;
     }
 
