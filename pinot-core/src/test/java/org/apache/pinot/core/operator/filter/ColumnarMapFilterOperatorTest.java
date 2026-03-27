@@ -28,12 +28,14 @@ import org.apache.pinot.common.request.context.predicate.IsNotNullPredicate;
 import org.apache.pinot.common.request.context.predicate.IsNullPredicate;
 import org.apache.pinot.common.request.context.predicate.NotEqPredicate;
 import org.apache.pinot.common.request.context.predicate.NotInPredicate;
-import org.apache.pinot.segment.local.segment.index.sparsemap.ImmutableSparseMapIndexReader;
-import org.apache.pinot.segment.local.segment.index.sparsemap.OnHeapSparseMapIndexCreator;
+import org.apache.pinot.segment.local.segment.index.columnarmap.ImmutableColumnarMapIndexReader;
+import org.apache.pinot.segment.local.segment.index.columnarmap.OnHeapColumnarMapIndexCreator;
 import org.apache.pinot.segment.spi.V1Constants;
 import org.apache.pinot.segment.spi.memory.PinotDataBuffer;
-import org.apache.pinot.spi.config.table.SparseMapIndexConfig;
-import org.apache.pinot.spi.data.SparseMapFieldSpec;
+import org.apache.pinot.spi.config.table.ColumnarMapIndexConfig;
+import org.apache.pinot.spi.data.ComplexFieldSpec;
+import org.apache.pinot.spi.data.DimensionFieldSpec;
+import org.apache.pinot.spi.data.FieldSpec;
 import org.roaringbitmap.buffer.ImmutableRoaringBitmap;
 import org.testng.annotations.AfterClass;
 import org.testng.annotations.BeforeClass;
@@ -45,10 +47,10 @@ import static org.testng.Assert.assertTrue;
 
 
 /**
- * Tests for {@link SparseMapFilterOperator} verifying NOT_EQ and NOT_IN absence-exclusion semantics.
+ * Tests for {@link ColumnarMapFilterOperator} verifying NOT_EQ and NOT_IN absence-exclusion semantics.
  * Docs where the queried key is absent must NOT appear in NOT_EQ / NOT_IN results (SQL NULL semantics).
  */
-public class SparseMapFilterOperatorTest {
+public class ColumnarMapFilterOperatorTest {
 
   private File _tmpDir;
 
@@ -56,7 +58,7 @@ public class SparseMapFilterOperatorTest {
   public void setUp()
       throws Exception {
     _tmpDir = new File(System.getProperty("java.io.tmpdir"),
-        "SparseMapFilterOperatorTest_" + System.currentTimeMillis());
+        "ColumnarMapFilterOperatorTest_" + System.currentTimeMillis());
     _tmpDir.mkdirs();
   }
 
@@ -80,20 +82,28 @@ public class SparseMapFilterOperatorTest {
     f.delete();
   }
 
+  private static ComplexFieldSpec buildMapFieldSpec(String columnName) {
+    Map<String, FieldSpec> childFieldSpecs = Map.of(
+        "key", new DimensionFieldSpec("key", FieldSpec.DataType.STRING, true),
+        "value", new DimensionFieldSpec("value", FieldSpec.DataType.STRING, true)
+    );
+    return new ComplexFieldSpec(columnName, FieldSpec.DataType.MAP, true, childFieldSpecs);
+  }
+
   /**
-   * Builds an ImmutableSparseMapIndexReader for a column with 4 docs:
+   * Builds an ImmutableColumnarMapIndexReader for a column with 4 docs:
    *   doc 0: color = "red"
    *   doc 1: color = "blue"
    *   doc 2: (no color key — absent)
    *   doc 3: color = "green"
    */
-  private ImmutableSparseMapIndexReader buildColorIndex(String colName)
+  private ImmutableColumnarMapIndexReader buildColorIndex(String colName)
       throws Exception {
-    SparseMapFieldSpec fieldSpec = new SparseMapFieldSpec(colName);
+    ComplexFieldSpec fieldSpec = buildMapFieldSpec(colName);
     // enableInvertedIndexForAll=true so that getDocsWithKeyValue() works
-    SparseMapIndexConfig config = new SparseMapIndexConfig(true, null, true, null, 10);
+    ColumnarMapIndexConfig config = new ColumnarMapIndexConfig(true, null, true, null, 10);
 
-    OnHeapSparseMapIndexCreator creator = new OnHeapSparseMapIndexCreator(_tmpDir, colName, fieldSpec, config);
+    OnHeapColumnarMapIndexCreator creator = new OnHeapColumnarMapIndexCreator(_tmpDir, colName, fieldSpec, config);
     Map<String, Object> doc = new HashMap<>();
     doc.put("color", "red");
     creator.add(doc);    // doc 0: color=red
@@ -107,9 +117,9 @@ public class SparseMapFilterOperatorTest {
     creator.seal();
     creator.close();
 
-    File indexFile = new File(_tmpDir, colName + V1Constants.Indexes.SPARSE_MAP_INDEX_FILE_EXTENSION);
+    File indexFile = new File(_tmpDir, colName + V1Constants.Indexes.COLUMNAR_MAP_INDEX_FILE_EXTENSION);
     PinotDataBuffer buf = PinotDataBuffer.mapReadOnlyBigEndianFile(indexFile);
-    return new ImmutableSparseMapIndexReader(buf, null);
+    return new ImmutableColumnarMapIndexReader(buf, null);
   }
 
   /**
@@ -119,9 +129,9 @@ public class SparseMapFilterOperatorTest {
   @Test
   public void testNotEqExcludesDocsWhereKeyIsAbsent()
       throws Exception {
-    ImmutableSparseMapIndexReader reader = buildColorIndex("color_not_eq");
+    ImmutableColumnarMapIndexReader reader = buildColorIndex("color_not_eq");
     NotEqPredicate predicate = new NotEqPredicate(ExpressionContext.forIdentifier("color"), "red");
-    SparseMapFilterOperator op = new SparseMapFilterOperator(reader, predicate, "color", 4);
+    ColumnarMapFilterOperator op = new ColumnarMapFilterOperator(reader, predicate, "color", 4);
 
     ImmutableRoaringBitmap result = op.getBitmaps().reduce();
     assertEquals(result.getCardinality(), 2, "Expected exactly 2 matching docs: {1, 3}");
@@ -137,10 +147,10 @@ public class SparseMapFilterOperatorTest {
   @Test
   public void testNotInExcludesDocsWhereKeyIsAbsent()
       throws Exception {
-    ImmutableSparseMapIndexReader reader = buildColorIndex("color_not_in");
+    ImmutableColumnarMapIndexReader reader = buildColorIndex("color_not_in");
     NotInPredicate predicate =
         new NotInPredicate(ExpressionContext.forIdentifier("color"), Arrays.asList("red"));
-    SparseMapFilterOperator op = new SparseMapFilterOperator(reader, predicate, "color", 4);
+    ColumnarMapFilterOperator op = new ColumnarMapFilterOperator(reader, predicate, "color", 4);
 
     ImmutableRoaringBitmap result = op.getBitmaps().reduce();
     assertEquals(result.getCardinality(), 2, "Expected exactly 2 matching docs: {1, 3}");
@@ -157,9 +167,9 @@ public class SparseMapFilterOperatorTest {
   public void testNotEqAllDocsAbsentReturnsEmpty()
       throws Exception {
     String colName = "color_all_absent";
-    SparseMapFieldSpec fieldSpec = new SparseMapFieldSpec(colName);
-    SparseMapIndexConfig config = new SparseMapIndexConfig(true, null, true, null, 10);
-    OnHeapSparseMapIndexCreator creator = new OnHeapSparseMapIndexCreator(_tmpDir, colName, fieldSpec, config);
+    ComplexFieldSpec fieldSpec = buildMapFieldSpec(colName);
+    ColumnarMapIndexConfig config = new ColumnarMapIndexConfig(true, null, true, null, 10);
+    OnHeapColumnarMapIndexCreator creator = new OnHeapColumnarMapIndexCreator(_tmpDir, colName, fieldSpec, config);
     // 3 docs, none have the "color" key
     creator.add(Collections.emptyMap());
     creator.add(Collections.emptyMap());
@@ -167,12 +177,12 @@ public class SparseMapFilterOperatorTest {
     creator.seal();
     creator.close();
 
-    File indexFile = new File(_tmpDir, colName + V1Constants.Indexes.SPARSE_MAP_INDEX_FILE_EXTENSION);
+    File indexFile = new File(_tmpDir, colName + V1Constants.Indexes.COLUMNAR_MAP_INDEX_FILE_EXTENSION);
     PinotDataBuffer buf = PinotDataBuffer.mapReadOnlyBigEndianFile(indexFile);
-    ImmutableSparseMapIndexReader reader = new ImmutableSparseMapIndexReader(buf, null);
+    ImmutableColumnarMapIndexReader reader = new ImmutableColumnarMapIndexReader(buf, null);
 
     NotEqPredicate predicate = new NotEqPredicate(ExpressionContext.forIdentifier("color"), "red");
-    SparseMapFilterOperator op = new SparseMapFilterOperator(reader, predicate, "color", 3);
+    ColumnarMapFilterOperator op = new ColumnarMapFilterOperator(reader, predicate, "color", 3);
 
     ImmutableRoaringBitmap result = op.getBitmaps().reduce();
     assertEquals(result.getCardinality(), 0, "All docs absent → empty result for NOT_EQ");
@@ -185,9 +195,9 @@ public class SparseMapFilterOperatorTest {
   @Test
   public void testIsNotNullReturnsOnlyDocsWithKey()
       throws Exception {
-    ImmutableSparseMapIndexReader reader = buildColorIndex("color_is_not_null");
+    ImmutableColumnarMapIndexReader reader = buildColorIndex("color_is_not_null");
     IsNotNullPredicate predicate = new IsNotNullPredicate(ExpressionContext.forIdentifier("color"));
-    SparseMapFilterOperator op = new SparseMapFilterOperator(reader, predicate, "color", 4);
+    ColumnarMapFilterOperator op = new ColumnarMapFilterOperator(reader, predicate, "color", 4);
 
     ImmutableRoaringBitmap result = op.getBitmaps().reduce();
     assertEquals(result.getCardinality(), 3, "Expected exactly 3 matching docs: {0, 1, 3}");
@@ -205,9 +215,9 @@ public class SparseMapFilterOperatorTest {
   @Test
   public void testIsNullReturnsOnlyDocsWithoutKey()
       throws Exception {
-    ImmutableSparseMapIndexReader reader = buildColorIndex("color_is_null");
+    ImmutableColumnarMapIndexReader reader = buildColorIndex("color_is_null");
     IsNullPredicate predicate = new IsNullPredicate(ExpressionContext.forIdentifier("color"));
-    SparseMapFilterOperator op = new SparseMapFilterOperator(reader, predicate, "color", 4);
+    ColumnarMapFilterOperator op = new ColumnarMapFilterOperator(reader, predicate, "color", 4);
 
     ImmutableRoaringBitmap result = op.getBitmaps().reduce();
     assertEquals(result.getCardinality(), 1, "Expected exactly 1 matching doc: {2}");
@@ -222,9 +232,9 @@ public class SparseMapFilterOperatorTest {
   @Test
   public void testIsNotNullOnAbsentKeyReturnsEmpty()
       throws Exception {
-    ImmutableSparseMapIndexReader reader = buildColorIndex("color_absent_key");
+    ImmutableColumnarMapIndexReader reader = buildColorIndex("color_absent_key");
     IsNotNullPredicate predicate = new IsNotNullPredicate(ExpressionContext.forIdentifier("nonexistent_key"));
-    SparseMapFilterOperator op = new SparseMapFilterOperator(reader, predicate, "nonexistent_key", 4);
+    ColumnarMapFilterOperator op = new ColumnarMapFilterOperator(reader, predicate, "nonexistent_key", 4);
 
     ImmutableRoaringBitmap result = op.getBitmaps().reduce();
     assertEquals(result.getCardinality(), 0, "No doc has 'nonexistent_key' → empty result");
@@ -238,9 +248,9 @@ public class SparseMapFilterOperatorTest {
   public void testIsNullOnFullPresenceReturnsEmpty()
       throws Exception {
     String colName = "color_full_presence";
-    SparseMapFieldSpec fieldSpec = new SparseMapFieldSpec(colName);
-    SparseMapIndexConfig config = new SparseMapIndexConfig(true, null, true, null, 10);
-    OnHeapSparseMapIndexCreator creator = new OnHeapSparseMapIndexCreator(_tmpDir, colName, fieldSpec, config);
+    ComplexFieldSpec fieldSpec = buildMapFieldSpec(colName);
+    ColumnarMapIndexConfig config = new ColumnarMapIndexConfig(true, null, true, null, 10);
+    OnHeapColumnarMapIndexCreator creator = new OnHeapColumnarMapIndexCreator(_tmpDir, colName, fieldSpec, config);
     Map<String, Object> doc = new HashMap<>();
     doc.put("color", "red");
     creator.add(doc);
@@ -253,12 +263,12 @@ public class SparseMapFilterOperatorTest {
     creator.seal();
     creator.close();
 
-    File indexFile = new File(_tmpDir, colName + V1Constants.Indexes.SPARSE_MAP_INDEX_FILE_EXTENSION);
+    File indexFile = new File(_tmpDir, colName + V1Constants.Indexes.COLUMNAR_MAP_INDEX_FILE_EXTENSION);
     PinotDataBuffer buf = PinotDataBuffer.mapReadOnlyBigEndianFile(indexFile);
-    ImmutableSparseMapIndexReader reader = new ImmutableSparseMapIndexReader(buf, null);
+    ImmutableColumnarMapIndexReader reader = new ImmutableColumnarMapIndexReader(buf, null);
 
     IsNullPredicate predicate = new IsNullPredicate(ExpressionContext.forIdentifier("color"));
-    SparseMapFilterOperator op = new SparseMapFilterOperator(reader, predicate, "color", 3);
+    ColumnarMapFilterOperator op = new ColumnarMapFilterOperator(reader, predicate, "color", 3);
 
     ImmutableRoaringBitmap result = op.getBitmaps().reduce();
     assertEquals(result.getCardinality(), 0, "All docs have 'color' → IS NULL returns empty");

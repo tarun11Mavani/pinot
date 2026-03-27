@@ -28,26 +28,26 @@ import org.apache.pinot.common.request.context.predicate.Predicate;
 import org.apache.pinot.core.common.BlockDocIdSet;
 import org.apache.pinot.core.common.Operator;
 import org.apache.pinot.core.operator.docidsets.BitmapDocIdSet;
-import org.apache.pinot.segment.spi.index.reader.SparseMapIndexReader;
+import org.apache.pinot.segment.spi.index.reader.ColumnarMapIndexReader;
 import org.roaringbitmap.buffer.ImmutableRoaringBitmap;
 import org.roaringbitmap.buffer.MutableRoaringBitmap;
 
 
 /**
- * Filter operator that uses SparseMapIndexReader for fast key-value lookups on SPARSE_MAP columns.
- * Supports EQ, NOT_EQ, IN, and NOT_IN predicates using the inverted index within the SparseMapIndex.
+ * Filter operator that uses ColumnarMapIndexReader for fast key-value lookups on COLUMNAR_MAP columns.
+ * Supports EQ, NOT_EQ, IN, and NOT_IN predicates using the inverted index within the ColumnarMapIndex.
  */
-public class SparseMapFilterOperator extends BaseFilterOperator {
-  private static final String EXPLAIN_NAME = "FILTER_SPARSE_MAP";
+public class ColumnarMapFilterOperator extends BaseFilterOperator {
+  private static final String EXPLAIN_NAME = "FILTER_COLUMNAR_MAP";
 
-  private final SparseMapIndexReader _sparseMapReader;
+  private final ColumnarMapIndexReader _columnarMapReader;
   private final Predicate _predicate;
   private final String _keyName;
 
-  public SparseMapFilterOperator(SparseMapIndexReader sparseMapReader, Predicate predicate, String keyName,
+  public ColumnarMapFilterOperator(ColumnarMapIndexReader columnarMapReader, Predicate predicate, String keyName,
       int numDocs) {
     super(numDocs, false);
-    _sparseMapReader = sparseMapReader;
+    _columnarMapReader = columnarMapReader;
     _predicate = predicate;
     _keyName = keyName;
   }
@@ -100,15 +100,15 @@ public class SparseMapFilterOperator extends BaseFilterOperator {
     switch (_predicate.getType()) {
       case EQ: {
         String value = ((EqPredicate) _predicate).getValue();
-        return _sparseMapReader.getDocsWithKeyValue(_keyName, value);
+        return _columnarMapReader.getDocsWithKeyValue(_keyName, value);
       }
       // NOT_EQ semantics: docs where the key is ABSENT are excluded from results.
       // Only docs where the key is PRESENT and its value != the predicate value are returned.
       // This matches SQL NULL semantics: NULL != X is unknown, not true.
       case NOT_EQ: {
         String value = ((NotEqPredicate) _predicate).getValue();
-        ImmutableRoaringBitmap matching = _sparseMapReader.getDocsWithKeyValue(_keyName, value);
-        ImmutableRoaringBitmap presence = _sparseMapReader.getPresenceBitmap(_keyName);
+        ImmutableRoaringBitmap matching = _columnarMapReader.getDocsWithKeyValue(_keyName, value);
+        ImmutableRoaringBitmap presence = _columnarMapReader.getPresenceBitmap(_keyName);
         if (presence == null) {
           return ImmutableRoaringBitmap.bitmapOf();
         }
@@ -121,7 +121,7 @@ public class SparseMapFilterOperator extends BaseFilterOperator {
         List<String> values = ((InPredicate) _predicate).getValues();
         MutableRoaringBitmap result = new MutableRoaringBitmap();
         for (String value : values) {
-          ImmutableRoaringBitmap bitmap = _sparseMapReader.getDocsWithKeyValue(_keyName, value);
+          ImmutableRoaringBitmap bitmap = _columnarMapReader.getDocsWithKeyValue(_keyName, value);
           if (bitmap != null) {
             result.or(bitmap);
           }
@@ -134,22 +134,22 @@ public class SparseMapFilterOperator extends BaseFilterOperator {
         List<String> values = ((NotInPredicate) _predicate).getValues();
         MutableRoaringBitmap excluded = new MutableRoaringBitmap();
         for (String value : values) {
-          ImmutableRoaringBitmap bitmap = _sparseMapReader.getDocsWithKeyValue(_keyName, value);
+          ImmutableRoaringBitmap bitmap = _columnarMapReader.getDocsWithKeyValue(_keyName, value);
           if (bitmap != null) {
             excluded.or(bitmap);
           }
         }
-        ImmutableRoaringBitmap presence = _sparseMapReader.getPresenceBitmap(_keyName);
+        ImmutableRoaringBitmap presence = _columnarMapReader.getPresenceBitmap(_keyName);
         if (presence == null) {
           return ImmutableRoaringBitmap.bitmapOf();
         }
         return ImmutableRoaringBitmap.andNot(presence, excluded.toImmutableRoaringBitmap());
       }
       case IS_NOT_NULL:
-        return _sparseMapReader.getPresenceBitmap(_keyName);
+        return _columnarMapReader.getPresenceBitmap(_keyName);
 
       case IS_NULL: {
-        ImmutableRoaringBitmap presence = _sparseMapReader.getPresenceBitmap(_keyName);
+        ImmutableRoaringBitmap presence = _columnarMapReader.getPresenceBitmap(_keyName);
         if (presence == null) {
           // Key never appears — all docs are NULL for this key
           MutableRoaringBitmap allDocs = new MutableRoaringBitmap();

@@ -33,13 +33,13 @@ import org.apache.pinot.core.common.BlockDocIdSet;
 import org.apache.pinot.core.common.Operator;
 import org.apache.pinot.core.operator.ExplainAttributeBuilder;
 import org.apache.pinot.core.query.request.context.QueryContext;
-import org.apache.pinot.segment.local.segment.index.sparsemap.SparseMapDataSource;
+import org.apache.pinot.segment.local.segment.index.columnarmap.ColumnarMapDataSource;
 import org.apache.pinot.segment.spi.IndexSegment;
 import org.apache.pinot.segment.spi.datasource.DataSource;
 import org.apache.pinot.segment.spi.index.IndexService;
 import org.apache.pinot.segment.spi.index.IndexType;
 import org.apache.pinot.segment.spi.index.reader.JsonIndexReader;
-import org.apache.pinot.segment.spi.index.reader.SparseMapIndexReader;
+import org.apache.pinot.segment.spi.index.reader.ColumnarMapIndexReader;
 
 
 /**
@@ -52,7 +52,7 @@ public class MapFilterOperator extends BaseFilterOperator {
 
   private final JsonMatchFilterOperator _jsonMatchOperator;
   private final ExpressionFilterOperator _expressionFilterOperator;
-  private final SparseMapFilterOperator _sparseMapFilterOperator;
+  private final ColumnarMapFilterOperator _columnarMapFilterOperator;
   private final String _columnName;
   private final String _keyName;
   private final Predicate _predicate;
@@ -71,24 +71,24 @@ public class MapFilterOperator extends BaseFilterOperator {
     _columnName = arguments.get(0).getIdentifier();
     _keyName = arguments.get(1).getLiteral().getStringValue();
 
-    // Check for SparseMap index first (for SPARSE_MAP columns)
-    SparseMapIndexReader sparseMapReader = null;
+    // Check for ColumnarMap index first (for COLUMNAR_MAP columns)
+    ColumnarMapIndexReader columnarMapReader = null;
     DataSource dataSource = indexSegment.getDataSourceNullable(_columnName);
-    if (dataSource instanceof SparseMapDataSource) {
-      sparseMapReader = ((SparseMapDataSource) dataSource).getSparseMapIndexReader();
+    if (dataSource instanceof ColumnarMapDataSource) {
+      columnarMapReader = ((ColumnarMapDataSource) dataSource).getColumnarMapIndexReader();
     }
 
-    if (sparseMapReader != null && canUseSparseMapIndex(predicate.getType())) {
-      _sparseMapFilterOperator = new SparseMapFilterOperator(sparseMapReader, predicate, _keyName, numDocs);
+    if (columnarMapReader != null && canUseColumnarMapIndex(predicate.getType())) {
+      _columnarMapFilterOperator = new ColumnarMapFilterOperator(columnarMapReader, predicate, _keyName, numDocs);
       _jsonMatchOperator = null;
       _expressionFilterOperator = null;
-    } else if (sparseMapReader != null) {
-      // Range and other non-index predicates on SPARSE_MAP fall back to expression filter
-      _sparseMapFilterOperator = null;
+    } else if (columnarMapReader != null) {
+      // Range and other non-index predicates on COLUMNAR_MAP fall back to expression filter
+      _columnarMapFilterOperator = null;
       _jsonMatchOperator = null;
       _expressionFilterOperator = new ExpressionFilterOperator(indexSegment, queryContext, predicate, numDocs);
     } else {
-      _sparseMapFilterOperator = null;
+      _columnarMapFilterOperator = null;
       JsonIndexReader jsonIndex = null;
       if (canUseJsonIndex(_predicate.getType())) {
         if (dataSource != null) {
@@ -146,8 +146,8 @@ public class MapFilterOperator extends BaseFilterOperator {
 
   @Override
   protected BlockDocIdSet getTrues() {
-    if (_sparseMapFilterOperator != null) {
-      return _sparseMapFilterOperator.getTrues();
+    if (_columnarMapFilterOperator != null) {
+      return _columnarMapFilterOperator.getTrues();
     } else if (_jsonMatchOperator != null) {
       return _jsonMatchOperator.getTrues();
     } else {
@@ -157,8 +157,8 @@ public class MapFilterOperator extends BaseFilterOperator {
 
   @Override
   public boolean canOptimizeCount() {
-    if (_sparseMapFilterOperator != null) {
-      return _sparseMapFilterOperator.canOptimizeCount();
+    if (_columnarMapFilterOperator != null) {
+      return _columnarMapFilterOperator.canOptimizeCount();
     } else if (_jsonMatchOperator != null) {
       return _jsonMatchOperator.canOptimizeCount();
     } else {
@@ -168,8 +168,8 @@ public class MapFilterOperator extends BaseFilterOperator {
 
   @Override
   public int getNumMatchingDocs() {
-    if (_sparseMapFilterOperator != null) {
-      return _sparseMapFilterOperator.getNumMatchingDocs();
+    if (_columnarMapFilterOperator != null) {
+      return _columnarMapFilterOperator.getNumMatchingDocs();
     } else if (_jsonMatchOperator != null) {
       return _jsonMatchOperator.getNumMatchingDocs();
     } else {
@@ -179,8 +179,8 @@ public class MapFilterOperator extends BaseFilterOperator {
 
   @Override
   public boolean canProduceBitmaps() {
-    if (_sparseMapFilterOperator != null) {
-      return _sparseMapFilterOperator.canProduceBitmaps();
+    if (_columnarMapFilterOperator != null) {
+      return _columnarMapFilterOperator.canProduceBitmaps();
     } else if (_jsonMatchOperator != null) {
       return _jsonMatchOperator.canProduceBitmaps();
     } else {
@@ -190,8 +190,8 @@ public class MapFilterOperator extends BaseFilterOperator {
 
   @Override
   public BitmapCollection getBitmaps() {
-    if (_sparseMapFilterOperator != null) {
-      return _sparseMapFilterOperator.getBitmaps();
+    if (_columnarMapFilterOperator != null) {
+      return _columnarMapFilterOperator.getBitmaps();
     } else if (_jsonMatchOperator != null) {
       return _jsonMatchOperator.getBitmaps();
     } else {
@@ -242,11 +242,11 @@ public class MapFilterOperator extends BaseFilterOperator {
   }
 
   /**
-   * Determines whether the SparseMap inverted index can handle the given predicate type.
+   * Determines whether the ColumnarMap inverted index can handle the given predicate type.
    * Only EQ/NEQ/IN/NOT_IN are supported via the inverted index; range and other predicates
    * must fall back to a scan-based expression filter.
    */
-  private static boolean canUseSparseMapIndex(Predicate.Type predicateType) {
+  private static boolean canUseColumnarMapIndex(Predicate.Type predicateType) {
     switch (predicateType) {
       case EQ:
       case NOT_EQ:

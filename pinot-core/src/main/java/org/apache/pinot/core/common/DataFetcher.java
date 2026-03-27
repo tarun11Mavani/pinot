@@ -79,7 +79,7 @@ public class DataFetcher implements AutoCloseable {
   public void addDataSource(String column, DataSource dataSource) {
     ForwardIndexReader<?> forwardIndexReader = dataSource.getForwardIndex();
     if (forwardIndexReader == null) {
-      // MapDataSource columns with no forward index (e.g. SPARSE_MAP) expose their values through
+      // MapDataSource columns with no forward index (e.g. COLUMNAR_MAP) expose their values through
       // per-key DataSources that are added lazily by DataBlockCache.addDataSource() when
       // ProjectionBlock.getBlockValueSet(String[] paths) resolves a map-item expression such as
       // metrics['key']. Skip these columns here; they do not need a ColumnValueReader.
