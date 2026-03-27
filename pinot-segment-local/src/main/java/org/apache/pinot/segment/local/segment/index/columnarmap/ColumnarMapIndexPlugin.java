@@ -16,18 +16,18 @@
  * specific language governing permissions and limitations
  * under the License.
  */
-package org.apache.pinot.segment.local.segment.index.sparsemap;
+package org.apache.pinot.segment.local.segment.index.columnarmap;
 
 import com.google.auto.service.AutoService;
 import org.apache.pinot.segment.spi.index.IndexPlugin;
 
 
 @AutoService(IndexPlugin.class)
-public class SparseMapIndexPlugin implements IndexPlugin<SparseMapIndexType> {
-  public static final SparseMapIndexType INSTANCE = new SparseMapIndexType();
+public class ColumnarMapIndexPlugin implements IndexPlugin<ColumnarMapIndexType> {
+  public static final ColumnarMapIndexType INSTANCE = new ColumnarMapIndexType();
 
   @Override
-  public SparseMapIndexType getIndexType() {
+  public ColumnarMapIndexType getIndexType() {
     return INSTANCE;
   }
 }

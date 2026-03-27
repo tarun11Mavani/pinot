@@ -521,7 +521,7 @@ public class SegmentGeneratorConfig implements Serializable {
     return getQualifyingFields(FieldType.COMPLEX, true);
   }
 
-  public List<String> getSparseMapColumnNames() {
+  public List<String> getColumnarMapColumnNames() {
     List<String> fields = new ArrayList<>();
     for (FieldSpec fieldSpec : getSchema().getAllFieldSpecs()) {
       if (fieldSpec.isVirtualColumn()) {
@@ -529,7 +529,7 @@ public class SegmentGeneratorConfig implements Serializable {
       }
       if (fieldSpec.getDataType() == FieldSpec.DataType.MAP) {
         FieldIndexConfigs indexConfigs = _indexConfigsByColName.get(fieldSpec.getName());
-        if (indexConfigs != null && indexConfigs.getConfig(StandardIndexes.sparseMap()).isEnabled()) {
+        if (indexConfigs != null && indexConfigs.getConfig(StandardIndexes.columnarMap()).isEnabled()) {
           fields.add(fieldSpec.getName());
         }
       }

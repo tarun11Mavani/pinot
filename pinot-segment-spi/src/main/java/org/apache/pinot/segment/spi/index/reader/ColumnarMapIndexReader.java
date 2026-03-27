@@ -28,11 +28,11 @@ import org.roaringbitmap.buffer.ImmutableRoaringBitmap;
 
 
 /**
- * Reader for the SparseMap index. Provides O(1) typed key lookup per document via presence bitmap
+ * Reader for the ColumnarMap index. Provides O(1) typed key lookup per document via presence bitmap
  * rank operations. Each key has its own presence bitmap and typed forward index, allowing direct
  * typed reads without full map deserialization.
  */
-public interface SparseMapIndexReader extends IndexReader {
+public interface ColumnarMapIndexReader extends IndexReader {
 
   /**
    * Returns the set of all indexed key names.

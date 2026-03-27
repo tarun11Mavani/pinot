@@ -16,7 +16,7 @@
  * specific language governing permissions and limitations
  * under the License.
  */
-package org.apache.pinot.segment.local.segment.index.sparsemap;
+package org.apache.pinot.segment.local.segment.index.columnarmap;
 
 import com.google.common.base.Preconditions;
 import java.io.IOException;
@@ -36,14 +36,14 @@ import org.apache.pinot.segment.spi.index.IndexReaderConstraintException;
 import org.apache.pinot.segment.spi.index.IndexReaderFactory;
 import org.apache.pinot.segment.spi.index.IndexType;
 import org.apache.pinot.segment.spi.index.StandardIndexes;
-import org.apache.pinot.segment.spi.index.creator.SparseMapIndexCreator;
+import org.apache.pinot.segment.spi.index.creator.ColumnarMapIndexCreator;
 import org.apache.pinot.segment.spi.index.mutable.MutableIndex;
 import org.apache.pinot.segment.spi.index.mutable.provider.MutableIndexContext;
-import org.apache.pinot.segment.spi.index.reader.SparseMapIndexReader;
+import org.apache.pinot.segment.spi.index.reader.ColumnarMapIndexReader;
 import org.apache.pinot.segment.spi.memory.PinotDataBuffer;
 import org.apache.pinot.segment.spi.store.SegmentDirectory;
 import org.apache.pinot.spi.config.table.FieldConfig;
-import org.apache.pinot.spi.config.table.SparseMapIndexConfig;
+import org.apache.pinot.spi.config.table.ColumnarMapIndexConfig;
 import org.apache.pinot.spi.config.table.TableConfig;
 import org.apache.pinot.spi.data.FieldSpec;
 import org.apache.pinot.spi.data.Schema;
@@ -53,41 +53,41 @@ import org.apache.pinot.spi.data.Schema;
  * Index type for MAP columns with sparse map index. Provides per-key columnar storage with presence bitmaps,
  * typed forward indexes, and optional inverted indexes for fast value-based filtering.
  */
-public class SparseMapIndexType
-    extends AbstractIndexType<SparseMapIndexConfig, SparseMapIndexReader, SparseMapIndexCreator> {
-  public static final String INDEX_DISPLAY_NAME = "sparse_map";
+public class ColumnarMapIndexType
+    extends AbstractIndexType<ColumnarMapIndexConfig, ColumnarMapIndexReader, ColumnarMapIndexCreator> {
+  public static final String INDEX_DISPLAY_NAME = "columnar_map";
   private static final List<String> EXTENSIONS =
-      Collections.singletonList(V1Constants.Indexes.SPARSE_MAP_INDEX_FILE_EXTENSION);
+      Collections.singletonList(V1Constants.Indexes.COLUMNAR_MAP_INDEX_FILE_EXTENSION);
 
-  protected SparseMapIndexType() {
-    super(StandardIndexes.SPARSE_MAP_ID);
+  protected ColumnarMapIndexType() {
+    super(StandardIndexes.COLUMNAR_MAP_ID);
   }
 
   @Override
-  public Class<SparseMapIndexConfig> getIndexConfigClass() {
-    return SparseMapIndexConfig.class;
+  public Class<ColumnarMapIndexConfig> getIndexConfigClass() {
+    return ColumnarMapIndexConfig.class;
   }
 
   @Override
-  public SparseMapIndexConfig getDefaultConfig() {
-    return SparseMapIndexConfig.DISABLED;
+  public ColumnarMapIndexConfig getDefaultConfig() {
+    return ColumnarMapIndexConfig.DISABLED;
   }
 
   @Override
-  protected ColumnConfigDeserializer<SparseMapIndexConfig> createDeserializerForLegacyConfigs() {
+  protected ColumnConfigDeserializer<ColumnarMapIndexConfig> createDeserializerForLegacyConfigs() {
     return IndexConfigDeserializer.fromIndexTypes(FieldConfig.IndexType.MAP,
-        (tableConfig, fieldConfig) -> SparseMapIndexConfig.fromProperties(fieldConfig.getProperties()));
+        (tableConfig, fieldConfig) -> ColumnarMapIndexConfig.fromProperties(fieldConfig.getProperties()));
   }
 
   @Override
   public void validate(FieldIndexConfigs indexConfigs, FieldSpec fieldSpec, TableConfig tableConfig) {
-    SparseMapIndexConfig config = indexConfigs.getConfig(this);
+    ColumnarMapIndexConfig config = indexConfigs.getConfig(this);
     if (config.isEnabled()) {
       String column = fieldSpec.getName();
       Preconditions.checkState(fieldSpec.isSingleValueField(),
-          "Cannot create SparseMap index on multi-value column: %s", column);
+          "Cannot create ColumnarMap index on multi-value column: %s", column);
       Preconditions.checkState(fieldSpec.getDataType() == FieldSpec.DataType.MAP,
-          "SparseMap index can only be created on MAP columns, got: %s for column: %s",
+          "ColumnarMap index can only be created on MAP columns, got: %s for column: %s",
           fieldSpec.getDataType(), column);
     }
   }
@@ -98,24 +98,24 @@ public class SparseMapIndexType
   }
 
   @Override
-  public SparseMapIndexCreator createIndexCreator(IndexCreationContext context, SparseMapIndexConfig indexConfig)
+  public ColumnarMapIndexCreator createIndexCreator(IndexCreationContext context, ColumnarMapIndexConfig indexConfig)
       throws IOException {
-    return new OnHeapSparseMapIndexCreator(context, indexConfig);
+    return new OnHeapColumnarMapIndexCreator(context, indexConfig);
   }
 
   @Override
-  protected IndexReaderFactory<SparseMapIndexReader> createReaderFactory() {
-    return new IndexReaderFactory.Default<SparseMapIndexConfig, SparseMapIndexReader>() {
+  protected IndexReaderFactory<ColumnarMapIndexReader> createReaderFactory() {
+    return new IndexReaderFactory.Default<ColumnarMapIndexConfig, ColumnarMapIndexReader>() {
       @Override
-      protected IndexType<SparseMapIndexConfig, SparseMapIndexReader, ?> getIndexType() {
-        return SparseMapIndexType.this;
+      protected IndexType<ColumnarMapIndexConfig, ColumnarMapIndexReader, ?> getIndexType() {
+        return ColumnarMapIndexType.this;
       }
 
       @Override
-      protected SparseMapIndexReader createIndexReader(PinotDataBuffer dataBuffer, ColumnMetadata metadata,
-          SparseMapIndexConfig indexConfig)
+      protected ColumnarMapIndexReader createIndexReader(PinotDataBuffer dataBuffer, ColumnMetadata metadata,
+          ColumnarMapIndexConfig indexConfig)
           throws IOException, IndexReaderConstraintException {
-        return new ImmutableSparseMapIndexReader(dataBuffer, metadata);
+        return new ImmutableColumnarMapIndexReader(dataBuffer, metadata);
       }
     };
   }
@@ -128,18 +128,18 @@ public class SparseMapIndexType
   @Override
   public IndexHandler createIndexHandler(SegmentDirectory segmentDirectory, Map<String, FieldIndexConfigs> configsByCol,
       Schema schema, TableConfig tableConfig) {
-    return new SparseMapIndexHandler(segmentDirectory, configsByCol, tableConfig, schema);
+    return new ColumnarMapIndexHandler(segmentDirectory, configsByCol, tableConfig, schema);
   }
 
   @Nullable
   @Override
-  public MutableIndex createMutableIndex(MutableIndexContext context, SparseMapIndexConfig config) {
+  public MutableIndex createMutableIndex(MutableIndexContext context, ColumnarMapIndexConfig config) {
     if (!config.isEnabled()) {
       return null;
     }
     if (context.getFieldSpec().getDataType() != FieldSpec.DataType.MAP) {
       return null;
     }
-    return new MutableSparseMapIndexImpl(context, config);
+    return new MutableColumnarMapIndexImpl(context, config);
   }
 }

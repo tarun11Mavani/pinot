@@ -16,7 +16,7 @@
  * specific language governing permissions and limitations
  * under the License.
  */
-package org.apache.pinot.segment.local.segment.index.sparsemap;
+package org.apache.pinot.segment.local.segment.index.columnarmap;
 
 import java.io.IOException;
 import java.nio.charset.StandardCharsets;
@@ -32,8 +32,8 @@ import javax.annotation.Nullable;
 import org.apache.pinot.segment.spi.datasource.DataSource;
 import org.apache.pinot.segment.spi.index.mutable.MutableIndex;
 import org.apache.pinot.segment.spi.index.mutable.provider.MutableIndexContext;
-import org.apache.pinot.segment.spi.index.reader.SparseMapIndexReader;
-import org.apache.pinot.spi.config.table.SparseMapIndexConfig;
+import org.apache.pinot.segment.spi.index.reader.ColumnarMapIndexReader;
+import org.apache.pinot.spi.config.table.ColumnarMapIndexConfig;
 import org.apache.pinot.spi.data.ComplexFieldSpec;
 import org.apache.pinot.spi.data.FieldSpec;
 import org.apache.pinot.spi.data.FieldSpec.DataType;
@@ -44,19 +44,19 @@ import org.slf4j.LoggerFactory;
 
 
 /**
- * In-memory mutable SparseMap index for real-time segments.
+ * In-memory mutable ColumnarMap index for real-time segments.
  * Implements both {@link MutableIndex} (for segment indexing) and
- * {@link SparseMapIndexReader} (for query access during real-time serving).
+ * {@link ColumnarMapIndexReader} (for query access during real-time serving).
  *
  * <p>Thread-safe: uses a ReentrantReadWriteLock for concurrent reads and writes.
  */
-public class MutableSparseMapIndexImpl implements MutableIndex, SparseMapIndexReader {
+public class MutableColumnarMapIndexImpl implements MutableIndex, ColumnarMapIndexReader {
 
-  private static final Logger LOGGER = LoggerFactory.getLogger(MutableSparseMapIndexImpl.class);
+  private static final Logger LOGGER = LoggerFactory.getLogger(MutableColumnarMapIndexImpl.class);
 
   private final Map<String, DataType> _keyTypes;
   private final DataType _defaultValueType;
-  private final SparseMapIndexConfig _config;
+  private final ColumnarMapIndexConfig _config;
   private final int _maxKeys;
   private final String _columnName;
 
@@ -71,11 +71,11 @@ public class MutableSparseMapIndexImpl implements MutableIndex, SparseMapIndexRe
   private int _distinctKeyCount;
   private int _droppedKeyCount;
 
-  public MutableSparseMapIndexImpl(MutableIndexContext context, SparseMapIndexConfig config) {
+  public MutableColumnarMapIndexImpl(MutableIndexContext context, ColumnarMapIndexConfig config) {
     this(context, config, null, null);
   }
 
-  public MutableSparseMapIndexImpl(MutableIndexContext context, SparseMapIndexConfig config,
+  public MutableColumnarMapIndexImpl(MutableIndexContext context, ColumnarMapIndexConfig config,
       @Nullable Map<String, DataType> explicitKeyTypes,
       @Nullable DataType explicitDefaultValueType) {
     FieldSpec fieldSpec = context.getFieldSpec();
@@ -101,10 +101,10 @@ public class MutableSparseMapIndexImpl implements MutableIndex, SparseMapIndexRe
       return;
     }
     @SuppressWarnings("unchecked")
-    Map<String, Object> sparseMap = (Map<String, Object>) value;
+    Map<String, Object> columnarMap = (Map<String, Object>) value;
     _lock.writeLock().lock();
     try {
-      for (Map.Entry<String, Object> entry : sparseMap.entrySet()) {
+      for (Map.Entry<String, Object> entry : columnarMap.entrySet()) {
         String key = entry.getKey();
         Object rawValue = entry.getValue();
         if (rawValue == null) {
@@ -116,7 +116,7 @@ public class MutableSparseMapIndexImpl implements MutableIndex, SparseMapIndexRe
           _droppedKeyCount++;
           if (_droppedKeyCount == 1 || _droppedKeyCount % 1000 == 0) {
             LOGGER.warn(
-                "MutableSparseMapIndex for column '{}' reached maxKeys limit ({}). Key '{}' dropped. "
+                "MutableColumnarMapIndex for column '{}' reached maxKeys limit ({}). Key '{}' dropped. "
                     + "Total drops: {}.",
                 _columnName, _maxKeys, key, _droppedKeyCount);
           }
@@ -136,7 +136,7 @@ public class MutableSparseMapIndexImpl implements MutableIndex, SparseMapIndexRe
           coerced = coerceValue(rawValue, valueType);
         } catch (ClassCastException | NumberFormatException e) {
           LOGGER.warn(
-              "MutableSparseMapIndex for column '{}': failed to coerce value '{}' (type {}) to {} for key '{}'"
+              "MutableColumnarMapIndex for column '{}': failed to coerce value '{}' (type {}) to {} for key '{}'"
                   + " in docId {}. Skipping key for this document.",
               _columnName, rawValue, rawValue.getClass().getSimpleName(), valueType, key, docId, e);
           continue;
@@ -195,7 +195,7 @@ public class MutableSparseMapIndexImpl implements MutableIndex, SparseMapIndexRe
     }
   }
 
-  // ---- SparseMapIndexReader methods ----
+  // ---- ColumnarMapIndexReader methods ----
 
   @Override
   public Set<String> getKeys() {
@@ -394,7 +394,7 @@ public class MutableSparseMapIndexImpl implements MutableIndex, SparseMapIndexRe
 
   @Override
   public DataSource getKeyDataSource(String key) {
-    // Implemented in SparseMapDataSource (Task 15)
+    // Implemented in ColumnarMapDataSource (Task 15)
     return null;
   }
 

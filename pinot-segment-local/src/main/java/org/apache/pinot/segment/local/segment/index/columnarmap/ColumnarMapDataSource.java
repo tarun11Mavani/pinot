@@ -16,7 +16,7 @@
  * specific language governing permissions and limitations
  * under the License.
  */
-package org.apache.pinot.segment.local.segment.index.sparsemap;
+package org.apache.pinot.segment.local.segment.index.columnarmap;
 
 import java.util.Comparator;
 import java.util.HashMap;
@@ -32,7 +32,7 @@ import org.apache.pinot.segment.spi.datasource.DataSourceMetadata;
 import org.apache.pinot.segment.spi.datasource.MapDataSource;
 import org.apache.pinot.segment.spi.index.StandardIndexes;
 import org.apache.pinot.segment.spi.index.column.ColumnIndexContainer;
-import org.apache.pinot.segment.spi.index.reader.SparseMapIndexReader;
+import org.apache.pinot.segment.spi.index.reader.ColumnarMapIndexReader;
 import org.apache.pinot.segment.spi.partition.PartitionFunction;
 import org.apache.pinot.spi.data.ComplexFieldSpec;
 import org.apache.pinot.spi.data.DimensionFieldSpec;
@@ -40,49 +40,49 @@ import org.apache.pinot.spi.data.FieldSpec;
 
 
 /**
- * Data source for MAP columns with sparse map index. Wraps a {@link SparseMapIndexReader} and exposes it for
+ * Data source for MAP columns with sparse map index. Wraps a {@link ColumnarMapIndexReader} and exposes it for
  * query access.
  *
  * <p>Implements {@link MapDataSource} so that {@code metrics['key']} expressions handled by
  * {@code ItemTransformFunction} can resolve per-key {@link DataSource} instances via
  * {@link #getKeyDataSource(String)}.  Each per-key data source wraps a
- * {@link SparseMapKeyForwardIndexReader} that delegates typed reads directly to the underlying
- * {@link SparseMapIndexReader}.
+ * {@link ColumnarMapKeyForwardIndexReader} that delegates typed reads directly to the underlying
+ * {@link ColumnarMapIndexReader}.
  */
-public class SparseMapDataSource extends BaseDataSource implements MapDataSource {
+public class ColumnarMapDataSource extends BaseDataSource implements MapDataSource {
 
-  private final SparseMapIndexReader _sparseMapIndexReader;
+  private final ColumnarMapIndexReader _columnarMapIndexReader;
   private final Map<String, DataSource> _keyDataSourceCache = new ConcurrentHashMap<>();
 
   /**
-   * Constructs a SparseMapDataSource for an immutable segment.
+   * Constructs a ColumnarMapDataSource for an immutable segment.
    */
-  public SparseMapDataSource(ColumnMetadata columnMetadata, SparseMapIndexReader sparseMapIndexReader) {
-    super(new SparseMapDataSourceMetadata(columnMetadata),
-        buildContainerWithForwardIndex(sparseMapIndexReader));
-    _sparseMapIndexReader = sparseMapIndexReader;
+  public ColumnarMapDataSource(ColumnMetadata columnMetadata, ColumnarMapIndexReader columnarMapIndexReader) {
+    super(new ColumnarMapDataSourceMetadata(columnMetadata),
+        buildContainerWithForwardIndex(columnarMapIndexReader));
+    _columnarMapIndexReader = columnarMapIndexReader;
   }
 
   /**
-   * Constructs a SparseMapDataSource for a mutable (real-time) segment.
+   * Constructs a ColumnarMapDataSource for a mutable (real-time) segment.
    */
-  public SparseMapDataSource(FieldSpec fieldSpec, int numDocs, SparseMapIndexReader sparseMapIndexReader) {
-    super(new MutableSparseMapDataSourceMetadata(fieldSpec, numDocs),
-        buildContainerWithForwardIndex(sparseMapIndexReader));
-    _sparseMapIndexReader = sparseMapIndexReader;
+  public ColumnarMapDataSource(FieldSpec fieldSpec, int numDocs, ColumnarMapIndexReader columnarMapIndexReader) {
+    super(new MutableColumnarMapDataSourceMetadata(fieldSpec, numDocs),
+        buildContainerWithForwardIndex(columnarMapIndexReader));
+    _columnarMapIndexReader = columnarMapIndexReader;
   }
 
-  private static ColumnIndexContainer buildContainerWithForwardIndex(SparseMapIndexReader reader) {
+  private static ColumnIndexContainer buildContainerWithForwardIndex(ColumnarMapIndexReader reader) {
     return new ColumnIndexContainer.FromMap.Builder()
-        .with(StandardIndexes.forward(), new SparseMapForwardIndexReader(reader))
+        .with(StandardIndexes.forward(), new ColumnarMapForwardIndexReader(reader))
         .build();
   }
 
   /**
-   * Returns the SparseMapIndexReader for this column.
+   * Returns the ColumnarMapIndexReader for this column.
    */
-  public SparseMapIndexReader getSparseMapIndexReader() {
-    return _sparseMapIndexReader;
+  public ColumnarMapIndexReader getColumnarMapIndexReader() {
+    return _columnarMapIndexReader;
   }
 
   // ---- MapDataSource implementation ----
@@ -99,7 +99,7 @@ public class SparseMapDataSource extends BaseDataSource implements MapDataSource
 
   /**
    * Returns a per-key {@link DataSource} whose forward index delegates to this column's
-   * {@link SparseMapIndexReader} for the requested key.
+   * {@link ColumnarMapIndexReader} for the requested key.
    *
    * <p>Returns {@code null} if the key is not present in the index (unknown key).
    */
@@ -123,7 +123,7 @@ public class SparseMapDataSource extends BaseDataSource implements MapDataSource
   @Override
   public Map<String, DataSource> getKeyDataSources() {
     Map<String, DataSource> result = new HashMap<>();
-    for (String key : _sparseMapIndexReader.getKeys()) {
+    for (String key : _columnarMapIndexReader.getKeys()) {
       DataSource ds = getKeyDataSource(key);
       if (ds != null) {
         result.put(key, ds);
@@ -143,7 +143,7 @@ public class SparseMapDataSource extends BaseDataSource implements MapDataSource
   }
 
   private DataSource buildKeyDataSource(String key) {
-    FieldSpec.DataType keyType = _sparseMapIndexReader.getKeyValueType(key);
+    FieldSpec.DataType keyType = _columnarMapIndexReader.getKeyValueType(key);
     if (keyType == null) {
       return null;
     }
@@ -151,27 +151,27 @@ public class SparseMapDataSource extends BaseDataSource implements MapDataSource
     DimensionFieldSpec keyFieldSpec = new DimensionFieldSpec(key, keyType, true);
 
     // Try to use pre-built dictionary and dictId reader from immutable reader
-    SparseMapKeyDictionary keyDictionary = null;
+    ColumnarMapKeyDictionary keyDictionary = null;
     FixedBitIntReaderWriter dictIdReader = null;
-    if (_sparseMapIndexReader instanceof ImmutableSparseMapIndexReader) {
-      ImmutableSparseMapIndexReader immutableReader = (ImmutableSparseMapIndexReader) _sparseMapIndexReader;
+    if (_columnarMapIndexReader instanceof ImmutableColumnarMapIndexReader) {
+      ImmutableColumnarMapIndexReader immutableReader = (ImmutableColumnarMapIndexReader) _columnarMapIndexReader;
       keyDictionary = immutableReader.getKeyDictionary(key);
       dictIdReader = immutableReader.getDictIdReader(key);
     }
 
     // Fallback: build dictionary from inverted index if pre-built not available
     if (keyDictionary == null) {
-      String[] distinctValues = _sparseMapIndexReader.getDistinctValuesForKey(key);
+      String[] distinctValues = _columnarMapIndexReader.getDistinctValuesForKey(key);
       if (distinctValues != null) {
-        String defaultValue = SparseMapKeyDictionary.getDefaultValueString(keyType);
+        String defaultValue = ColumnarMapKeyDictionary.getDefaultValueString(keyType);
         distinctValues = mergeDefaultValue(distinctValues, defaultValue, keyType);
-        keyDictionary = new SparseMapKeyDictionary(keyType, distinctValues);
+        keyDictionary = new ColumnarMapKeyDictionary(keyType, distinctValues);
       }
     }
 
-    SparseMapKeyForwardIndexReader keyReader =
-        new SparseMapKeyForwardIndexReader(_sparseMapIndexReader, key, keyType, keyDictionary, dictIdReader,
-            _sparseMapIndexReader.getPresenceBitmap(key));
+    ColumnarMapKeyForwardIndexReader keyReader =
+        new ColumnarMapKeyForwardIndexReader(_columnarMapIndexReader, key, keyType, keyDictionary, dictIdReader,
+            _columnarMapIndexReader.getPresenceBitmap(key));
 
     ColumnIndexContainer.FromMap.Builder containerBuilder =
         new ColumnIndexContainer.FromMap.Builder().with(StandardIndexes.forward(), keyReader);
@@ -188,7 +188,7 @@ public class SparseMapDataSource extends BaseDataSource implements MapDataSource
 
   private static String[] mergeDefaultValue(String[] sortedValues, String defaultValue,
       FieldSpec.DataType keyType) {
-    Comparator<String> cmp = SparseMapKeyDictionary.getComparator(keyType);
+    Comparator<String> cmp = ColumnarMapKeyDictionary.getComparator(keyType);
     int insertionPoint = cmp != null
         ? java.util.Arrays.binarySearch(sortedValues, defaultValue, cmp)
         : java.util.Arrays.binarySearch(sortedValues, defaultValue);
@@ -280,14 +280,14 @@ public class SparseMapDataSource extends BaseDataSource implements MapDataSource
 
   // ---- Metadata for immutable segments ----
 
-  private static class SparseMapDataSourceMetadata implements DataSourceMetadata {
+  private static class ColumnarMapDataSourceMetadata implements DataSourceMetadata {
     private final FieldSpec _fieldSpec;
     private final int _numDocs;
     private final int _numValues;
     private final PartitionFunction _partitionFunction;
     private final Set<Integer> _partitions;
 
-    SparseMapDataSourceMetadata(ColumnMetadata columnMetadata) {
+    ColumnarMapDataSourceMetadata(ColumnMetadata columnMetadata) {
       _fieldSpec = columnMetadata.getFieldSpec();
       _numDocs = columnMetadata.getTotalDocs();
       _numValues = columnMetadata.getTotalNumberOfEntries();
@@ -357,11 +357,11 @@ public class SparseMapDataSource extends BaseDataSource implements MapDataSource
 
   // ---- Metadata for mutable (real-time) segments ----
 
-  private static class MutableSparseMapDataSourceMetadata implements DataSourceMetadata {
+  private static class MutableColumnarMapDataSourceMetadata implements DataSourceMetadata {
     private final FieldSpec _fieldSpec;
     private final int _numDocs;
 
-    MutableSparseMapDataSourceMetadata(FieldSpec fieldSpec, int numDocs) {
+    MutableColumnarMapDataSourceMetadata(FieldSpec fieldSpec, int numDocs) {
       _fieldSpec = fieldSpec;
       _numDocs = numDocs;
     }

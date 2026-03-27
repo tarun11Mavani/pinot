@@ -22,9 +22,9 @@ import java.util.HashMap;
 import java.util.Map;
 import javax.annotation.Nullable;
 import org.apache.pinot.segment.local.segment.creator.impl.stats.MapColumnPreIndexStatsCollector;
-import org.apache.pinot.segment.local.segment.creator.impl.stats.SparseMapColumnPreIndexStatsCollector;
+import org.apache.pinot.segment.local.segment.creator.impl.stats.ColumnarMapColumnPreIndexStatsCollector;
 import org.apache.pinot.segment.local.segment.index.map.MutableMapDataSource;
-import org.apache.pinot.segment.local.segment.index.sparsemap.SparseMapDataSource;
+import org.apache.pinot.segment.local.segment.index.columnarmap.ColumnarMapDataSource;
 import org.apache.pinot.segment.local.segment.readers.CompactedPinotSegmentRecordReader;
 import org.apache.pinot.segment.spi.MutableSegment;
 import org.apache.pinot.segment.spi.creator.ColumnStatistics;
@@ -80,9 +80,9 @@ public class RealtimeSegmentStatsContainer implements SegmentPreIndexStatsContai
       }
 
       // Handle MAP columns with sparse map index
-      if (dataSource instanceof SparseMapDataSource) {
+      if (dataSource instanceof ColumnarMapDataSource) {
         _columnStatisticsMap.put(columnName,
-            createSparseMapColumnStatistics(columnName, dataSource, isUsingCompactedReader, validDocIdsSnapshot,
+            createColumnarMapColumnStatistics(columnName, dataSource, isUsingCompactedReader, validDocIdsSnapshot,
                 statsCollectorConfig));
         continue;
       }
@@ -133,11 +133,11 @@ public class RealtimeSegmentStatsContainer implements SegmentPreIndexStatsContai
   /**
    * Creates column statistics for MAP columns with sparse map index.
    */
-  private ColumnStatistics createSparseMapColumnStatistics(String columnName, DataSource dataSource,
+  private ColumnStatistics createColumnarMapColumnStatistics(String columnName, DataSource dataSource,
       boolean useCompactedStatistics, ThreadSafeMutableRoaringBitmap validDocIds,
       StatsCollectorConfig statsCollectorConfig) {
-    SparseMapColumnPreIndexStatsCollector collector =
-        new SparseMapColumnPreIndexStatsCollector(columnName, statsCollectorConfig);
+    ColumnarMapColumnPreIndexStatsCollector collector =
+        new ColumnarMapColumnPreIndexStatsCollector(columnName, statsCollectorConfig);
     int numDocs = useCompactedStatistics && validDocIds != null
         ? validDocIds.getMutableRoaringBitmap().getCardinality()
         : dataSource.getDataSourceMetadata().getNumDocs();

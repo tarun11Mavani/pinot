@@ -79,7 +79,7 @@ public class StandardIndexes {
   public static final String TEXT_ID = "text_index";
   public static final String H3_ID = "h3_index";
   public static final String VECTOR_ID = "vector_index";
-  public static final String SPARSE_MAP_ID = "sparse_map_index";
+  public static final String COLUMNAR_MAP_ID = "columnar_map_index";
 
   private StandardIndexes() {
   }
@@ -145,7 +145,7 @@ public class StandardIndexes {
   }
 
   @SuppressWarnings("unchecked")
-  public static IndexType sparseMap() {
-    return IndexService.getInstance().get(SPARSE_MAP_ID);
+  public static IndexType columnarMap() {
+    return IndexService.getInstance().get(COLUMNAR_MAP_ID);
   }
 }

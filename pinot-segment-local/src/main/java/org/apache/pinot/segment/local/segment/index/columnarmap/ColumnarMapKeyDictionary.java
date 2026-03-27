@@ -16,7 +16,7 @@
  * specific language governing permissions and limitations
  * under the License.
  */
-package org.apache.pinot.segment.local.segment.index.sparsemap;
+package org.apache.pinot.segment.local.segment.index.columnarmap;
 
 import com.google.common.base.Preconditions;
 import it.unimi.dsi.fastutil.ints.IntOpenHashSet;
@@ -44,13 +44,13 @@ import org.apache.pinot.spi.utils.ByteArray;
  *
  * <p>Thread safety: this class is immutable after construction and safe for concurrent reads.
  */
-public class SparseMapKeyDictionary implements Dictionary {
+public class ColumnarMapKeyDictionary implements Dictionary {
 
   private final DataType _valueType;
   private final String[] _sortedValues;
   private final Object2IntOpenHashMap<String> _valueToIdMap;
 
-  public SparseMapKeyDictionary(DataType valueType, String[] sortedDistinctValues) {
+  public ColumnarMapKeyDictionary(DataType valueType, String[] sortedDistinctValues) {
     _valueType = valueType;
     _sortedValues = sortedDistinctValues;
     _valueToIdMap = new Object2IntOpenHashMap<>(sortedDistinctValues.length);

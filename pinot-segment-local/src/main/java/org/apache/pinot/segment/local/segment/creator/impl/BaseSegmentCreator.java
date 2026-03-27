@@ -430,7 +430,7 @@ public abstract class BaseSegmentCreator implements SegmentCreator {
     properties.setProperty(METRICS, _config.getMetrics());
     properties.setProperty(DATETIME_COLUMNS, _config.getDateTimeColumnNames());
     properties.setProperty(COMPLEX_COLUMNS, _config.getComplexColumnNames());
-    properties.setProperty(SPARSE_MAP_COLUMNS, _config.getSparseMapColumnNames());
+    properties.setProperty(COLUMNAR_MAP_COLUMNS, _config.getColumnarMapColumnNames());
     String timeColumnName = _config.getTimeColumnName();
     properties.setProperty(TIME_COLUMN_NAME, timeColumnName);
     properties.setProperty(SEGMENT_TOTAL_DOCS, String.valueOf(_totalDocs));
@@ -624,17 +624,17 @@ public abstract class BaseSegmentCreator implements SegmentCreator {
       ComplexFieldSpec.MapFieldSpec mapFieldSpec = ComplexFieldSpec.toMapFieldSpec(complexSpec);
       Map<String, DataType> keyTypes = mapFieldSpec.getKeyTypes();
       if (keyTypes != null && !keyTypes.isEmpty()) {
-        properties.setProperty(getKeyFor(column, SPARSE_MAP_KEY_NAMES),
+        properties.setProperty(getKeyFor(column, COLUMNAR_MAP_KEY_NAMES),
             new ArrayList<>(keyTypes.keySet()));
         for (Map.Entry<String, DataType> entry : keyTypes.entrySet()) {
           properties.setProperty(
-              getKeyFor(column, SPARSE_MAP_KEY_TYPE_PREFIX + "." + entry.getKey()),
+              getKeyFor(column, COLUMNAR_MAP_KEY_TYPE_PREFIX + "." + entry.getKey()),
               entry.getValue().name());
         }
       }
       DataType defaultValueType = mapFieldSpec.getDefaultValueType();
       if (defaultValueType != null) {
-        properties.setProperty(getKeyFor(column, SPARSE_MAP_DEFAULT_VALUE_TYPE),
+        properties.setProperty(getKeyFor(column, COLUMNAR_MAP_DEFAULT_VALUE_TYPE),
             defaultValueType.name());
       }
     }

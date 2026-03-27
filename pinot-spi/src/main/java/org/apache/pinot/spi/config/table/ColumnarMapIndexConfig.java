@@ -27,7 +27,7 @@ import javax.annotation.Nullable;
 
 
 /**
- * Configuration for the SparseMap index on a MAP column.
+ * Configuration for the ColumnarMap index on a MAP column.
  * Controls which keys are indexed per-key in columnar storage and whether
  * per-key inverted indexes are enabled for fast value-based filtering.
  *
@@ -41,9 +41,9 @@ import javax.annotation.Nullable;
  *       no inverted indexes</li>
  * </ul>
  */
-public class SparseMapIndexConfig extends IndexConfig {
-  public static final SparseMapIndexConfig DISABLED = new SparseMapIndexConfig(false);
-  public static final SparseMapIndexConfig DEFAULT = new SparseMapIndexConfig(true);
+public class ColumnarMapIndexConfig extends IndexConfig {
+  public static final ColumnarMapIndexConfig DISABLED = new ColumnarMapIndexConfig(false);
+  public static final ColumnarMapIndexConfig DEFAULT = new ColumnarMapIndexConfig(true);
 
   private final Set<String> _indexedKeys;
   private final boolean _enableInvertedIndexForAll;
@@ -52,10 +52,10 @@ public class SparseMapIndexConfig extends IndexConfig {
   private final int _maxKeys;
 
   /**
-   * Creates a SparseMapIndexConfig from FieldConfig properties map.
+   * Creates a ColumnarMapIndexConfig from FieldConfig properties map.
    * Reads the MAP_INDEX_* property constants from {@link FieldConfig}.
    */
-  public static SparseMapIndexConfig fromProperties(@Nullable Map<String, String> properties) {
+  public static ColumnarMapIndexConfig fromProperties(@Nullable Map<String, String> properties) {
     if (properties == null || properties.isEmpty()) {
       return DEFAULT;
     }
@@ -67,7 +67,7 @@ public class SparseMapIndexConfig extends IndexConfig {
         properties.get(FieldConfig.MAP_INDEX_NO_DICTIONARY_KEYS));
     boolean enableInvertedForAll = Boolean.parseBoolean(
         properties.getOrDefault(FieldConfig.MAP_INDEX_ENABLE_INVERTED_FOR_ALL, "false"));
-    return new SparseMapIndexConfig(true, null, enableInvertedForAll, invertedIndexKeys, noDictionaryKeys, maxKeys);
+    return new ColumnarMapIndexConfig(true, null, enableInvertedForAll, invertedIndexKeys, noDictionaryKeys, maxKeys);
   }
 
   @Nullable
@@ -85,17 +85,17 @@ public class SparseMapIndexConfig extends IndexConfig {
     return result.isEmpty() ? null : result;
   }
 
-  public SparseMapIndexConfig(boolean enabled) {
+  public ColumnarMapIndexConfig(boolean enabled) {
     this(enabled, null, false, null, null, 1000);
   }
 
-  public SparseMapIndexConfig(boolean enabled, @Nullable Set<String> indexedKeys,
+  public ColumnarMapIndexConfig(boolean enabled, @Nullable Set<String> indexedKeys,
       boolean enableInvertedIndexForAll, @Nullable Set<String> invertedIndexKeys, int maxKeys) {
     this(enabled, indexedKeys, enableInvertedIndexForAll, invertedIndexKeys, null, maxKeys);
   }
 
   @JsonCreator
-  public SparseMapIndexConfig(
+  public ColumnarMapIndexConfig(
       @JsonProperty("enabled") boolean enabled,
       @JsonProperty("indexedKeys") @Nullable Set<String> indexedKeys,
       @JsonProperty("enableInvertedIndexForAll") boolean enableInvertedIndexForAll,

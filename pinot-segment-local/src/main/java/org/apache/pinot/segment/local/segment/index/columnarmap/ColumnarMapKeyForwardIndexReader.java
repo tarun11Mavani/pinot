@@ -16,76 +16,76 @@
  * specific language governing permissions and limitations
  * under the License.
  */
-package org.apache.pinot.segment.local.segment.index.sparsemap;
+package org.apache.pinot.segment.local.segment.index.columnarmap;
 
 import java.io.IOException;
 import javax.annotation.Nullable;
 import org.apache.pinot.segment.local.io.util.FixedBitIntReaderWriter;
 import org.apache.pinot.segment.spi.index.reader.ForwardIndexReader;
 import org.apache.pinot.segment.spi.index.reader.ForwardIndexReaderContext;
-import org.apache.pinot.segment.spi.index.reader.SparseMapIndexReader;
+import org.apache.pinot.segment.spi.index.reader.ColumnarMapIndexReader;
 import org.apache.pinot.spi.data.FieldSpec.DataType;
 import org.roaringbitmap.buffer.ImmutableRoaringBitmap;
 
 
 /**
- * A per-key {@link ForwardIndexReader} backed by a {@link SparseMapIndexReader}.
+ * A per-key {@link ForwardIndexReader} backed by a {@link ColumnarMapIndexReader}.
  *
  * <p>Each instance is bound to a single key within a MAP column. Reads for document IDs
  * that do not contain the key return the type-appropriate zero/empty default value; the caller can
- * combine this with the presence bitmap ({@link SparseMapIndexReader#getPresenceBitmap}) when null
+ * combine this with the presence bitmap ({@link ColumnarMapIndexReader#getPresenceBitmap}) when null
  * semantics are required.
  *
- * <p>When a {@link SparseMapKeyDictionary} is provided, this reader supports dictionary-encoded
+ * <p>When a {@link ColumnarMapKeyDictionary} is provided, this reader supports dictionary-encoded
  * access via {@link #readDictIds}, enabling dictionary-based GROUP BY operations.
  *
- * <p>No context is needed because the {@link SparseMapIndexReader} implementations maintain their
+ * <p>No context is needed because the {@link ColumnarMapIndexReader} implementations maintain their
  * own internal state; {@link #createContext()} therefore returns {@code null}.
  *
- * <p>Lifecycle: this reader does NOT own the underlying {@link SparseMapIndexReader}—closing this
- * reader is a no-op. The owning {@link SparseMapDataSource} is responsible for closing the reader.
+ * <p>Lifecycle: this reader does NOT own the underlying {@link ColumnarMapIndexReader}—closing this
+ * reader is a no-op. The owning {@link ColumnarMapDataSource} is responsible for closing the reader.
  */
-public class SparseMapKeyForwardIndexReader implements ForwardIndexReader<ForwardIndexReaderContext> {
+public class ColumnarMapKeyForwardIndexReader implements ForwardIndexReader<ForwardIndexReaderContext> {
 
-  private final SparseMapIndexReader _sparseMapIndexReader;
+  private final ColumnarMapIndexReader _columnarMapIndexReader;
   private final String _key;
   private final DataType _storedType;
   @Nullable
-  private final SparseMapKeyDictionary _dictionary;
+  private final ColumnarMapKeyDictionary _dictionary;
   @Nullable
   private final FixedBitIntReaderWriter _dictIdReader;
   @Nullable
   private final ImmutableRoaringBitmap _presenceBitmap;
   private final int _defaultDictId;
 
-  public SparseMapKeyForwardIndexReader(SparseMapIndexReader sparseMapIndexReader, String key,
+  public ColumnarMapKeyForwardIndexReader(ColumnarMapIndexReader columnarMapIndexReader, String key,
       DataType storedType) {
-    this(sparseMapIndexReader, key, storedType, null, null, null);
+    this(columnarMapIndexReader, key, storedType, null, null, null);
   }
 
-  public SparseMapKeyForwardIndexReader(SparseMapIndexReader sparseMapIndexReader, String key,
-      DataType storedType, @Nullable SparseMapKeyDictionary dictionary) {
-    this(sparseMapIndexReader, key, storedType, dictionary, null, null);
+  public ColumnarMapKeyForwardIndexReader(ColumnarMapIndexReader columnarMapIndexReader, String key,
+      DataType storedType, @Nullable ColumnarMapKeyDictionary dictionary) {
+    this(columnarMapIndexReader, key, storedType, dictionary, null, null);
   }
 
-  public SparseMapKeyForwardIndexReader(SparseMapIndexReader sparseMapIndexReader, String key,
-      DataType storedType, @Nullable SparseMapKeyDictionary dictionary,
+  public ColumnarMapKeyForwardIndexReader(ColumnarMapIndexReader columnarMapIndexReader, String key,
+      DataType storedType, @Nullable ColumnarMapKeyDictionary dictionary,
       @Nullable FixedBitIntReaderWriter dictIdReader) {
-    this(sparseMapIndexReader, key, storedType, dictionary, dictIdReader, null);
+    this(columnarMapIndexReader, key, storedType, dictionary, dictIdReader, null);
   }
 
-  public SparseMapKeyForwardIndexReader(SparseMapIndexReader sparseMapIndexReader, String key,
-      DataType storedType, @Nullable SparseMapKeyDictionary dictionary,
+  public ColumnarMapKeyForwardIndexReader(ColumnarMapIndexReader columnarMapIndexReader, String key,
+      DataType storedType, @Nullable ColumnarMapKeyDictionary dictionary,
       @Nullable FixedBitIntReaderWriter dictIdReader,
       @Nullable ImmutableRoaringBitmap presenceBitmap) {
-    _sparseMapIndexReader = sparseMapIndexReader;
+    _columnarMapIndexReader = columnarMapIndexReader;
     _key = key;
     _storedType = storedType;
     _dictionary = dictionary;
     _dictIdReader = dictIdReader;
     _presenceBitmap = presenceBitmap;
     if (dictionary != null) {
-      String defaultValueStr = SparseMapKeyDictionary.getDefaultValueString(storedType);
+      String defaultValueStr = ColumnarMapKeyDictionary.getDefaultValueString(storedType);
       int idx = dictionary.indexOf(defaultValueStr);
       _defaultDictId = idx >= 0 ? idx : 0;
     } else {
@@ -126,7 +126,7 @@ public class SparseMapKeyForwardIndexReader implements ForwardIndexReader<Forwar
     } else {
       // Slow path: getString + indexOf for mutable segments
       for (int i = 0; i < length; i++) {
-        String rawValue = _sparseMapIndexReader.getString(docIds[i], _key);
+        String rawValue = _columnarMapIndexReader.getString(docIds[i], _key);
         if (rawValue == null || rawValue.isEmpty()) {
           dictIdBuffer[i] = _defaultDictId; // default value position in dictionary
         } else {
@@ -138,37 +138,37 @@ public class SparseMapKeyForwardIndexReader implements ForwardIndexReader<Forwar
 
   @Override
   public int getInt(int docId, ForwardIndexReaderContext context) {
-    return _sparseMapIndexReader.getInt(docId, _key);
+    return _columnarMapIndexReader.getInt(docId, _key);
   }
 
   @Override
   public long getLong(int docId, ForwardIndexReaderContext context) {
-    return _sparseMapIndexReader.getLong(docId, _key);
+    return _columnarMapIndexReader.getLong(docId, _key);
   }
 
   @Override
   public float getFloat(int docId, ForwardIndexReaderContext context) {
-    return _sparseMapIndexReader.getFloat(docId, _key);
+    return _columnarMapIndexReader.getFloat(docId, _key);
   }
 
   @Override
   public double getDouble(int docId, ForwardIndexReaderContext context) {
-    return _sparseMapIndexReader.getDouble(docId, _key);
+    return _columnarMapIndexReader.getDouble(docId, _key);
   }
 
   @Override
   public String getString(int docId, ForwardIndexReaderContext context) {
-    return _sparseMapIndexReader.getString(docId, _key);
+    return _columnarMapIndexReader.getString(docId, _key);
   }
 
   @Override
   public byte[] getBytes(int docId, ForwardIndexReaderContext context) {
-    return _sparseMapIndexReader.getBytes(docId, _key);
+    return _columnarMapIndexReader.getBytes(docId, _key);
   }
 
   @Override
   public void close()
       throws IOException {
-    // no-op: the underlying reader is owned by SparseMapDataSource
+    // no-op: the underlying reader is owned by ColumnarMapDataSource
   }
 }
