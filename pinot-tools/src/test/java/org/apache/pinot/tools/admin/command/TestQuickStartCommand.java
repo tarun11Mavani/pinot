@@ -30,6 +30,7 @@ import org.apache.pinot.tools.RealtimeComplexTypeHandlingQuickStart;
 import org.apache.pinot.tools.RealtimeJsonIndexQuickStart;
 import org.apache.pinot.tools.RealtimeQuickStart;
 import org.apache.pinot.tools.RealtimeQuickStartWithMinion;
+import org.apache.pinot.tools.ColumnarMapQuickStart;
 import org.apache.pinot.tools.TimestampIndexQuickstart;
 import org.apache.pinot.tools.UpsertJsonQuickStart;
 import org.apache.pinot.tools.UpsertQuickStart;
@@ -111,6 +112,17 @@ public class TestQuickStartCommand {
 
     Assert.assertEquals(quickStartClassFor("TIMESTAMP"),
         TimestampIndexQuickstart.class);
+
+    Assert.assertEquals(quickStartClassFor("COLUMNAR_MAP"), ColumnarMapQuickStart.class);
+    Assert.assertEquals(quickStartClassFor("BATCH_COLUMNAR_MAP"), ColumnarMapQuickStart.class);
+    Assert.assertEquals(quickStartClassFor("BATCH-SPARSE-MAP"), ColumnarMapQuickStart.class);
+    Assert.assertEquals(quickStartClassFor("OFFLINE_COLUMNAR_MAP"), ColumnarMapQuickStart.class);
+    Assert.assertEquals(quickStartClassFor("OFFLINE-SPARSE-MAP"), ColumnarMapQuickStart.class);
+
+    Assert.assertEquals(quickStartClassFor("MULTI_CLUSTER"),
+        MultiClusterQuickstart.class);
+    Assert.assertEquals(quickStartClassFor("MULTICLUSTER"),
+        MultiClusterQuickstart.class);
   }
 
   private Class<? extends QuickStartBase> quickStartClassFor(String type)
