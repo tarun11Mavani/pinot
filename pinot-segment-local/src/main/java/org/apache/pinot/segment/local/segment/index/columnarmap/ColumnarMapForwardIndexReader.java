@@ -20,9 +20,9 @@ package org.apache.pinot.segment.local.segment.index.columnarmap;
 
 import java.io.IOException;
 import java.util.Map;
+import org.apache.pinot.segment.spi.index.reader.ColumnarMapIndexReader;
 import org.apache.pinot.segment.spi.index.reader.ForwardIndexReader;
 import org.apache.pinot.segment.spi.index.reader.ForwardIndexReaderContext;
-import org.apache.pinot.segment.spi.index.reader.ColumnarMapIndexReader;
 import org.apache.pinot.spi.data.FieldSpec.DataType;
 
 
