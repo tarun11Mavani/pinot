@@ -16,7 +16,7 @@
  * specific language governing permissions and limitations
  * under the License.
  */
-package org.apache.pinot.segment.local.segment.index.sparsemap;
+package org.apache.pinot.segment.local.segment.index.columnarmap;
 
 import com.fasterxml.jackson.databind.node.ObjectNode;
 import java.io.File;
@@ -48,11 +48,11 @@ import static org.testng.Assert.*;
 
 /**
  * Tests full segment creation pipeline for MAP columns with sparse map index.
- * Verifies that OnHeapSparseMapIndexCreator is properly invoked and produces an index file.
+ * Verifies that OnHeapColumnarMapIndexCreator is properly invoked and produces an index file.
  */
-public class SparseMapSegmentCreationTest {
+public class ColumnarMapSegmentCreationTest {
 
-  private static final File SEGMENT_DIR = new File(FileUtils.getTempDirectory(), "SparseMapSegmentCreationTest");
+  private static final File SEGMENT_DIR = new File(FileUtils.getTempDirectory(), "ColumnarMapSegmentCreationTest");
   private static final String TABLE_NAME = "userMetrics";
 
   @BeforeMethod
@@ -68,7 +68,7 @@ public class SparseMapSegmentCreationTest {
   }
 
   @Test
-  public void testSparseMapIndexCreatedInSegment()
+  public void testColumnarMapIndexCreatedInSegment()
       throws Exception {
     // Build schema with a MAP column
     Map<String, FieldSpec.DataType> keyTypes = new HashMap<>();
@@ -87,13 +87,13 @@ public class SparseMapSegmentCreationTest {
         .addField(metricsSpec)
         .build();
 
-    // Build table config with sparse_map index in fieldConfigList
-    ObjectNode sparseMapNode = JsonUtils.newObjectNode();
-    sparseMapNode.put("enabled", true);
-    sparseMapNode.put("enableInvertedIndexForAll", false);
-    sparseMapNode.put("maxKeys", 100);
+    // Build table config with columnar_map index in fieldConfigList
+    ObjectNode columnarMapNode = JsonUtils.newObjectNode();
+    columnarMapNode.put("enabled", true);
+    columnarMapNode.put("enableInvertedIndexForAll", false);
+    columnarMapNode.put("maxKeys", 100);
     ObjectNode indexesNode = JsonUtils.newObjectNode();
-    indexesNode.set("sparse_map", sparseMapNode);
+    indexesNode.set("columnar_map", columnarMapNode);
     FieldConfig metricsFieldConfig = new FieldConfig.Builder("metrics")
         .withIndexes(indexesNode)
         .build();
@@ -136,8 +136,8 @@ public class SparseMapSegmentCreationTest {
         java.nio.charset.StandardCharsets.UTF_8);
 
     // The sparse map index should be present in the index_map
-    assertTrue(indexMapContent.contains("metrics." + StandardIndexes.SPARSE_MAP_ID),
-        "index_map should contain metrics sparse_map_index entry but got:\n" + indexMapContent);
+    assertTrue(indexMapContent.contains("metrics." + StandardIndexes.COLUMNAR_MAP_ID),
+        "index_map should contain metrics columnar_map_index entry but got:\n" + indexMapContent);
   }
 
   private Map<String, Object> buildRow(String userId, Map<String, Object> metrics) {

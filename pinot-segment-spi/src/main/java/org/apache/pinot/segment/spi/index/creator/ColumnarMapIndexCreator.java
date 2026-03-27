@@ -24,18 +24,18 @@ import org.apache.pinot.segment.spi.index.IndexCreator;
 
 
 /**
- * Creator for the SparseMap index. Accepts a Map per document during segment creation and
+ * Creator for the ColumnarMap index. Accepts a Map per document during segment creation and
  * decomposes it into per-key columnar storage (presence bitmaps, typed forward indexes,
  * optional inverted indexes) on seal().
  */
-public interface SparseMapIndexCreator extends IndexCreator {
+public interface ColumnarMapIndexCreator extends IndexCreator {
 
   /**
    * Adds a document's sparse map data. The map may be null or empty if the document has no keys.
    * Keys in the map that match declared key types are stored with typed per-key forward indexes.
    * Undeclared keys are stored using the default value type (STRING if not configured).
    */
-  void add(Map<String, Object> sparseMap)
+  void add(Map<String, Object> columnarMap)
       throws IOException;
 
   /**

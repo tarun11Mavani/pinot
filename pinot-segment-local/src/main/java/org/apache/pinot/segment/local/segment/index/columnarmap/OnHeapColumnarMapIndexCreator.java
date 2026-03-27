@@ -16,7 +16,7 @@
  * specific language governing permissions and limitations
  * under the License.
  */
-package org.apache.pinot.segment.local.segment.index.sparsemap;
+package org.apache.pinot.segment.local.segment.index.columnarmap;
 
 import java.io.ByteArrayOutputStream;
 import java.io.DataOutputStream;
@@ -38,8 +38,8 @@ import org.apache.pinot.common.utils.RoaringBitmapUtils;
 import org.apache.pinot.segment.local.io.util.PinotDataBitSet;
 import org.apache.pinot.segment.spi.V1Constants;
 import org.apache.pinot.segment.spi.creator.IndexCreationContext;
-import org.apache.pinot.segment.spi.index.creator.SparseMapIndexCreator;
-import org.apache.pinot.spi.config.table.SparseMapIndexConfig;
+import org.apache.pinot.segment.spi.index.creator.ColumnarMapIndexCreator;
+import org.apache.pinot.spi.config.table.ColumnarMapIndexConfig;
 import org.apache.pinot.spi.data.ComplexFieldSpec;
 import org.apache.pinot.spi.data.FieldSpec;
 import org.apache.pinot.spi.data.FieldSpec.DataType;
@@ -49,13 +49,13 @@ import org.slf4j.LoggerFactory;
 
 
 /**
- * On-heap implementation of {@link SparseMapIndexCreator} for immutable (offline) segments.
+ * On-heap implementation of {@link ColumnarMapIndexCreator} for immutable (offline) segments.
  * Accumulates per-document sparse maps in memory and writes a binary index file on seal.
  * Uses more heap memory but avoids disk I/O during indexing.
  */
-public class OnHeapSparseMapIndexCreator implements SparseMapIndexCreator {
+public class OnHeapColumnarMapIndexCreator implements ColumnarMapIndexCreator {
 
-  private static final Logger LOGGER = LoggerFactory.getLogger(OnHeapSparseMapIndexCreator.class);
+  private static final Logger LOGGER = LoggerFactory.getLogger(OnHeapColumnarMapIndexCreator.class);
 
   private static final int MAGIC = 0x53504D58;   // "SPMX"
   private static final int VERSION = 2;
@@ -66,7 +66,7 @@ public class OnHeapSparseMapIndexCreator implements SparseMapIndexCreator {
   private final String _columnName;
   private final Map<String, DataType> _keyTypes;
   private final DataType _defaultValueType;
-  private final SparseMapIndexConfig _config;
+  private final ColumnarMapIndexConfig _config;
   private final Set<String> _indexedKeys;
   private final int _maxKeys;
 
@@ -80,20 +80,20 @@ public class OnHeapSparseMapIndexCreator implements SparseMapIndexCreator {
   private int _distinctKeyCount;
   private final Set<String> _droppedKeys = new HashSet<>();
 
-  public OnHeapSparseMapIndexCreator(IndexCreationContext context, SparseMapIndexConfig config)
+  public OnHeapColumnarMapIndexCreator(IndexCreationContext context, ColumnarMapIndexConfig config)
       throws IOException {
     this(context.getIndexDir(), context.getFieldSpec().getName(),
         context.getFieldSpec(), config);
   }
 
-  public OnHeapSparseMapIndexCreator(File indexDir, String columnName, FieldSpec fieldSpec,
-      SparseMapIndexConfig config)
+  public OnHeapColumnarMapIndexCreator(File indexDir, String columnName, FieldSpec fieldSpec,
+      ColumnarMapIndexConfig config)
       throws IOException {
     this(indexDir, columnName, fieldSpec, config, null, null);
   }
 
-  public OnHeapSparseMapIndexCreator(File indexDir, String columnName, FieldSpec fieldSpec,
-      SparseMapIndexConfig config,
+  public OnHeapColumnarMapIndexCreator(File indexDir, String columnName, FieldSpec fieldSpec,
+      ColumnarMapIndexConfig config,
       @Nullable Map<String, FieldSpec.DataType> explicitKeyTypes,
       @Nullable FieldSpec.DataType explicitDefaultValueType)
       throws IOException {
@@ -115,10 +115,10 @@ public class OnHeapSparseMapIndexCreator implements SparseMapIndexCreator {
   }
 
   @Override
-  public void add(Map<String, Object> sparseMap)
+  public void add(Map<String, Object> columnarMap)
       throws IOException {
-    if (sparseMap != null && !sparseMap.isEmpty()) {
-      for (Map.Entry<String, Object> entry : sparseMap.entrySet()) {
+    if (columnarMap != null && !columnarMap.isEmpty()) {
+      for (Map.Entry<String, Object> entry : columnarMap.entrySet()) {
         String key = entry.getKey();
         if (_indexedKeys != null && !_indexedKeys.contains(key)) {
           continue;
@@ -132,7 +132,7 @@ public class OnHeapSparseMapIndexCreator implements SparseMapIndexCreator {
         if (!_presenceBitmaps.containsKey(key) && _distinctKeyCount >= _maxKeys) {
           if (_droppedKeys.add(key)) {
             LOGGER.warn(
-                "SparseMap index for column '{}' reached maxKeys limit ({}). Dropping key '{}'. "
+                "ColumnarMap index for column '{}' reached maxKeys limit ({}). Dropping key '{}'. "
                     + "Total distinct dropped keys so far: {}.",
                 _columnName, _maxKeys, key, _droppedKeys.size());
           }
@@ -150,7 +150,7 @@ public class OnHeapSparseMapIndexCreator implements SparseMapIndexCreator {
           coerced = coerceValue(rawValue, valueType);
         } catch (ClassCastException | NumberFormatException e) {
           LOGGER.warn(
-              "OnHeapSparseMapIndexCreator for column '{}': failed to coerce value '{}' (type {}) to {} for key '{}'."
+              "OnHeapColumnarMapIndexCreator for column '{}': failed to coerce value '{}' (type {}) to {} for key '{}'."
                   + " Skipping key for this document.",
               _columnName, rawValue, rawValue.getClass().getSimpleName(), valueType, key, e);
           _presenceBitmaps.get(key).remove(_numDocs);
@@ -183,8 +183,8 @@ public class OnHeapSparseMapIndexCreator implements SparseMapIndexCreator {
       return;
     }
     @SuppressWarnings("unchecked")
-    Map<String, Object> sparseMap = (Map<String, Object>) value;
-    add(sparseMap);
+    Map<String, Object> columnarMap = (Map<String, Object>) value;
+    add(columnarMap);
   }
 
   @Override
@@ -345,7 +345,7 @@ public class OnHeapSparseMapIndexCreator implements SparseMapIndexCreator {
     long perKeyDataOffset = keyMetadataOffset + keyMetadataSection.length;
     long valueDictionaryOffset = perKeyDataOffset + perKeyDataSection.length;
 
-    File indexFile = new File(_indexDir, _columnName + V1Constants.Indexes.SPARSE_MAP_INDEX_FILE_EXTENSION);
+    File indexFile = new File(_indexDir, _columnName + V1Constants.Indexes.COLUMNAR_MAP_INDEX_FILE_EXTENSION);
     try (FileOutputStream fos = new FileOutputStream(indexFile);
         DataOutputStream dos = new DataOutputStream(fos)) {
       writeHeader(dos, numKeys, keyDictionaryOffset, keyMetadataOffset, perKeyDataOffset, valueDictionaryOffset);
@@ -570,7 +570,7 @@ public class OnHeapSparseMapIndexCreator implements SparseMapIndexCreator {
 
   /// Builds a sparse bit-packed dictId forward index for only the docs that have the key.
   /// Uses presence bitmap rank to map docId → ordinal, same as the raw forward index.
-  /// This preserves the space benefit of sparse_map by not wasting space on absent docs.
+  /// This preserves the space benefit of columnar_map by not wasting space on absent docs.
   private byte[] buildDictIdForwardIndex(TreeMap<String, RoaringBitmap> valueToDocIds,
       DataType storedType, RoaringBitmap presence)
       throws IOException {

@@ -69,8 +69,8 @@ public final class StatsCollectorUtil {
       case BYTES:
         return new BytesColumnPredIndexStatsCollector(columnName, statsCollectorConfig);
       case MAP:
-        if (indexConfig.getConfig(StandardIndexes.sparseMap()).isEnabled()) {
-          return new SparseMapColumnPreIndexStatsCollector(columnName, statsCollectorConfig);
+        if (indexConfig.getConfig(StandardIndexes.columnarMap()).isEnabled()) {
+          return new ColumnarMapColumnPreIndexStatsCollector(columnName, statsCollectorConfig);
         }
         return new MapColumnPreIndexStatsCollector(columnName, statsCollectorConfig);
       default:

@@ -1603,11 +1603,11 @@ public class MutableSegmentImpl implements MutableSegment {
 
     DataSource toDataSource() {
       if (_fieldSpec.getDataType() == DataType.MAP) {
-        MutableIndex sparseMapIdx = _mutableIndexes.get(StandardIndexes.sparseMap());
-        if (sparseMapIdx instanceof org.apache.pinot.segment.spi.index.reader.SparseMapIndexReader) {
-          return new org.apache.pinot.segment.local.segment.index.sparsemap.SparseMapDataSource(
+        MutableIndex columnarMapIdx = _mutableIndexes.get(StandardIndexes.columnarMap());
+        if (columnarMapIdx instanceof org.apache.pinot.segment.spi.index.reader.ColumnarMapIndexReader) {
+          return new org.apache.pinot.segment.local.segment.index.columnarmap.ColumnarMapDataSource(
               _fieldSpec, _numDocsIndexed,
-              (org.apache.pinot.segment.spi.index.reader.SparseMapIndexReader) sparseMapIdx);
+              (org.apache.pinot.segment.spi.index.reader.ColumnarMapIndexReader) columnarMapIdx);
         }
       }
       if (_fieldSpec.getDataType() == MAP) {

@@ -16,7 +16,7 @@
  * specific language governing permissions and limitations
  * under the License.
  */
-package org.apache.pinot.segment.local.segment.index.sparsemap;
+package org.apache.pinot.segment.local.segment.index.columnarmap;
 
 import java.io.IOException;
 import java.nio.ByteBuffer;
@@ -31,17 +31,17 @@ import org.apache.pinot.segment.local.io.util.FixedBitIntReaderWriter;
 import org.apache.pinot.segment.local.io.util.PinotDataBitSet;
 import org.apache.pinot.segment.spi.ColumnMetadata;
 import org.apache.pinot.segment.spi.datasource.DataSource;
-import org.apache.pinot.segment.spi.index.reader.SparseMapIndexReader;
+import org.apache.pinot.segment.spi.index.reader.ColumnarMapIndexReader;
 import org.apache.pinot.segment.spi.memory.PinotDataBuffer;
 import org.apache.pinot.spi.data.FieldSpec.DataType;
 import org.roaringbitmap.buffer.ImmutableRoaringBitmap;
 
 
 /**
- * Memory-mapped immutable reader for the SparseMap index.
+ * Memory-mapped immutable reader for the ColumnarMap index.
  * Provides O(1) typed key lookup via presence bitmap rank operations.
  *
- * <p>Binary format (written by {@link OnHeapSparseMapIndexCreator}):
+ * <p>Binary format (written by {@link OnHeapColumnarMapIndexCreator}):
  * <ul>
  *   <li>Header (64 bytes): version(int), numKeys(int), numDocs(int), keyDictOffset(long),
  *       keyMetaOffset(long), perKeyDataOffset(long), padding</li>
@@ -54,7 +54,7 @@ import org.roaringbitmap.buffer.ImmutableRoaringBitmap;
  * <p>Null-means-absent policy: keys with null values are not recorded during ingestion.
  * A key absent from the presence bitmap is indistinguishable from a key explicitly set to null.
  */
-public class ImmutableSparseMapIndexReader implements SparseMapIndexReader {
+public class ImmutableColumnarMapIndexReader implements ColumnarMapIndexReader {
 
   private static final int MAGIC = 0x53504D58;   // "SPMX"
   private static final int CURRENT_VERSION = 2;
@@ -83,12 +83,12 @@ public class ImmutableSparseMapIndexReader implements SparseMapIndexReader {
 
   // value dictionary section
   private final long _valueDictionarySectionOffset;
-  private final Map<String, SparseMapKeyDictionary> _keyDictionaries;
+  private final Map<String, ColumnarMapKeyDictionary> _keyDictionaries;
 
   // Pre-built dictId readers for keys with dictionary encoding (indexed by keyId)
   private final FixedBitIntReaderWriter[] _dictIdReaders;
 
-  public ImmutableSparseMapIndexReader(PinotDataBuffer dataBuffer, ColumnMetadata metadata)
+  public ImmutableColumnarMapIndexReader(PinotDataBuffer dataBuffer, ColumnMetadata metadata)
       throws IOException {
     _dataBuffer = dataBuffer;
 
@@ -99,12 +99,12 @@ public class ImmutableSparseMapIndexReader implements SparseMapIndexReader {
     int magic = headerBuf.getInt();
     if (magic != MAGIC) {
       throw new IOException(
-          String.format("Invalid SparseMap index: expected magic 0x%08X but got 0x%08X", MAGIC, magic));
+          String.format("Invalid ColumnarMap index: expected magic 0x%08X but got 0x%08X", MAGIC, magic));
     }
     int version = headerBuf.getInt();
     if (version > CURRENT_VERSION) {
       throw new IOException(
-          "Unsupported SparseMap index version: " + version + " (max supported: " + CURRENT_VERSION + ")");
+          "Unsupported ColumnarMap index version: " + version + " (max supported: " + CURRENT_VERSION + ")");
     }
     _numKeys = headerBuf.getInt();
     _numDocs = headerBuf.getInt();
@@ -152,7 +152,7 @@ public class ImmutableSparseMapIndexReader implements SparseMapIndexReader {
       int storedTypeOrdinal = metaBuf.get() & 0xFF;
       if (storedTypeOrdinal >= allTypes.length) {
         throw new IOException(
-            "Invalid SparseMap index: unknown DataType ordinal " + storedTypeOrdinal
+            "Invalid ColumnarMap index: unknown DataType ordinal " + storedTypeOrdinal
                 + " for key index " + i + " (max=" + (allTypes.length - 1) + ")");
       }
       _keyStoredTypes[i] = allTypes[storedTypeOrdinal];
@@ -195,7 +195,7 @@ public class ImmutableSparseMapIndexReader implements SparseMapIndexReader {
           values[v] = new String(vBytes, StandardCharsets.UTF_8);
           pos += vLen;
         }
-        _keyDictionaries.put(_keys[i], new SparseMapKeyDictionary(_keyStoredTypes[i], values));
+        _keyDictionaries.put(_keys[i], new ColumnarMapKeyDictionary(_keyStoredTypes[i], values));
       }
     }
 
@@ -205,7 +205,7 @@ public class ImmutableSparseMapIndexReader implements SparseMapIndexReader {
     _dictIdReaders = new FixedBitIntReaderWriter[_numKeys];
     for (int i = 0; i < _numKeys; i++) {
       if (_dictIdFwdLengths[i] > 0) {
-        SparseMapKeyDictionary dict = _keyDictionaries.get(_keys[i]);
+        ColumnarMapKeyDictionary dict = _keyDictionaries.get(_keys[i]);
         if (dict != null) {
           int numBitsPerValue = PinotDataBitSet.getNumBitsPerValue(Math.max(dict.length() - 1, 0));
           long offset = _perKeyDataSectionOffset + _dictIdFwdOffsets[i];
@@ -381,7 +381,7 @@ public class ImmutableSparseMapIndexReader implements SparseMapIndexReader {
     int numValues = ByteBuffer.wrap(numValBytes).order(ByteOrder.BIG_ENDIAN).getInt();
     if (numValues != _numDocsPerKey[keyId]) {
       throw new IllegalStateException(
-          "SparseMap forward index corrupt for key '" + _keys[keyId]
+          "ColumnarMap forward index corrupt for key '" + _keys[keyId]
               + "': numValues=" + numValues + " but presence cardinality=" + _numDocsPerKey[keyId]);
     }
 
@@ -416,7 +416,7 @@ public class ImmutableSparseMapIndexReader implements SparseMapIndexReader {
 
     // Fast O(1) negative check: if the in-memory value dictionary is loaded and does not
     // contain the value, we can return null immediately without any I/O.
-    SparseMapKeyDictionary dict = _keyDictionaries.get(key);
+    ColumnarMapKeyDictionary dict = _keyDictionaries.get(key);
     if (dict != null && dict.indexOf(valueStr) < 0) {
       return null;
     }
@@ -520,7 +520,7 @@ public class ImmutableSparseMapIndexReader implements SparseMapIndexReader {
 
   @Override
   public DataSource getKeyDataSource(String key) {
-    // Implemented in SparseMapDataSource (Task 15)
+    // Implemented in ColumnarMapDataSource (Task 15)
     return null;
   }
 
@@ -532,9 +532,9 @@ public class ImmutableSparseMapIndexReader implements SparseMapIndexReader {
     return keyId != null ? _dictIdReaders[keyId] : null;
   }
 
-  /// Returns the cached SparseMapKeyDictionary for the given key, or null if not available.
+  /// Returns the cached ColumnarMapKeyDictionary for the given key, or null if not available.
   @Nullable
-  public SparseMapKeyDictionary getKeyDictionary(String key) {
+  public ColumnarMapKeyDictionary getKeyDictionary(String key) {
     return _keyDictionaries.get(key);
   }
 
@@ -553,7 +553,7 @@ public class ImmutableSparseMapIndexReader implements SparseMapIndexReader {
     if (_dictIdReaders[keyId] != null) {
       int ordinal = _presenceBitmaps[keyId].rank(docId) - 1;
       int dictId = _dictIdReaders[keyId].readInt(ordinal);
-      SparseMapKeyDictionary dict = _keyDictionaries.get(_keys[keyId]);
+      ColumnarMapKeyDictionary dict = _keyDictionaries.get(_keys[keyId]);
       switch (_keyStoredTypes[keyId]) {
         case INT:
           return dict.getIntValue(dictId);

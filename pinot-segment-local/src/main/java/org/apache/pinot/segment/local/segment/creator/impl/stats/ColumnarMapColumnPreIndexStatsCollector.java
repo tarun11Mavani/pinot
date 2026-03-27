@@ -24,14 +24,14 @@ import org.apache.pinot.segment.spi.creator.StatsCollectorConfig;
 /**
  * Statistics collector for MAP columns with sparse map index.
  *
- * <p>Unlike regular columns, MAP columns with sparse map index store all per-key data in the SparseMapIndex itself.
+ * <p>Unlike regular columns, MAP columns with sparse map index store all per-key data in the ColumnarMapIndex itself.
  * This collector only tracks document count; no min/max/cardinality/dictionary is needed.
  */
-public class SparseMapColumnPreIndexStatsCollector extends AbstractColumnStatisticsCollector {
+public class ColumnarMapColumnPreIndexStatsCollector extends AbstractColumnStatisticsCollector {
 
   private boolean _sealed = false;
 
-  public SparseMapColumnPreIndexStatsCollector(String column, StatsCollectorConfig statsCollectorConfig) {
+  public ColumnarMapColumnPreIndexStatsCollector(String column, StatsCollectorConfig statsCollectorConfig) {
     super(column, statsCollectorConfig);
     _sorted = false;
   }

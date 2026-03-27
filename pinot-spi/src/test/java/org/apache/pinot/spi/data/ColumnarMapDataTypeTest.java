@@ -27,7 +27,7 @@ import static org.testng.Assert.*;
 /**
  * Unit tests for MAP DataType and Schema integration using ComplexFieldSpec.
  */
-public class SparseMapDataTypeTest {
+public class ColumnarMapDataTypeTest {
 
   @Test
   public void testMapDataTypeProperties() {

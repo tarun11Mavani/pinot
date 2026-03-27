@@ -16,7 +16,7 @@
  * specific language governing permissions and limitations
  * under the License.
  */
-package org.apache.pinot.segment.local.segment.index.sparsemap;
+package org.apache.pinot.segment.local.segment.index.columnarmap;
 
 import java.io.File;
 import java.io.IOException;
@@ -32,9 +32,9 @@ import java.util.concurrent.atomic.AtomicBoolean;
 import org.apache.commons.io.FileUtils;
 import org.apache.pinot.segment.local.io.util.FixedBitIntReaderWriter;
 import org.apache.pinot.segment.spi.V1Constants;
-import org.apache.pinot.segment.spi.index.reader.SparseMapIndexReader;
+import org.apache.pinot.segment.spi.index.reader.ColumnarMapIndexReader;
 import org.apache.pinot.segment.spi.memory.PinotDataBuffer;
-import org.apache.pinot.spi.config.table.SparseMapIndexConfig;
+import org.apache.pinot.spi.config.table.ColumnarMapIndexConfig;
 import org.apache.pinot.spi.data.ComplexFieldSpec;
 import org.apache.pinot.spi.data.DimensionFieldSpec;
 import org.apache.pinot.spi.data.FieldSpec;
@@ -47,12 +47,12 @@ import static org.testng.Assert.*;
 
 
 /**
- * Unit tests for {@link OnHeapSparseMapIndexCreator} and {@link ImmutableSparseMapIndexReader}.
+ * Unit tests for {@link OnHeapColumnarMapIndexCreator} and {@link ImmutableColumnarMapIndexReader}.
  */
-public class SparseMapIndexTest {
+public class ColumnarMapIndexTest {
 
   private static final File INDEX_DIR =
-      new File(FileUtils.getTempDirectory(), "SparseMapIndexTest");
+      new File(FileUtils.getTempDirectory(), "ColumnarMapIndexTest");
   private static final String COLUMN_NAME = "sparseCol";
 
   @BeforeMethod
@@ -82,23 +82,23 @@ public class SparseMapIndexTest {
   private File createIndex(Map<String, FieldSpec.DataType> keyTypes, Map<String, Object>[] docs)
       throws IOException {
     ComplexFieldSpec fieldSpec = buildMapFieldSpec(COLUMN_NAME);
-    SparseMapIndexConfig config = new SparseMapIndexConfig(true, null, false, null, 1000);
+    ColumnarMapIndexConfig config = new ColumnarMapIndexConfig(true, null, false, null, 1000);
     return createIndex(fieldSpec, config, keyTypes, docs);
   }
 
-  private File createIndex(ComplexFieldSpec fieldSpec, SparseMapIndexConfig config, Map<String, Object>[] docs)
+  private File createIndex(ComplexFieldSpec fieldSpec, ColumnarMapIndexConfig config, Map<String, Object>[] docs)
       throws IOException {
     return createIndex(fieldSpec, config, null, docs);
   }
 
-  private File createIndex(ComplexFieldSpec fieldSpec, SparseMapIndexConfig config,
+  private File createIndex(ComplexFieldSpec fieldSpec, ColumnarMapIndexConfig config,
       Map<String, FieldSpec.DataType> keyTypes, Map<String, Object>[] docs)
       throws IOException {
     File indexFile =
-        new File(INDEX_DIR, COLUMN_NAME + V1Constants.Indexes.SPARSE_MAP_INDEX_FILE_EXTENSION);
+        new File(INDEX_DIR, COLUMN_NAME + V1Constants.Indexes.COLUMNAR_MAP_INDEX_FILE_EXTENSION);
 
-    try (OnHeapSparseMapIndexCreator creator =
-        new OnHeapSparseMapIndexCreator(INDEX_DIR, COLUMN_NAME, fieldSpec, config,
+    try (OnHeapColumnarMapIndexCreator creator =
+        new OnHeapColumnarMapIndexCreator(INDEX_DIR, COLUMN_NAME, fieldSpec, config,
             keyTypes, FieldSpec.DataType.STRING)) {
       for (Map<String, Object> doc : docs) {
         creator.add(doc);
@@ -128,7 +128,7 @@ public class SparseMapIndexTest {
     File indexFile = createIndex(keyTypes, docs);
 
     try (PinotDataBuffer buffer = PinotDataBuffer.mapReadOnlyBigEndianFile(indexFile);
-        SparseMapIndexReader reader = new ImmutableSparseMapIndexReader(buffer, null)) {
+        ColumnarMapIndexReader reader = new ImmutableColumnarMapIndexReader(buffer, null)) {
 
       // Verify keys
       assertTrue(reader.getKeys().contains("age"));
@@ -182,7 +182,7 @@ public class SparseMapIndexTest {
     File indexFile = createIndex(keyTypes, docs);
 
     try (PinotDataBuffer buffer = PinotDataBuffer.mapReadOnlyBigEndianFile(indexFile);
-        SparseMapIndexReader reader = new ImmutableSparseMapIndexReader(buffer, null)) {
+        ColumnarMapIndexReader reader = new ImmutableColumnarMapIndexReader(buffer, null)) {
 
       Map<String, Object> doc0 = reader.getMap(0);
       assertTrue(doc0.containsKey("score"));
@@ -212,7 +212,7 @@ public class SparseMapIndexTest {
     File indexFile = createIndex(keyTypes, docs);
 
     try (PinotDataBuffer buffer = PinotDataBuffer.mapReadOnlyBigEndianFile(indexFile);
-        SparseMapIndexReader reader = new ImmutableSparseMapIndexReader(buffer, null)) {
+        ColumnarMapIndexReader reader = new ImmutableColumnarMapIndexReader(buffer, null)) {
 
       ImmutableRoaringBitmap missingBitmap = reader.getPresenceBitmap("nonexistent");
       assertTrue(missingBitmap.isEmpty());
@@ -237,11 +237,11 @@ public class SparseMapIndexTest {
     };
 
     ComplexFieldSpec fieldSpec = buildMapFieldSpec(COLUMN_NAME);
-    SparseMapIndexConfig config = new SparseMapIndexConfig(true, null, true, null, 1000);
+    ColumnarMapIndexConfig config = new ColumnarMapIndexConfig(true, null, true, null, 1000);
     File indexFile =
-        new File(INDEX_DIR, COLUMN_NAME + V1Constants.Indexes.SPARSE_MAP_INDEX_FILE_EXTENSION);
+        new File(INDEX_DIR, COLUMN_NAME + V1Constants.Indexes.COLUMNAR_MAP_INDEX_FILE_EXTENSION);
 
-    try (OnHeapSparseMapIndexCreator creator = new OnHeapSparseMapIndexCreator(
+    try (OnHeapColumnarMapIndexCreator creator = new OnHeapColumnarMapIndexCreator(
         INDEX_DIR, COLUMN_NAME, fieldSpec, config, keyTypes, FieldSpec.DataType.STRING)) {
       for (Map<String, Object> doc : docs) {
         creator.add(doc);
@@ -250,7 +250,7 @@ public class SparseMapIndexTest {
     }
 
     try (PinotDataBuffer buffer = PinotDataBuffer.mapReadOnlyBigEndianFile(indexFile);
-        SparseMapIndexReader reader = new ImmutableSparseMapIndexReader(buffer, null)) {
+        ColumnarMapIndexReader reader = new ImmutableColumnarMapIndexReader(buffer, null)) {
 
       ImmutableRoaringBitmap reds = reader.getDocsWithKeyValue("color", "red");
       assertNotNull(reds);
@@ -277,9 +277,9 @@ public class SparseMapIndexTest {
     keyTypes.put("brand", FieldSpec.DataType.STRING);
 
     ComplexFieldSpec fieldSpec = buildMapFieldSpec(COLUMN_NAME);
-    SparseMapIndexConfig config = new SparseMapIndexConfig(true, null, false, null, 100);
+    ColumnarMapIndexConfig config = new ColumnarMapIndexConfig(true, null, false, null, 100);
 
-    try (MutableSparseMapIndexImpl mutableIndex = new MutableSparseMapIndexImpl(
+    try (MutableColumnarMapIndexImpl mutableIndex = new MutableColumnarMapIndexImpl(
         buildMutableContext(fieldSpec), config, keyTypes, FieldSpec.DataType.STRING)) {
 
       mutableIndex.add(Map.of("price", 9.99f, "brand", "acme"), -1, 0);
@@ -322,8 +322,8 @@ public class SparseMapIndexTest {
       throws Exception {
     String colName = "maxkeys_imm_test";
     ComplexFieldSpec fieldSpec = buildMapFieldSpec(colName);
-    SparseMapIndexConfig config = new SparseMapIndexConfig(true, null, false, null, 2); // maxKeys=2
-    OnHeapSparseMapIndexCreator creator = new OnHeapSparseMapIndexCreator(INDEX_DIR, colName, fieldSpec, config);
+    ColumnarMapIndexConfig config = new ColumnarMapIndexConfig(true, null, false, null, 2); // maxKeys=2
+    OnHeapColumnarMapIndexCreator creator = new OnHeapColumnarMapIndexCreator(INDEX_DIR, colName, fieldSpec, config);
 
     // Add a doc with 3 keys — only 2 should be stored
     Map<String, Object> doc = new HashMap<>();
@@ -334,9 +334,9 @@ public class SparseMapIndexTest {
     creator.seal();
     creator.close();
 
-    File indexFile = new File(INDEX_DIR, colName + V1Constants.Indexes.SPARSE_MAP_INDEX_FILE_EXTENSION);
+    File indexFile = new File(INDEX_DIR, colName + V1Constants.Indexes.COLUMNAR_MAP_INDEX_FILE_EXTENSION);
     PinotDataBuffer buf = PinotDataBuffer.mapReadOnlyBigEndianFile(indexFile);
-    ImmutableSparseMapIndexReader reader = new ImmutableSparseMapIndexReader(buf, null);
+    ImmutableColumnarMapIndexReader reader = new ImmutableColumnarMapIndexReader(buf, null);
 
     assertEquals(2, reader.getKeys().size());
     buf.close();
@@ -345,10 +345,10 @@ public class SparseMapIndexTest {
   @Test
   public void testMaxKeysDropsExcessKeysMutable()
       throws Exception {
-    SparseMapIndexConfig config = new SparseMapIndexConfig(true, null, false, null, 2); // maxKeys=2
+    ColumnarMapIndexConfig config = new ColumnarMapIndexConfig(true, null, false, null, 2); // maxKeys=2
     ComplexFieldSpec fieldSpec = buildMapFieldSpec("mutable_maxkeys_test");
 
-    try (MutableSparseMapIndexImpl mutableIndex = new MutableSparseMapIndexImpl(
+    try (MutableColumnarMapIndexImpl mutableIndex = new MutableColumnarMapIndexImpl(
         buildMutableContext(fieldSpec), config)) {
 
       // Add doc 0 with 3 keys — only 2 should be stored
@@ -367,8 +367,8 @@ public class SparseMapIndexTest {
       throws Exception {
     String colName = "null_absent_imm_test";
     ComplexFieldSpec fieldSpec = buildMapFieldSpec(colName);
-    SparseMapIndexConfig config = new SparseMapIndexConfig(true, null, false, null, 10);
-    OnHeapSparseMapIndexCreator creator = new OnHeapSparseMapIndexCreator(INDEX_DIR, colName, fieldSpec, config);
+    ColumnarMapIndexConfig config = new ColumnarMapIndexConfig(true, null, false, null, 10);
+    OnHeapColumnarMapIndexCreator creator = new OnHeapColumnarMapIndexCreator(INDEX_DIR, colName, fieldSpec, config);
 
     Map<String, Object> doc = new HashMap<>();
     doc.put("key", null);   // explicit null — must be treated as absent
@@ -376,9 +376,9 @@ public class SparseMapIndexTest {
     creator.seal();
     creator.close();
 
-    File indexFile = new File(INDEX_DIR, colName + V1Constants.Indexes.SPARSE_MAP_INDEX_FILE_EXTENSION);
+    File indexFile = new File(INDEX_DIR, colName + V1Constants.Indexes.COLUMNAR_MAP_INDEX_FILE_EXTENSION);
     PinotDataBuffer buf = PinotDataBuffer.mapReadOnlyBigEndianFile(indexFile);
-    ImmutableSparseMapIndexReader reader = new ImmutableSparseMapIndexReader(buf, null);
+    ImmutableColumnarMapIndexReader reader = new ImmutableColumnarMapIndexReader(buf, null);
 
     // Key must not appear in the index at all
     assertFalse(reader.getPresenceBitmap("key").contains(0));
@@ -389,10 +389,10 @@ public class SparseMapIndexTest {
   @Test
   public void testNullValueTreatedAsAbsentMutable()
       throws Exception {
-    SparseMapIndexConfig config = new SparseMapIndexConfig(true, null, false, null, 10);
+    ColumnarMapIndexConfig config = new ColumnarMapIndexConfig(true, null, false, null, 10);
     ComplexFieldSpec fieldSpec = buildMapFieldSpec("mutable_null_absent_test");
 
-    try (MutableSparseMapIndexImpl mutableIndex = new MutableSparseMapIndexImpl(
+    try (MutableColumnarMapIndexImpl mutableIndex = new MutableColumnarMapIndexImpl(
         buildMutableContext(fieldSpec), config)) {
 
       // add doc 0 with Map {"key": null}
@@ -418,15 +418,15 @@ public class SparseMapIndexTest {
     // Build a minimal valid index
     String colName = "magic_test";
     ComplexFieldSpec fieldSpec = buildMapFieldSpec(colName);
-    SparseMapIndexConfig config = new SparseMapIndexConfig(true, null, false, null, 10);
-    OnHeapSparseMapIndexCreator creator =
-        new OnHeapSparseMapIndexCreator(INDEX_DIR, colName, fieldSpec, config);
+    ColumnarMapIndexConfig config = new ColumnarMapIndexConfig(true, null, false, null, 10);
+    OnHeapColumnarMapIndexCreator creator =
+        new OnHeapColumnarMapIndexCreator(INDEX_DIR, colName, fieldSpec, config);
     creator.add(Map.of("k", 42));
     creator.seal();
     creator.close();
 
     // Corrupt magic bytes
-    File indexFile = new File(INDEX_DIR, colName + V1Constants.Indexes.SPARSE_MAP_INDEX_FILE_EXTENSION);
+    File indexFile = new File(INDEX_DIR, colName + V1Constants.Indexes.COLUMNAR_MAP_INDEX_FILE_EXTENSION);
     try (RandomAccessFile raf = new RandomAccessFile(indexFile, "rw")) {
       raf.seek(0);
       raf.writeInt(0xDEADBEEF);
@@ -434,7 +434,7 @@ public class SparseMapIndexTest {
 
     // Verify reader throws
     PinotDataBuffer buf = PinotDataBuffer.mapReadOnlyBigEndianFile(indexFile);
-    assertThrows(IOException.class, () -> new ImmutableSparseMapIndexReader(buf, null));
+    assertThrows(IOException.class, () -> new ImmutableColumnarMapIndexReader(buf, null));
     buf.close();
   }
 
@@ -442,11 +442,11 @@ public class SparseMapIndexTest {
   public void testConcurrentAddAndReadDoesNotThrow()
       throws Exception {
     ComplexFieldSpec fieldSpec = buildMapFieldSpec("concurrent_test");
-    SparseMapIndexConfig config = new SparseMapIndexConfig(true, null, false, null, 100);
-    MutableSparseMapIndexImpl idx;
-    try (MutableSparseMapIndexImpl tmp = new MutableSparseMapIndexImpl(buildMutableContext(fieldSpec), config)) {
+    ColumnarMapIndexConfig config = new ColumnarMapIndexConfig(true, null, false, null, 100);
+    MutableColumnarMapIndexImpl idx;
+    try (MutableColumnarMapIndexImpl tmp = new MutableColumnarMapIndexImpl(buildMutableContext(fieldSpec), config)) {
       idx = tmp;
-      // Note: MutableSparseMapIndexImpl.close() is a no-op, so this is safe
+      // Note: MutableColumnarMapIndexImpl.close() is a no-op, so this is safe
 
       ExecutorService pool = Executors.newFixedThreadPool(4);
       AtomicBoolean failed = new AtomicBoolean(false);
@@ -491,8 +491,8 @@ public class SparseMapIndexTest {
       throws Exception {
     String colName = "maxkeys_exact_test";
     ComplexFieldSpec fieldSpec = buildMapFieldSpec(colName);
-    SparseMapIndexConfig config = new SparseMapIndexConfig(true, null, false, null, 2);
-    OnHeapSparseMapIndexCreator creator = new OnHeapSparseMapIndexCreator(INDEX_DIR, colName, fieldSpec, config);
+    ColumnarMapIndexConfig config = new ColumnarMapIndexConfig(true, null, false, null, 2);
+    OnHeapColumnarMapIndexCreator creator = new OnHeapColumnarMapIndexCreator(INDEX_DIR, colName, fieldSpec, config);
 
     // Add keys one at a time, in known order, across multiple documents
     // "alpha" first (doc 0), "beta" second (doc 1), "gamma" third (doc 2, should be dropped)
@@ -502,9 +502,9 @@ public class SparseMapIndexTest {
     creator.seal();
     creator.close();
 
-    File indexFile = new File(INDEX_DIR, colName + V1Constants.Indexes.SPARSE_MAP_INDEX_FILE_EXTENSION);
+    File indexFile = new File(INDEX_DIR, colName + V1Constants.Indexes.COLUMNAR_MAP_INDEX_FILE_EXTENSION);
     PinotDataBuffer buf = PinotDataBuffer.mapReadOnlyBigEndianFile(indexFile);
-    ImmutableSparseMapIndexReader reader = new ImmutableSparseMapIndexReader(buf, null);
+    ImmutableColumnarMapIndexReader reader = new ImmutableColumnarMapIndexReader(buf, null);
 
     assertEquals(reader.getKeys().size(), 2, "Index must hold exactly maxKeys=2 keys");
     assertTrue(reader.getKeys().contains("alpha"), "alpha was first key, must be retained");
@@ -525,8 +525,8 @@ public class SparseMapIndexTest {
     String colName = "many_docs_test";
     Map<String, FieldSpec.DataType> keyTypes = Collections.singletonMap("count", FieldSpec.DataType.INT);
     ComplexFieldSpec fieldSpec = buildMapFieldSpec(colName);
-    SparseMapIndexConfig config = new SparseMapIndexConfig(true, null, false, null, 10);
-    OnHeapSparseMapIndexCreator creator = new OnHeapSparseMapIndexCreator(INDEX_DIR, colName, fieldSpec, config,
+    ColumnarMapIndexConfig config = new ColumnarMapIndexConfig(true, null, false, null, 10);
+    OnHeapColumnarMapIndexCreator creator = new OnHeapColumnarMapIndexCreator(INDEX_DIR, colName, fieldSpec, config,
         keyTypes, FieldSpec.DataType.STRING);
 
     int numDocs = 500;
@@ -540,9 +540,9 @@ public class SparseMapIndexTest {
     creator.seal();
     creator.close();
 
-    File indexFile = new File(INDEX_DIR, colName + V1Constants.Indexes.SPARSE_MAP_INDEX_FILE_EXTENSION);
+    File indexFile = new File(INDEX_DIR, colName + V1Constants.Indexes.COLUMNAR_MAP_INDEX_FILE_EXTENSION);
     PinotDataBuffer buf = PinotDataBuffer.mapReadOnlyBigEndianFile(indexFile);
-    ImmutableSparseMapIndexReader reader = new ImmutableSparseMapIndexReader(buf, null);
+    ImmutableColumnarMapIndexReader reader = new ImmutableColumnarMapIndexReader(buf, null);
 
     // Exactly numDocs/3 (rounded up) docs have "count"
     int expectedCount = (numDocs + 2) / 3;  // ceil(500/3) = 167
@@ -570,9 +570,9 @@ public class SparseMapIndexTest {
     );
     ComplexFieldSpec fieldSpec = buildMapFieldSpec(colName);
 
-    SparseMapIndexConfig config = new SparseMapIndexConfig(true, null, false, null, 10);
-    try (OnHeapSparseMapIndexCreator creator =
-        new OnHeapSparseMapIndexCreator(INDEX_DIR, colName, fieldSpec, config, keyTypes, FieldSpec.DataType.STRING)) {
+    ColumnarMapIndexConfig config = new ColumnarMapIndexConfig(true, null, false, null, 10);
+    try (OnHeapColumnarMapIndexCreator creator =
+        new OnHeapColumnarMapIndexCreator(INDEX_DIR, colName, fieldSpec, config, keyTypes, FieldSpec.DataType.STRING)) {
       creator.add(Map.of(
           "intKey", 0x12345678,
           "longKey", 0x123456789ABCDEF0L,
@@ -582,9 +582,9 @@ public class SparseMapIndexTest {
       creator.seal();
     }
 
-    File indexFile = new File(INDEX_DIR, colName + V1Constants.Indexes.SPARSE_MAP_INDEX_FILE_EXTENSION);
+    File indexFile = new File(INDEX_DIR, colName + V1Constants.Indexes.COLUMNAR_MAP_INDEX_FILE_EXTENSION);
     PinotDataBuffer buf = PinotDataBuffer.mapReadOnlyBigEndianFile(indexFile);
-    ImmutableSparseMapIndexReader reader = new ImmutableSparseMapIndexReader(buf, null);
+    ImmutableColumnarMapIndexReader reader = new ImmutableColumnarMapIndexReader(buf, null);
 
     assertEquals(reader.getInt(0, "intKey"), 0x12345678);
     assertEquals(reader.getLong(0, "longKey"), 0x123456789ABCDEF0L);
@@ -606,10 +606,10 @@ public class SparseMapIndexTest {
     keyTypes.put("size", FieldSpec.DataType.STRING);
 
     ComplexFieldSpec fieldSpec = buildMapFieldSpec(COLUMN_NAME);
-    SparseMapIndexConfig config =
-        new SparseMapIndexConfig(true, null, false, Set.of("color"), 1000);
+    ColumnarMapIndexConfig config =
+        new ColumnarMapIndexConfig(true, null, false, Set.of("color"), 1000);
     File indexFile =
-        new File(INDEX_DIR, COLUMN_NAME + V1Constants.Indexes.SPARSE_MAP_INDEX_FILE_EXTENSION);
+        new File(INDEX_DIR, COLUMN_NAME + V1Constants.Indexes.COLUMNAR_MAP_INDEX_FILE_EXTENSION);
 
     @SuppressWarnings("unchecked")
     Map<String, Object>[] docs = new Map[]{
@@ -618,8 +618,8 @@ public class SparseMapIndexTest {
         Map.of("color", "red", "size", "medium")
     };
 
-    try (OnHeapSparseMapIndexCreator creator =
-        new OnHeapSparseMapIndexCreator(INDEX_DIR, COLUMN_NAME, fieldSpec, config,
+    try (OnHeapColumnarMapIndexCreator creator =
+        new OnHeapColumnarMapIndexCreator(INDEX_DIR, COLUMN_NAME, fieldSpec, config,
             keyTypes, FieldSpec.DataType.STRING)) {
       for (Map<String, Object> doc : docs) {
         creator.add(doc);
@@ -628,7 +628,7 @@ public class SparseMapIndexTest {
     }
 
     try (PinotDataBuffer buffer = PinotDataBuffer.mapReadOnlyBigEndianFile(indexFile);
-        SparseMapIndexReader reader = new ImmutableSparseMapIndexReader(buffer, null)) {
+        ColumnarMapIndexReader reader = new ImmutableColumnarMapIndexReader(buffer, null)) {
       // color has inverted index
       ImmutableRoaringBitmap reds = reader.getDocsWithKeyValue("color", "red");
       assertNotNull(reds, "color should have inverted index");
@@ -651,10 +651,10 @@ public class SparseMapIndexTest {
     keyTypes.put("size", FieldSpec.DataType.STRING);
 
     ComplexFieldSpec fieldSpec = buildMapFieldSpec(COLUMN_NAME);
-    SparseMapIndexConfig config =
-        new SparseMapIndexConfig(true, null, true, Set.of("color"), 1000);
+    ColumnarMapIndexConfig config =
+        new ColumnarMapIndexConfig(true, null, true, Set.of("color"), 1000);
     File indexFile =
-        new File(INDEX_DIR, COLUMN_NAME + V1Constants.Indexes.SPARSE_MAP_INDEX_FILE_EXTENSION);
+        new File(INDEX_DIR, COLUMN_NAME + V1Constants.Indexes.COLUMNAR_MAP_INDEX_FILE_EXTENSION);
 
     @SuppressWarnings("unchecked")
     Map<String, Object>[] docs = new Map[]{
@@ -662,8 +662,8 @@ public class SparseMapIndexTest {
         Map.of("color", "blue", "size", "large")
     };
 
-    try (OnHeapSparseMapIndexCreator creator =
-        new OnHeapSparseMapIndexCreator(INDEX_DIR, COLUMN_NAME, fieldSpec, config,
+    try (OnHeapColumnarMapIndexCreator creator =
+        new OnHeapColumnarMapIndexCreator(INDEX_DIR, COLUMN_NAME, fieldSpec, config,
             keyTypes, FieldSpec.DataType.STRING)) {
       for (Map<String, Object> doc : docs) {
         creator.add(doc);
@@ -672,7 +672,7 @@ public class SparseMapIndexTest {
     }
 
     try (PinotDataBuffer buffer = PinotDataBuffer.mapReadOnlyBigEndianFile(indexFile);
-        SparseMapIndexReader reader = new ImmutableSparseMapIndexReader(buffer, null)) {
+        ColumnarMapIndexReader reader = new ImmutableColumnarMapIndexReader(buffer, null)) {
       // Both keys should have inverted indexes
       assertNotNull(reader.getDocsWithKeyValue("color", "red"));
       assertNotNull(reader.getDocsWithKeyValue("size", "small"));
@@ -687,15 +687,15 @@ public class SparseMapIndexTest {
     keyTypes.put("color", FieldSpec.DataType.STRING);
 
     ComplexFieldSpec fieldSpec = buildMapFieldSpec(COLUMN_NAME);
-    SparseMapIndexConfig config = new SparseMapIndexConfig(true, null, false, null, 1000);
+    ColumnarMapIndexConfig config = new ColumnarMapIndexConfig(true, null, false, null, 1000);
     File indexFile =
-        new File(INDEX_DIR, COLUMN_NAME + V1Constants.Indexes.SPARSE_MAP_INDEX_FILE_EXTENSION);
+        new File(INDEX_DIR, COLUMN_NAME + V1Constants.Indexes.COLUMNAR_MAP_INDEX_FILE_EXTENSION);
 
     @SuppressWarnings("unchecked")
     Map<String, Object>[] docs = new Map[]{Map.of("color", "red")};
 
-    try (OnHeapSparseMapIndexCreator creator =
-        new OnHeapSparseMapIndexCreator(INDEX_DIR, COLUMN_NAME, fieldSpec, config,
+    try (OnHeapColumnarMapIndexCreator creator =
+        new OnHeapColumnarMapIndexCreator(INDEX_DIR, COLUMN_NAME, fieldSpec, config,
             keyTypes, FieldSpec.DataType.STRING)) {
       for (Map<String, Object> doc : docs) {
         creator.add(doc);
@@ -704,7 +704,7 @@ public class SparseMapIndexTest {
     }
 
     try (PinotDataBuffer buffer = PinotDataBuffer.mapReadOnlyBigEndianFile(indexFile);
-        SparseMapIndexReader reader = new ImmutableSparseMapIndexReader(buffer, null)) {
+        ColumnarMapIndexReader reader = new ImmutableColumnarMapIndexReader(buffer, null)) {
       assertNull(reader.getDocsWithKeyValue("color", "red"), "No inverted index should exist");
     }
   }
@@ -718,10 +718,10 @@ public class SparseMapIndexTest {
     keyTypes.put("sku", FieldSpec.DataType.STRING);
 
     ComplexFieldSpec fieldSpec = buildMapFieldSpec(COLUMN_NAME);
-    SparseMapIndexConfig config =
-        new SparseMapIndexConfig(true, null, false, Set.of("brand"), 100);
+    ColumnarMapIndexConfig config =
+        new ColumnarMapIndexConfig(true, null, false, Set.of("brand"), 100);
 
-    try (MutableSparseMapIndexImpl mutableIndex = new MutableSparseMapIndexImpl(
+    try (MutableColumnarMapIndexImpl mutableIndex = new MutableColumnarMapIndexImpl(
         buildMutableContext(fieldSpec), config, keyTypes, FieldSpec.DataType.STRING)) {
       mutableIndex.add(Map.of("brand", "acme", "sku", "A1"), -1, 0);
       mutableIndex.add(Map.of("brand", "acme", "sku", "B2"), -1, 1);
@@ -742,23 +742,23 @@ public class SparseMapIndexTest {
 
   @Test
   public void testConfigShouldEnableInvertedIndexForKey() {
-    // Unit test for SparseMapIndexConfig.shouldEnableInvertedIndexForKey
-    SparseMapIndexConfig allEnabled = new SparseMapIndexConfig(true, null, true, null, 100);
+    // Unit test for ColumnarMapIndexConfig.shouldEnableInvertedIndexForKey
+    ColumnarMapIndexConfig allEnabled = new ColumnarMapIndexConfig(true, null, true, null, 100);
     assertTrue(allEnabled.shouldEnableInvertedIndexForKey("anyKey"));
     assertTrue(allEnabled.shouldEnableInvertedIndexForKey("anotherKey"));
 
-    SparseMapIndexConfig selectiveEnabled =
-        new SparseMapIndexConfig(true, null, false, Set.of("k1", "k2"), 100);
+    ColumnarMapIndexConfig selectiveEnabled =
+        new ColumnarMapIndexConfig(true, null, false, Set.of("k1", "k2"), 100);
     assertTrue(selectiveEnabled.shouldEnableInvertedIndexForKey("k1"));
     assertTrue(selectiveEnabled.shouldEnableInvertedIndexForKey("k2"));
     assertFalse(selectiveEnabled.shouldEnableInvertedIndexForKey("k3"));
 
-    SparseMapIndexConfig noneEnabled = new SparseMapIndexConfig(true, null, false, null, 100);
+    ColumnarMapIndexConfig noneEnabled = new ColumnarMapIndexConfig(true, null, false, null, 100);
     assertFalse(noneEnabled.shouldEnableInvertedIndexForKey("anyKey"));
 
     // enableInvertedIndexForAll=true overrides invertedIndexKeys
-    SparseMapIndexConfig allWithList =
-        new SparseMapIndexConfig(true, null, true, Set.of("k1"), 100);
+    ColumnarMapIndexConfig allWithList =
+        new ColumnarMapIndexConfig(true, null, true, Set.of("k1"), 100);
     assertTrue(allWithList.shouldEnableInvertedIndexForKey("k1"));
     assertTrue(allWithList.shouldEnableInvertedIndexForKey("k999"));
   }
@@ -766,9 +766,9 @@ public class SparseMapIndexTest {
   // ---- Dictionary-based GROUP BY tests ----
 
   @Test
-  public void testSparseMapKeyDictionary() {
+  public void testColumnarMapKeyDictionary() {
     String[] values = {"apple", "banana", "cherry"};
-    SparseMapKeyDictionary dict = new SparseMapKeyDictionary(FieldSpec.DataType.STRING, values);
+    ColumnarMapKeyDictionary dict = new ColumnarMapKeyDictionary(FieldSpec.DataType.STRING, values);
 
     // length
     assertEquals(dict.length(), 3);
@@ -799,9 +799,9 @@ public class SparseMapIndexTest {
   }
 
   @Test
-  public void testSparseMapKeyDictionaryIntType() {
+  public void testColumnarMapKeyDictionaryIntType() {
     String[] values = {"10", "20", "30"};
-    SparseMapKeyDictionary dict = new SparseMapKeyDictionary(FieldSpec.DataType.INT, values);
+    ColumnarMapKeyDictionary dict = new ColumnarMapKeyDictionary(FieldSpec.DataType.INT, values);
 
     assertEquals(dict.getIntValue(0), 10);
     assertEquals(dict.getLongValue(1), 20L);
@@ -830,11 +830,11 @@ public class SparseMapIndexTest {
     };
 
     ComplexFieldSpec fieldSpec = buildMapFieldSpec(COLUMN_NAME);
-    SparseMapIndexConfig config = new SparseMapIndexConfig(true, null, true, null, 1000);
+    ColumnarMapIndexConfig config = new ColumnarMapIndexConfig(true, null, true, null, 1000);
     File indexFile =
-        new File(INDEX_DIR, COLUMN_NAME + V1Constants.Indexes.SPARSE_MAP_INDEX_FILE_EXTENSION);
+        new File(INDEX_DIR, COLUMN_NAME + V1Constants.Indexes.COLUMNAR_MAP_INDEX_FILE_EXTENSION);
 
-    try (OnHeapSparseMapIndexCreator creator = new OnHeapSparseMapIndexCreator(
+    try (OnHeapColumnarMapIndexCreator creator = new OnHeapColumnarMapIndexCreator(
         INDEX_DIR, COLUMN_NAME, fieldSpec, config, keyTypes, FieldSpec.DataType.STRING)) {
       for (Map<String, Object> doc : docs) {
         creator.add(doc);
@@ -843,7 +843,7 @@ public class SparseMapIndexTest {
     }
 
     try (PinotDataBuffer buffer = PinotDataBuffer.mapReadOnlyBigEndianFile(indexFile);
-        ImmutableSparseMapIndexReader reader = new ImmutableSparseMapIndexReader(buffer, null)) {
+        ImmutableColumnarMapIndexReader reader = new ImmutableColumnarMapIndexReader(buffer, null)) {
 
       // hasInvertedIndex
       assertTrue(reader.hasInvertedIndex("color"));
@@ -884,7 +884,7 @@ public class SparseMapIndexTest {
     File indexFile = createIndex(keyTypes, docs);
 
     try (PinotDataBuffer buffer = PinotDataBuffer.mapReadOnlyBigEndianFile(indexFile);
-        ImmutableSparseMapIndexReader reader = new ImmutableSparseMapIndexReader(buffer, null)) {
+        ImmutableColumnarMapIndexReader reader = new ImmutableColumnarMapIndexReader(buffer, null)) {
 
       assertFalse(reader.hasInvertedIndex("name"));
       assertNull(reader.getDistinctValuesForKey("name"));
@@ -899,9 +899,9 @@ public class SparseMapIndexTest {
     keyTypes.put("count", FieldSpec.DataType.INT);
 
     ComplexFieldSpec fieldSpec = buildMapFieldSpec(COLUMN_NAME);
-    SparseMapIndexConfig config = new SparseMapIndexConfig(true, null, true, null, 100);
+    ColumnarMapIndexConfig config = new ColumnarMapIndexConfig(true, null, true, null, 100);
 
-    try (MutableSparseMapIndexImpl mutableIndex = new MutableSparseMapIndexImpl(
+    try (MutableColumnarMapIndexImpl mutableIndex = new MutableColumnarMapIndexImpl(
         buildMutableContext(fieldSpec), config, keyTypes, FieldSpec.DataType.STRING)) {
 
       mutableIndex.add(Map.of("brand", "acme", "count", 5), -1, 0);
@@ -942,11 +942,11 @@ public class SparseMapIndexTest {
     };
 
     ComplexFieldSpec fieldSpec = buildMapFieldSpec(COLUMN_NAME);
-    SparseMapIndexConfig config = new SparseMapIndexConfig(true, null, true, null, 1000);
+    ColumnarMapIndexConfig config = new ColumnarMapIndexConfig(true, null, true, null, 1000);
     File indexFile =
-        new File(INDEX_DIR, COLUMN_NAME + V1Constants.Indexes.SPARSE_MAP_INDEX_FILE_EXTENSION);
+        new File(INDEX_DIR, COLUMN_NAME + V1Constants.Indexes.COLUMNAR_MAP_INDEX_FILE_EXTENSION);
 
-    try (OnHeapSparseMapIndexCreator creator = new OnHeapSparseMapIndexCreator(
+    try (OnHeapColumnarMapIndexCreator creator = new OnHeapColumnarMapIndexCreator(
         INDEX_DIR, COLUMN_NAME, fieldSpec, config, keyTypes, FieldSpec.DataType.STRING)) {
       for (Map<String, Object> doc : docs) {
         creator.add(doc);
@@ -955,10 +955,10 @@ public class SparseMapIndexTest {
     }
 
     try (PinotDataBuffer buffer = PinotDataBuffer.mapReadOnlyBigEndianFile(indexFile);
-        ImmutableSparseMapIndexReader reader = new ImmutableSparseMapIndexReader(buffer, null)) {
+        ImmutableColumnarMapIndexReader reader = new ImmutableColumnarMapIndexReader(buffer, null)) {
 
       org.apache.pinot.segment.spi.datasource.DataSource ds =
-          new SparseMapDataSource(buildColumnMetadata(fieldSpec, 3), reader).getKeyDataSource("status");
+          new ColumnarMapDataSource(buildColumnMetadata(fieldSpec, 3), reader).getKeyDataSource("status");
       assertNotNull(ds);
 
       // Dictionary contains only actual values (no default value in sparse dictId)
@@ -988,14 +988,14 @@ public class SparseMapIndexTest {
 
     // Force raw encoding via noDictionaryKeys
     ComplexFieldSpec fieldSpec = buildMapFieldSpec(COLUMN_NAME);
-    SparseMapIndexConfig config = new SparseMapIndexConfig(true, null, false, null, Set.of("name"), 1000);
+    ColumnarMapIndexConfig config = new ColumnarMapIndexConfig(true, null, false, null, Set.of("name"), 1000);
     File indexFile = createIndex(fieldSpec, config, docs);
 
     try (PinotDataBuffer buffer = PinotDataBuffer.mapReadOnlyBigEndianFile(indexFile);
-        ImmutableSparseMapIndexReader reader = new ImmutableSparseMapIndexReader(buffer, null)) {
+        ImmutableColumnarMapIndexReader reader = new ImmutableColumnarMapIndexReader(buffer, null)) {
 
       org.apache.pinot.segment.spi.datasource.DataSource ds =
-          new SparseMapDataSource(buildColumnMetadata(fieldSpec(keyTypes), 2), reader).getKeyDataSource("name");
+          new ColumnarMapDataSource(buildColumnMetadata(fieldSpec(keyTypes), 2), reader).getKeyDataSource("name");
       assertNotNull(ds);
 
       // No dictionary when noDictionaryKeys is set
@@ -1024,11 +1024,11 @@ public class SparseMapIndexTest {
     };
 
     ComplexFieldSpec fieldSpec = buildMapFieldSpec(COLUMN_NAME);
-    SparseMapIndexConfig config = new SparseMapIndexConfig(true, null, true, null, 1000);
+    ColumnarMapIndexConfig config = new ColumnarMapIndexConfig(true, null, true, null, 1000);
     File indexFile =
-        new File(INDEX_DIR, COLUMN_NAME + V1Constants.Indexes.SPARSE_MAP_INDEX_FILE_EXTENSION);
+        new File(INDEX_DIR, COLUMN_NAME + V1Constants.Indexes.COLUMNAR_MAP_INDEX_FILE_EXTENSION);
 
-    try (OnHeapSparseMapIndexCreator creator = new OnHeapSparseMapIndexCreator(
+    try (OnHeapColumnarMapIndexCreator creator = new OnHeapColumnarMapIndexCreator(
         INDEX_DIR, COLUMN_NAME, fieldSpec, config, keyTypes, FieldSpec.DataType.STRING)) {
       for (Map<String, Object> doc : docs) {
         creator.add(doc);
@@ -1037,14 +1037,14 @@ public class SparseMapIndexTest {
     }
 
     try (PinotDataBuffer buffer = PinotDataBuffer.mapReadOnlyBigEndianFile(indexFile);
-        ImmutableSparseMapIndexReader reader = new ImmutableSparseMapIndexReader(buffer, null)) {
+        ImmutableColumnarMapIndexReader reader = new ImmutableColumnarMapIndexReader(buffer, null)) {
 
       // Verify dictId reader is available
       FixedBitIntReaderWriter dictIdReader = reader.getDictIdReader("color");
       assertNotNull(dictIdReader, "dictId reader should be available for key with inverted index");
 
       // Verify key dictionary is available
-      SparseMapKeyDictionary dict = reader.getKeyDictionary("color");
+      ColumnarMapKeyDictionary dict = reader.getKeyDictionary("color");
       assertNotNull(dict, "Key dictionary should be available");
 
       // Dictionary contains only actual values: "blue", "green", "red" (sorted, no default)
@@ -1082,11 +1082,11 @@ public class SparseMapIndexTest {
     };
 
     ComplexFieldSpec fieldSpec = buildMapFieldSpec(COLUMN_NAME);
-    SparseMapIndexConfig config = new SparseMapIndexConfig(true, null, true, null, 1000);
+    ColumnarMapIndexConfig config = new ColumnarMapIndexConfig(true, null, true, null, 1000);
     File indexFile =
-        new File(INDEX_DIR, COLUMN_NAME + V1Constants.Indexes.SPARSE_MAP_INDEX_FILE_EXTENSION);
+        new File(INDEX_DIR, COLUMN_NAME + V1Constants.Indexes.COLUMNAR_MAP_INDEX_FILE_EXTENSION);
 
-    try (OnHeapSparseMapIndexCreator creator = new OnHeapSparseMapIndexCreator(
+    try (OnHeapColumnarMapIndexCreator creator = new OnHeapColumnarMapIndexCreator(
         INDEX_DIR, COLUMN_NAME, fieldSpec, config, keyTypes, FieldSpec.DataType.STRING)) {
       for (Map<String, Object> doc : docs) {
         creator.add(doc);
@@ -1095,11 +1095,11 @@ public class SparseMapIndexTest {
     }
 
     try (PinotDataBuffer buffer = PinotDataBuffer.mapReadOnlyBigEndianFile(indexFile);
-        ImmutableSparseMapIndexReader reader = new ImmutableSparseMapIndexReader(buffer, null)) {
+        ImmutableColumnarMapIndexReader reader = new ImmutableColumnarMapIndexReader(buffer, null)) {
 
       // Build DataSource and get per-key DataSource
       org.apache.pinot.segment.spi.datasource.DataSource ds =
-          new SparseMapDataSource(buildColumnMetadata(fieldSpec, 5), reader).getKeyDataSource("status");
+          new ColumnarMapDataSource(buildColumnMetadata(fieldSpec, 5), reader).getKeyDataSource("status");
       assertNotNull(ds);
 
       org.apache.pinot.segment.spi.index.reader.ForwardIndexReader<?> fwd = ds.getForwardIndex();
@@ -1140,7 +1140,7 @@ public class SparseMapIndexTest {
     File indexFile = createIndex(keyTypes, docs);
 
     try (PinotDataBuffer buffer = PinotDataBuffer.mapReadOnlyBigEndianFile(indexFile);
-        ImmutableSparseMapIndexReader reader = new ImmutableSparseMapIndexReader(buffer, null)) {
+        ImmutableColumnarMapIndexReader reader = new ImmutableColumnarMapIndexReader(buffer, null)) {
       assertNotNull(reader.getDictIdReader("name"), "DictId reader should be available by default");
       assertNotNull(reader.getKeyDictionary("name"), "Key dictionary should be available by default");
 
