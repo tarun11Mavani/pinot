@@ -28,8 +28,9 @@ import org.apache.pinot.segment.spi.V1Constants;
 import org.apache.pinot.segment.spi.index.reader.SparseMapIndexReader;
 import org.apache.pinot.segment.spi.memory.PinotDataBuffer;
 import org.apache.pinot.spi.config.table.SparseMapIndexConfig;
+import org.apache.pinot.spi.data.ComplexFieldSpec;
+import org.apache.pinot.spi.data.DimensionFieldSpec;
 import org.apache.pinot.spi.data.FieldSpec;
-import org.apache.pinot.spi.data.SparseMapFieldSpec;
 import org.roaringbitmap.buffer.ImmutableRoaringBitmap;
 import org.testng.annotations.AfterMethod;
 import org.testng.annotations.BeforeMethod;
@@ -47,6 +48,14 @@ public class SparseMapIndexEndToEndTest {
 
   private static final File INDEX_DIR = new File(FileUtils.getTempDirectory(), "SparseMapIndexEndToEndTest");
   private static final String COLUMN = "userMetrics";
+
+  private static ComplexFieldSpec buildMapFieldSpec(String columnName) {
+    Map<String, FieldSpec> childFieldSpecs = Map.of(
+        "key", new DimensionFieldSpec("key", FieldSpec.DataType.STRING, true),
+        "value", new DimensionFieldSpec("value", FieldSpec.DataType.STRING, true)
+    );
+    return new ComplexFieldSpec(columnName, FieldSpec.DataType.MAP, true, childFieldSpecs);
+  }
 
   @BeforeMethod
   public void setUp()
@@ -73,8 +82,7 @@ public class SparseMapIndexEndToEndTest {
     keyTypes.put("spend", FieldSpec.DataType.DOUBLE);
     keyTypes.put("country", FieldSpec.DataType.STRING);
 
-    SparseMapFieldSpec fieldSpec = new SparseMapFieldSpec(COLUMN, keyTypes);
-    fieldSpec.setDefaultValueType(FieldSpec.DataType.STRING);
+    ComplexFieldSpec fieldSpec = buildMapFieldSpec(COLUMN);
 
     SparseMapIndexConfig config = new SparseMapIndexConfig(true, null, true, null, 100);
 
@@ -91,7 +99,8 @@ public class SparseMapIndexEndToEndTest {
 
     File indexFile = new File(INDEX_DIR, COLUMN + V1Constants.Indexes.SPARSE_MAP_INDEX_FILE_EXTENSION);
     try (OnHeapSparseMapIndexCreator creator =
-        new OnHeapSparseMapIndexCreator(INDEX_DIR, COLUMN, fieldSpec, config)) {
+        new OnHeapSparseMapIndexCreator(INDEX_DIR, COLUMN, fieldSpec, config,
+            keyTypes, FieldSpec.DataType.STRING)) {
       for (Map<String, Object> doc : docs) {
         creator.add(doc);
       }
@@ -192,8 +201,7 @@ public class SparseMapIndexEndToEndTest {
     Map<String, FieldSpec.DataType> keyTypes = new HashMap<>();
     keyTypes.put("score", FieldSpec.DataType.FLOAT);
 
-    SparseMapFieldSpec fieldSpec = new SparseMapFieldSpec(COLUMN, keyTypes);
-    fieldSpec.setDefaultValueType(FieldSpec.DataType.STRING);
+    ComplexFieldSpec fieldSpec = buildMapFieldSpec(COLUMN);
 
     SparseMapIndexConfig config = new SparseMapIndexConfig(true, null, false, null, 100);
 
@@ -205,7 +213,8 @@ public class SparseMapIndexEndToEndTest {
 
     File indexFile = new File(INDEX_DIR, COLUMN + V1Constants.Indexes.SPARSE_MAP_INDEX_FILE_EXTENSION);
     try (OnHeapSparseMapIndexCreator creator =
-        new OnHeapSparseMapIndexCreator(INDEX_DIR, COLUMN, fieldSpec, config)) {
+        new OnHeapSparseMapIndexCreator(INDEX_DIR, COLUMN, fieldSpec, config,
+            keyTypes, FieldSpec.DataType.STRING)) {
       for (Map<String, Object> doc : docs) {
         creator.add(doc);
       }
@@ -241,8 +250,7 @@ public class SparseMapIndexEndToEndTest {
     Map<String, FieldSpec.DataType> keyTypes = new HashMap<>();
     keyTypes.put("value", FieldSpec.DataType.INT);
 
-    SparseMapFieldSpec fieldSpec = new SparseMapFieldSpec(COLUMN, keyTypes);
-    fieldSpec.setDefaultValueType(FieldSpec.DataType.STRING);
+    ComplexFieldSpec fieldSpec = buildMapFieldSpec(COLUMN);
 
     SparseMapIndexConfig config = new SparseMapIndexConfig(true, null, true, null, 100);
     org.apache.pinot.segment.spi.index.mutable.provider.MutableIndexContext context =
@@ -250,7 +258,8 @@ public class SparseMapIndexEndToEndTest {
             fieldSpec, -1, false, "testSegment", null, 100, false, 100, 1000, 1, null);
 
     // Step 1: Add to mutable index
-    MutableSparseMapIndexImpl mutableIdx = new MutableSparseMapIndexImpl(context, config);
+    MutableSparseMapIndexImpl mutableIdx = new MutableSparseMapIndexImpl(context, config,
+        keyTypes, FieldSpec.DataType.STRING);
     mutableIdx.add(Map.of("value", 10), -1, 0);
     mutableIdx.add(Map.of("value", 20, "label", "alpha"), -1, 1);
     mutableIdx.add(Map.of("label", "beta"), -1, 2);
@@ -273,7 +282,8 @@ public class SparseMapIndexEndToEndTest {
     );
 
     try (OnHeapSparseMapIndexCreator creator =
-        new OnHeapSparseMapIndexCreator(INDEX_DIR, COLUMN, fieldSpec, config)) {
+        new OnHeapSparseMapIndexCreator(INDEX_DIR, COLUMN, fieldSpec, config,
+            keyTypes, FieldSpec.DataType.STRING)) {
       for (Map<String, Object> doc : allDocs) {
         creator.add(doc);
       }
@@ -314,11 +324,11 @@ public class SparseMapIndexEndToEndTest {
     Map<String, FieldSpec.DataType> keyTypes = new HashMap<>();
     keyTypes.put("price", FieldSpec.DataType.INT);
     keyTypes.put("quantity", FieldSpec.DataType.INT);
-    SparseMapFieldSpec fieldSpec = new SparseMapFieldSpec(colName, keyTypes);
-    fieldSpec.setDefaultValueType(FieldSpec.DataType.STRING);
+    ComplexFieldSpec fieldSpec = buildMapFieldSpec(colName);
     SparseMapIndexConfig config = new SparseMapIndexConfig(true, null, false, null, 10);
     OnHeapSparseMapIndexCreator creator =
-        new OnHeapSparseMapIndexCreator(INDEX_DIR, colName, fieldSpec, config);
+        new OnHeapSparseMapIndexCreator(INDEX_DIR, colName, fieldSpec, config,
+            keyTypes, FieldSpec.DataType.STRING);
 
     // "Segment A" docs: 0, 1 — have price and quantity
     creator.add(Map.of("price", 10, "quantity", 5));   // doc 0

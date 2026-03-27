@@ -111,7 +111,6 @@ public class TypeFactory extends JavaTypeFactoryImpl {
       case LIST:
         // TODO: support LIST, MV column should go fall into this category.
       case STRUCT:
-      case SPARSE_MAP:
       default:
         String message = String.format("Unsupported type: %s ", fieldSpec.getDataType());
         throw new UnsupportedOperationException(message);

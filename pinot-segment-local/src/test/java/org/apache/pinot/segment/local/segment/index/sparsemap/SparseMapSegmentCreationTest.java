@@ -31,10 +31,10 @@ import org.apache.pinot.segment.spi.index.StandardIndexes;
 import org.apache.pinot.spi.config.table.FieldConfig;
 import org.apache.pinot.spi.config.table.TableConfig;
 import org.apache.pinot.spi.config.table.TableType;
+import org.apache.pinot.spi.data.ComplexFieldSpec;
 import org.apache.pinot.spi.data.DimensionFieldSpec;
 import org.apache.pinot.spi.data.FieldSpec;
 import org.apache.pinot.spi.data.Schema;
-import org.apache.pinot.spi.data.SparseMapFieldSpec;
 import org.apache.pinot.spi.data.readers.GenericRow;
 import org.apache.pinot.spi.data.readers.RecordReader;
 import org.apache.pinot.spi.utils.JsonUtils;
@@ -47,7 +47,7 @@ import static org.testng.Assert.*;
 
 
 /**
- * Tests full segment creation pipeline for SPARSE_MAP columns.
+ * Tests full segment creation pipeline for MAP columns with sparse map index.
  * Verifies that OnHeapSparseMapIndexCreator is properly invoked and produces an index file.
  */
 public class SparseMapSegmentCreationTest {
@@ -70,13 +70,16 @@ public class SparseMapSegmentCreationTest {
   @Test
   public void testSparseMapIndexCreatedInSegment()
       throws Exception {
-    // Build schema with a SPARSE_MAP column
+    // Build schema with a MAP column
     Map<String, FieldSpec.DataType> keyTypes = new HashMap<>();
     keyTypes.put("clicks", FieldSpec.DataType.LONG);
     keyTypes.put("spend", FieldSpec.DataType.DOUBLE);
 
-    SparseMapFieldSpec metricsSpec = new SparseMapFieldSpec("metrics", keyTypes);
-    metricsSpec.setDefaultValueType(FieldSpec.DataType.STRING);
+    Map<String, FieldSpec> childFieldSpecs = Map.of(
+        "key", new DimensionFieldSpec("key", FieldSpec.DataType.STRING, true),
+        "value", new DimensionFieldSpec("value", FieldSpec.DataType.STRING, true)
+    );
+    ComplexFieldSpec metricsSpec = new ComplexFieldSpec("metrics", FieldSpec.DataType.MAP, true, childFieldSpecs);
 
     Schema schema = new Schema.SchemaBuilder()
         .setSchemaName(TABLE_NAME)

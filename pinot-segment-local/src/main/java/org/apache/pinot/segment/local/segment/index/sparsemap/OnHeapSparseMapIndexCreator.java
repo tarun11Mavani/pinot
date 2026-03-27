@@ -40,8 +40,9 @@ import org.apache.pinot.segment.spi.V1Constants;
 import org.apache.pinot.segment.spi.creator.IndexCreationContext;
 import org.apache.pinot.segment.spi.index.creator.SparseMapIndexCreator;
 import org.apache.pinot.spi.config.table.SparseMapIndexConfig;
+import org.apache.pinot.spi.data.ComplexFieldSpec;
+import org.apache.pinot.spi.data.FieldSpec;
 import org.apache.pinot.spi.data.FieldSpec.DataType;
-import org.apache.pinot.spi.data.SparseMapFieldSpec;
 import org.roaringbitmap.RoaringBitmap;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
@@ -78,11 +79,19 @@ public class OnHeapSparseMapIndexCreator implements SparseMapIndexCreator {
   public OnHeapSparseMapIndexCreator(IndexCreationContext context, SparseMapIndexConfig config)
       throws IOException {
     this(context.getIndexDir(), context.getFieldSpec().getName(),
-        (SparseMapFieldSpec) context.getFieldSpec(), config);
+        context.getFieldSpec(), config);
   }
 
-  public OnHeapSparseMapIndexCreator(File indexDir, String columnName, SparseMapFieldSpec fieldSpec,
+  public OnHeapSparseMapIndexCreator(File indexDir, String columnName, FieldSpec fieldSpec,
       SparseMapIndexConfig config)
+      throws IOException {
+    this(indexDir, columnName, fieldSpec, config, null, null);
+  }
+
+  public OnHeapSparseMapIndexCreator(File indexDir, String columnName, FieldSpec fieldSpec,
+      SparseMapIndexConfig config,
+      @Nullable Map<String, FieldSpec.DataType> explicitKeyTypes,
+      @Nullable FieldSpec.DataType explicitDefaultValueType)
       throws IOException {
     _indexDir = indexDir;
     _columnName = columnName;
@@ -90,10 +99,15 @@ public class OnHeapSparseMapIndexCreator implements SparseMapIndexCreator {
     _indexedKeys = config.getIndexedKeys();
     _maxKeys = config.getMaxKeys();
 
-    Map<String, DataType> keyTypes = fieldSpec.getKeyTypes();
+    Map<String, FieldSpec.DataType> keyTypes = explicitKeyTypes;
+    FieldSpec.DataType defaultType = explicitDefaultValueType;
+    if (keyTypes == null && fieldSpec instanceof ComplexFieldSpec) {
+      ComplexFieldSpec.MapFieldSpec mapSpec = ComplexFieldSpec.toMapFieldSpec((ComplexFieldSpec) fieldSpec);
+      keyTypes = mapSpec.getKeyTypes();
+      defaultType = mapSpec.getDefaultValueType();
+    }
     _keyTypes = keyTypes != null ? new HashMap<>(keyTypes) : new HashMap<>();
-    DataType defaultType = fieldSpec.getDefaultValueType();
-    _defaultValueType = defaultType != null ? defaultType : DataType.STRING;
+    _defaultValueType = defaultType != null ? defaultType : FieldSpec.DataType.STRING;
   }
 
   @Override
@@ -158,7 +172,7 @@ public class OnHeapSparseMapIndexCreator implements SparseMapIndexCreator {
   @Override
   public void add(Object[] values, @Nullable int[] dictIds)
       throws IOException {
-    throw new UnsupportedOperationException("SPARSE_MAP is single-value only");
+    throw new UnsupportedOperationException("MAP with sparse map index is single-value only");
   }
 
   private Object coerceValue(Object value, DataType dataType) {

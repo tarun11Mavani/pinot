@@ -90,7 +90,7 @@ public class RealtimeSegmentStatsContainer implements SegmentPreIndexStatsContai
         continue;
       }
 
-      // Handle SPARSE_MAP columns
+      // Handle MAP columns with sparse map index
       if (dataSource instanceof SparseMapDataSource) {
         _columnStatisticsMap.put(columnName,
             createSparseMapColumnStatistics(columnName, dataSource, isUsingCompactedReader, validDocIdsSnapshot,
@@ -140,7 +140,7 @@ public class RealtimeSegmentStatsContainer implements SegmentPreIndexStatsContai
   }
 
   /**
-   * Creates column statistics for SPARSE_MAP columns.
+   * Creates column statistics for MAP columns with sparse map index.
    */
   private ColumnStatistics createSparseMapColumnStatistics(String columnName, DataSource dataSource,
       boolean useCompactedStatistics, ThreadSafeMutableRoaringBitmap validDocIds,

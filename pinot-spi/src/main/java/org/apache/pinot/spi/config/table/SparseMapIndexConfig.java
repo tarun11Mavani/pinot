@@ -20,12 +20,14 @@ package org.apache.pinot.spi.config.table;
 
 import com.fasterxml.jackson.annotation.JsonCreator;
 import com.fasterxml.jackson.annotation.JsonProperty;
+import java.util.HashSet;
+import java.util.Map;
 import java.util.Set;
 import javax.annotation.Nullable;
 
 
 /**
- * Configuration for the SparseMap index on a SPARSE_MAP column.
+ * Configuration for the SparseMap index on a MAP column.
  * Controls which keys are indexed per-key in columnar storage and whether
  * per-key inverted indexes are enabled for fast value-based filtering.
  *
@@ -47,9 +49,49 @@ public class SparseMapIndexConfig extends IndexConfig {
   private final boolean _enableInvertedIndexForAll;
   private final Set<String> _invertedIndexKeys;
   private final int _maxKeys;
+  private final Set<String> _noDictionaryKeys;
+
+  /**
+   * Creates a SparseMapIndexConfig from FieldConfig properties map.
+   * Reads the MAP_INDEX_* property constants from {@link FieldConfig}.
+   */
+  public static SparseMapIndexConfig fromProperties(@Nullable Map<String, String> properties) {
+    if (properties == null || properties.isEmpty()) {
+      return DEFAULT;
+    }
+    int maxKeys = Integer.parseInt(
+        properties.getOrDefault(FieldConfig.MAP_INDEX_MAX_KEYS, "1000"));
+    Set<String> invertedIndexKeys = parseCommaSeparated(
+        properties.get(FieldConfig.MAP_INDEX_INVERTED_INDEX_KEYS));
+    Set<String> noDictionaryKeys = parseCommaSeparated(
+        properties.get(FieldConfig.MAP_INDEX_NO_DICTIONARY_KEYS));
+    boolean enableInvertedForAll = Boolean.parseBoolean(
+        properties.getOrDefault(FieldConfig.MAP_INDEX_ENABLE_INVERTED_FOR_ALL, "false"));
+    return new SparseMapIndexConfig(true, null, enableInvertedForAll, invertedIndexKeys, maxKeys, noDictionaryKeys);
+  }
+
+  @Nullable
+  private static Set<String> parseCommaSeparated(@Nullable String value) {
+    if (value == null || value.trim().isEmpty()) {
+      return null;
+    }
+    Set<String> result = new HashSet<>();
+    for (String part : value.split(FieldConfig.MAP_INDEX_KEY_SEPARATOR)) {
+      String trimmed = part.trim();
+      if (!trimmed.isEmpty()) {
+        result.add(trimmed);
+      }
+    }
+    return result.isEmpty() ? null : result;
+  }
 
   public SparseMapIndexConfig(boolean enabled) {
-    this(enabled, null, false, null, 1000);
+    this(enabled, null, false, null, 1000, null);
+  }
+
+  public SparseMapIndexConfig(boolean enabled, @Nullable Set<String> indexedKeys,
+      boolean enableInvertedIndexForAll, @Nullable Set<String> invertedIndexKeys, int maxKeys) {
+    this(enabled, indexedKeys, enableInvertedIndexForAll, invertedIndexKeys, maxKeys, null);
   }
 
   @JsonCreator
@@ -58,12 +100,14 @@ public class SparseMapIndexConfig extends IndexConfig {
       @JsonProperty("indexedKeys") @Nullable Set<String> indexedKeys,
       @JsonProperty("enableInvertedIndexForAll") boolean enableInvertedIndexForAll,
       @JsonProperty("invertedIndexKeys") @Nullable Set<String> invertedIndexKeys,
-      @JsonProperty("maxKeys") int maxKeys) {
+      @JsonProperty("maxKeys") int maxKeys,
+      @JsonProperty("noDictionaryKeys") @Nullable Set<String> noDictionaryKeys) {
     super(!enabled);
     _indexedKeys = indexedKeys;
     _enableInvertedIndexForAll = enableInvertedIndexForAll;
     _invertedIndexKeys = invertedIndexKeys;
     _maxKeys = maxKeys > 0 ? maxKeys : 1000;
+    _noDictionaryKeys = noDictionaryKeys;
   }
 
   /**
@@ -106,5 +150,14 @@ public class SparseMapIndexConfig extends IndexConfig {
    */
   public int getMaxKeys() {
     return _maxKeys;
+  }
+
+  /**
+   * Returns the set of keys that should not have dictionary encoding, or null if not specified.
+   * When null, dictionary encoding is used for all keys (default behavior).
+   */
+  @Nullable
+  public Set<String> getNoDictionaryKeys() {
+    return _noDictionaryKeys;
   }
 }

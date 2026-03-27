@@ -40,7 +40,7 @@ import org.apache.pinot.spi.data.FieldSpec;
 
 
 /**
- * Data source for SPARSE_MAP columns. Wraps a {@link SparseMapIndexReader} and exposes it for
+ * Data source for MAP columns with sparse map index. Wraps a {@link SparseMapIndexReader} and exposes it for
  * query access.
  *
  * <p>Implements {@link MapDataSource} so that {@code metrics['key']} expressions handled by
@@ -88,7 +88,7 @@ public class SparseMapDataSource extends BaseDataSource implements MapDataSource
   // ---- MapDataSource implementation ----
 
   /**
-   * SPARSE_MAP columns use {@link org.apache.pinot.spi.data.SparseMapFieldSpec}, not
+   * MAP columns with sparse map index use per-key typed storage rather than the homogeneous
    * {@link ComplexFieldSpec.MapFieldSpec}. Returns {@code null} because the types are incompatible.
    */
   @Nullable
@@ -134,12 +134,12 @@ public class SparseMapDataSource extends BaseDataSource implements MapDataSource
 
   @Override
   public DataSourceMetadata getKeyDataSourceMetadata(String key) {
-    throw new UnsupportedOperationException("getKeyDataSourceMetadata not supported for SPARSE_MAP");
+    throw new UnsupportedOperationException("getKeyDataSourceMetadata not supported for MAP with sparse map index");
   }
 
   @Override
   public ColumnIndexContainer getKeyIndexContainer(String key) {
-    throw new UnsupportedOperationException("getKeyIndexContainer not supported for SPARSE_MAP");
+    throw new UnsupportedOperationException("getKeyIndexContainer not supported for MAP with sparse map index");
   }
 
   private DataSource buildKeyDataSource(String key) {

@@ -27,12 +27,12 @@ import org.apache.pinot.spi.data.FieldSpec.DataType;
 
 
 /**
- * A {@link ForwardIndexReader} for the parent SPARSE_MAP column that delegates to
+ * A {@link ForwardIndexReader} for the parent MAP column (with sparse map index) that delegates to
  * {@link SparseMapIndexReader#getMap(int)}.
  *
  * <p>This reader exposes the reconstructed {@code Map<String, Object>} for each document,
  * allowing downstream consumers ({@code PinotSegmentColumnReader}, {@code PinotSegmentRecordReader},
- * {@code RealtimeSegmentStatsContainer}) to read SPARSE_MAP columns through the standard forward
+ * {@code RealtimeSegmentStatsContainer}) to read MAP columns with sparse map index through the standard forward
  * index API without any special-casing.
  *
  * <p>Only {@link #getMap(int, ForwardIndexReaderContext)} is implemented; other typed accessors

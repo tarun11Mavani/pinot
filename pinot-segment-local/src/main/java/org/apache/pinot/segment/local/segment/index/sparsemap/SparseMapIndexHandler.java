@@ -40,7 +40,7 @@ import org.slf4j.LoggerFactory;
  * removal of the index when the table config disables it. Creating a new SparseMap index
  * from an existing segment is not supported (requires re-ingestion).
  *
- * <p>Segment merge: when segments are merged (e.g., via the Minion merge task), the SPARSE_MAP
+ * <p>Segment merge: when segments are merged (e.g., via the Minion merge task), the sparse map
  * index is rebuilt from scratch by re-ingesting all documents through
  * {@link OnHeapSparseMapIndexCreator}. The resulting merged index contains the union of all
  * keys observed across the merged segments, subject to the {@code maxKeys} limit configured

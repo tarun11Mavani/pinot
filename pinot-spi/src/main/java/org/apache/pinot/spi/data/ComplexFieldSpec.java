@@ -24,6 +24,7 @@ import com.fasterxml.jackson.databind.node.ObjectNode;
 import com.google.common.base.Preconditions;
 import java.util.HashMap;
 import java.util.Map;
+import javax.annotation.Nullable;
 import org.apache.pinot.spi.utils.JsonUtils;
 import org.apache.pinot.spi.utils.StringUtil;
 
@@ -99,8 +100,16 @@ public final class ComplexFieldSpec extends FieldSpec {
     private final String _fieldName;
     private final FieldSpec _keyFieldSpec;
     private final FieldSpec _valueFieldSpec;
+    private final Map<String, FieldSpec.DataType> _keyTypes;
+    private final FieldSpec.DataType _defaultValueType;
 
     private MapFieldSpec(ComplexFieldSpec complexFieldSpec) {
+      this(complexFieldSpec, null, null);
+    }
+
+    private MapFieldSpec(ComplexFieldSpec complexFieldSpec,
+        @Nullable Map<String, FieldSpec.DataType> keyTypes,
+        @Nullable FieldSpec.DataType defaultValueType) {
       Preconditions.checkState(complexFieldSpec.getChildFieldSpecs().containsKey(KEY_FIELD),
           "Missing 'key' in the 'childFieldSpec'");
       Preconditions.checkState(complexFieldSpec.getChildFieldSpecs().containsKey(VALUE_FIELD),
@@ -108,6 +117,8 @@ public final class ComplexFieldSpec extends FieldSpec {
       _keyFieldSpec = complexFieldSpec.getChildFieldSpec(KEY_FIELD);
       _valueFieldSpec = complexFieldSpec.getChildFieldSpec(VALUE_FIELD);
       _fieldName = complexFieldSpec.getName();
+      _keyTypes = keyTypes;
+      _defaultValueType = defaultValueType;
     }
 
     public String getFieldName() {
@@ -121,10 +132,30 @@ public final class ComplexFieldSpec extends FieldSpec {
     public FieldSpec getValueFieldSpec() {
       return _valueFieldSpec;
     }
+
+    @Nullable
+    public Map<String, FieldSpec.DataType> getKeyTypes() {
+      return _keyTypes;
+    }
+
+    @Nullable
+    public FieldSpec.DataType getDefaultValueType() {
+      return _defaultValueType;
+    }
+
+    public FieldSpec.DataType getEffectiveDefaultValueType() {
+      return _defaultValueType != null ? _defaultValueType : FieldSpec.DataType.STRING;
+    }
   }
 
   public static MapFieldSpec toMapFieldSpec(ComplexFieldSpec complexFieldSpec) {
     return new MapFieldSpec(complexFieldSpec);
+  }
+
+  public static MapFieldSpec toMapFieldSpec(ComplexFieldSpec complexFieldSpec,
+      @Nullable Map<String, FieldSpec.DataType> keyTypes,
+      @Nullable FieldSpec.DataType defaultValueType) {
+    return new MapFieldSpec(complexFieldSpec, keyTypes, defaultValueType);
   }
 
   public static ComplexFieldSpec fromMapFieldSpec(MapFieldSpec mapFieldSpec) {

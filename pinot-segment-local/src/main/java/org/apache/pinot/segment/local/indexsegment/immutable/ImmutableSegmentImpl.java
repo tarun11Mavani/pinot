@@ -105,12 +105,14 @@ public class ImmutableSegmentImpl implements ImmutableSegment {
       ColumnMetadata columnMetadata = entry.getValue();
       FieldSpec.DataType dataType = columnMetadata.getFieldSpec().getDataType();
       if (dataType == FieldSpec.DataType.MAP) {
-        _dataSources.put(colName, new ImmutableMapDataSource(entry.getValue(), _indexContainerMap.get(colName)));
-      } else if (dataType == FieldSpec.DataType.SPARSE_MAP) {
         ColumnIndexContainer indexContainer = _indexContainerMap.get(colName);
         SparseMapIndexReader sparseMapReader =
             (SparseMapIndexReader) indexContainer.getIndex(StandardIndexes.sparseMap());
-        _dataSources.put(colName, new SparseMapDataSource(columnMetadata, sparseMapReader));
+        if (sparseMapReader != null) {
+          _dataSources.put(colName, new SparseMapDataSource(columnMetadata, sparseMapReader));
+        } else {
+          _dataSources.put(colName, new ImmutableMapDataSource(entry.getValue(), indexContainer));
+        }
       } else {
         _dataSources.put(colName, new ImmutableDataSource(entry.getValue(), _indexContainerMap.get(colName)));
       }

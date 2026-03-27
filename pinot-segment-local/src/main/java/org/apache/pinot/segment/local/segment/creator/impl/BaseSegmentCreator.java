@@ -88,7 +88,6 @@ import org.apache.pinot.spi.data.FieldSpec;
 import org.apache.pinot.spi.data.FieldSpec.DataType;
 import org.apache.pinot.spi.data.FieldSpec.FieldType;
 import org.apache.pinot.spi.data.Schema;
-import org.apache.pinot.spi.data.SparseMapFieldSpec;
 import org.apache.pinot.spi.env.CommonsConfigurationUtils;
 import org.apache.pinot.spi.env.PinotConfiguration;
 import org.apache.pinot.spi.utils.ReadMode;
@@ -365,7 +364,7 @@ public abstract class BaseSegmentCreator implements SegmentCreator {
    */
   private boolean createDictionaryForColumn(ColumnIndexCreationInfo info, SegmentGeneratorConfig config,
       FieldSpec spec) {
-    if (spec instanceof ComplexFieldSpec || spec.getDataType() == FieldSpec.DataType.SPARSE_MAP) {
+    if (spec instanceof ComplexFieldSpec || spec.getDataType() == FieldSpec.DataType.MAP) {
       return false;
     }
 
@@ -617,23 +616,26 @@ public abstract class BaseSegmentCreator implements SegmentCreator {
       properties.setProperty(getKeyFor(column, DATETIME_GRANULARITY), dateTimeFieldSpec.getGranularity());
     }
 
-    // SPARSE_MAP field: persist key-type declarations so they survive segment reload.
+    // MAP field with sparse map index: persist key-type declarations so they survive segment reload.
     // Each key name and its type are stored as separate properties to avoid comma-delimiter
     // issues in PropertiesConfiguration multi-value parsing.
-    if (dataType == DataType.SPARSE_MAP && fieldSpec instanceof SparseMapFieldSpec) {
-      SparseMapFieldSpec sparseMapSpec = (SparseMapFieldSpec) fieldSpec;
-      if (sparseMapSpec.getKeyTypes() != null && !sparseMapSpec.getKeyTypes().isEmpty()) {
+    if (dataType == DataType.MAP && fieldSpec instanceof ComplexFieldSpec) {
+      ComplexFieldSpec complexSpec = (ComplexFieldSpec) fieldSpec;
+      ComplexFieldSpec.MapFieldSpec mapFieldSpec = ComplexFieldSpec.toMapFieldSpec(complexSpec);
+      Map<String, DataType> keyTypes = mapFieldSpec.getKeyTypes();
+      if (keyTypes != null && !keyTypes.isEmpty()) {
         properties.setProperty(getKeyFor(column, SPARSE_MAP_KEY_NAMES),
-            new ArrayList<>(sparseMapSpec.getKeyTypes().keySet()));
-        for (Map.Entry<String, DataType> entry : sparseMapSpec.getKeyTypes().entrySet()) {
+            new ArrayList<>(keyTypes.keySet()));
+        for (Map.Entry<String, DataType> entry : keyTypes.entrySet()) {
           properties.setProperty(
               getKeyFor(column, SPARSE_MAP_KEY_TYPE_PREFIX + "." + entry.getKey()),
               entry.getValue().name());
         }
       }
-      if (sparseMapSpec.getDefaultValueType() != null) {
+      DataType defaultValueType = mapFieldSpec.getDefaultValueType();
+      if (defaultValueType != null) {
         properties.setProperty(getKeyFor(column, SPARSE_MAP_DEFAULT_VALUE_TYPE),
-            sparseMapSpec.getDefaultValueType().name());
+            defaultValueType.name());
       }
     }
 

@@ -75,7 +75,6 @@ public final class Schema implements Serializable {
   private TimeFieldSpec _timeFieldSpec;
   private final List<DateTimeFieldSpec> _dateTimeFieldSpecs = new ArrayList<>();
   private final List<ComplexFieldSpec> _complexFieldSpecs = new ArrayList<>();
-  private final List<SparseMapFieldSpec> _sparseMapFieldSpecs = new ArrayList<>();
   // names of the columns that used as primary keys
   // TODO(yupeng): add validation checks like duplicate columns and use of time column
   @Nullable
@@ -88,11 +87,9 @@ public final class Schema implements Serializable {
   private final List<String> _metricNames = new ArrayList<>();
   private final List<String> _dateTimeNames = new ArrayList<>();
   private final List<String> _complexNames = new ArrayList<>();
-  private final List<String> _sparseMapNames = new ArrayList<>();
   // Set to true if this schema has a JSON column (used to quickly decide whether to run JsonStatementOptimizer on
   // queries or not).
   private boolean _hasJSONColumn;
-  private boolean _hasSparseMapColumn;
 
   public static Schema fromFile(File schemaFile)
       throws IOException {
@@ -131,7 +128,6 @@ public final class Schema implements Serializable {
           case STRING:
           case JSON:
           case BYTES:
-          case SPARSE_MAP:
             break;
           default:
             throw new IllegalStateException(
@@ -159,14 +155,6 @@ public final class Schema implements Serializable {
             break;
           default:
             throw new IllegalStateException("Unsupported data type: " + dataType + " in COMPLEX field");
-        }
-        break;
-      case SPARSE_MAP:
-        switch (dataType) {
-          case SPARSE_MAP:
-            break;
-          default:
-            throw new IllegalStateException("Unsupported data type: " + dataType + " in SPARSE_MAP field");
         }
         break;
       default:
@@ -285,23 +273,6 @@ public final class Schema implements Serializable {
     }
   }
 
-  public List<SparseMapFieldSpec> getSparseMapFieldSpecs() {
-    return _sparseMapFieldSpecs;
-  }
-
-  /**
-   * Required by JSON deserializer. DO NOT USE. DO NOT REMOVE.
-   * Adding @Deprecated to prevent usage
-   */
-  @Deprecated
-  public void setSparseMapFieldSpecs(List<SparseMapFieldSpec> sparseMapFieldSpecs) {
-    Preconditions.checkState(_sparseMapFieldSpecs.isEmpty());
-
-    for (SparseMapFieldSpec sparseMapFieldSpec : sparseMapFieldSpecs) {
-      addField(sparseMapFieldSpec);
-    }
-  }
-
   public void addField(FieldSpec fieldSpec) {
     Preconditions.checkNotNull(fieldSpec);
     String columnName = fieldSpec.getName();
@@ -329,24 +300,6 @@ public final class Schema implements Serializable {
       case COMPLEX:
         _complexNames.add(columnName);
         _complexFieldSpecs.add((ComplexFieldSpec) fieldSpec);
-        break;
-      case SPARSE_MAP:
-        SparseMapFieldSpec sparseMapSpec = (SparseMapFieldSpec) fieldSpec;
-        Preconditions.checkState(sparseMapSpec.isSingleValueField(),
-            "SPARSE_MAP column '%s' must be single-value", columnName);
-        Preconditions.checkState(sparseMapSpec.getKeyTypes() != null && !sparseMapSpec.getKeyTypes().isEmpty(),
-            "SPARSE_MAP column '%s' must declare keyTypes", columnName);
-        for (Map.Entry<String, DataType> entry : sparseMapSpec.getKeyTypes().entrySet()) {
-          DataType valueType = entry.getValue();
-          Preconditions.checkState(
-              valueType == DataType.INT || valueType == DataType.LONG || valueType == DataType.FLOAT
-                  || valueType == DataType.DOUBLE || valueType == DataType.STRING || valueType == DataType.BYTES,
-              "SPARSE_MAP column '%s' key '%s' has unsupported value type: %s",
-              columnName, entry.getKey(), valueType);
-        }
-        _sparseMapNames.add(columnName);
-        _sparseMapFieldSpecs.add(sparseMapSpec);
-        _hasSparseMapColumn = true;
         break;
       default:
         throw new UnsupportedOperationException("Unsupported field type: " + fieldType);
@@ -390,11 +343,6 @@ public final class Schema implements Serializable {
           _complexNames.remove(index);
           _complexFieldSpecs.remove(index);
           break;
-        case SPARSE_MAP:
-          index = _sparseMapNames.indexOf(columnName);
-          _sparseMapNames.remove(index);
-          _sparseMapFieldSpecs.remove(index);
-          break;
         default:
           throw new UnsupportedOperationException("Unsupported field type: " + fieldType);
       }
@@ -411,11 +359,6 @@ public final class Schema implements Serializable {
   @JsonIgnore
   public boolean hasJSONColumn() {
     return _hasJSONColumn;
-  }
-
-  @JsonIgnore
-  public boolean hasSparseMapColumn() {
-    return _hasSparseMapColumn;
   }
 
   @JsonIgnore
@@ -560,11 +503,6 @@ public final class Schema implements Serializable {
     return _complexNames;
   }
 
-  @JsonIgnore
-  public List<String> getSparseMapNames() {
-    return _sparseMapNames;
-  }
-
   /**
    * Returns a json representation of the schema.
    */
@@ -603,13 +541,6 @@ public final class Schema implements Serializable {
         jsonArray.add(complexFieldSpec.toJsonObject());
       }
       jsonObject.set("complexFieldSpecs", jsonArray);
-    }
-    if (!_sparseMapFieldSpecs.isEmpty()) {
-      ArrayNode jsonArray = JsonUtils.newArrayNode();
-      for (SparseMapFieldSpec sparseMapFieldSpec : _sparseMapFieldSpecs) {
-        jsonArray.add(sparseMapFieldSpec.toJsonObject());
-      }
-      jsonObject.set("sparseMapFieldSpecs", jsonArray);
     }
     if (_primaryKeyColumns != null && !_primaryKeyColumns.isEmpty()) {
       ArrayNode jsonArray = JsonUtils.newArrayNode();
@@ -880,7 +811,6 @@ public final class Schema implements Serializable {
         && EqualityUtils.isEqual(_timeFieldSpec, that._timeFieldSpec)
         && EqualityUtils.isEqualIgnoreOrder(_dateTimeFieldSpecs, that._dateTimeFieldSpecs)
         && EqualityUtils.isEqualIgnoreOrder(_complexFieldSpecs, that._complexFieldSpecs)
-        && EqualityUtils.isEqualIgnoreOrder(_sparseMapFieldSpecs, that._sparseMapFieldSpecs)
         && EqualityUtils.isEqual(_primaryKeyColumns, that._primaryKeyColumns)
         && EqualityUtils.isEqual(_enableColumnBasedNullHandling, that._enableColumnBasedNullHandling);
     //@formatter:on
@@ -950,7 +880,6 @@ public final class Schema implements Serializable {
     result = EqualityUtils.hashCodeOf(result, _timeFieldSpec);
     result = EqualityUtils.hashCodeOf(result, _dateTimeFieldSpecs);
     result = EqualityUtils.hashCodeOf(result, _complexFieldSpecs);
-    result = EqualityUtils.hashCodeOf(result, _sparseMapFieldSpecs);
     result = EqualityUtils.hashCodeOf(result, _primaryKeyColumns);
     result = EqualityUtils.hashCodeOf(result, _enableColumnBasedNullHandling);
     return result;
