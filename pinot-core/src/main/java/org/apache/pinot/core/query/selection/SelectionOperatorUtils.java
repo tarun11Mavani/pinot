@@ -418,7 +418,6 @@ public class SelectionOperatorUtils {
             dataTableBuilder.setColumn(i, (ByteArray) columnValue);
             break;
           case MAP:
-          case SPARSE_MAP:
             dataTableBuilder.setColumn(i, (Map) columnValue);
             break;
           case UNKNOWN:
@@ -496,7 +495,6 @@ public class SelectionOperatorUtils {
           row[i] = dataTable.getBytes(rowId, i);
           break;
         case MAP:
-        case SPARSE_MAP:
           row[i] = dataTable.getMap(rowId, i);
           break;
         case UNKNOWN:
