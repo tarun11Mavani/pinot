@@ -71,7 +71,7 @@ public final class ComplexFieldSpec extends FieldSpec {
       Map<String, FieldSpec> childFieldSpecs) {
     super(name, dataType, isSingleValueField);
     Preconditions.checkArgument(dataType == DataType.STRUCT || dataType == DataType.MAP || dataType == DataType.LIST);
-    _childFieldSpecs = childFieldSpecs;
+    _childFieldSpecs = new HashMap<>(childFieldSpecs);
   }
 
   public static String[] getColumnPath(String column) {

@@ -260,14 +260,14 @@ public class OnHeapColumnarMapIndexCreator implements ColumnarMapIndexCreator {
    * Returns true if dictionary+dictIdFwd is more compact than raw forward index.
    */
   private boolean shouldUseDictionary(String key, DataType storedType, int numDocsForKey) {
-    // Explicit override: noDictionaryKeys forces raw encoding
-    if (!_config.shouldUseDictionaryForKey(key)) {
-      return false;
-    }
-
     // Keys with inverted index always get dictionary (inverted index requires it)
     if (_config.shouldEnableInvertedIndexForKey(key)) {
       return true;
+    }
+
+    // Explicit override: noDictionaryKeys forces raw encoding
+    if (!_config.shouldUseDictionaryForKey(key)) {
+      return false;
     }
 
     Set<String> distinctValues = _distinctValuesPerKey.get(key);
