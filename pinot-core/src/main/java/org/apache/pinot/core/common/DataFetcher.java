@@ -18,7 +18,6 @@
  */
 package org.apache.pinot.core.common;
 
-import com.google.common.base.Preconditions;
 import java.math.BigDecimal;
 import java.util.Arrays;
 import java.util.HashMap;
@@ -27,6 +26,7 @@ import javax.annotation.Nullable;
 import org.apache.pinot.core.plan.DocIdSetPlanNode;
 import org.apache.pinot.segment.spi.datasource.DataSource;
 import org.apache.pinot.segment.spi.datasource.DataSourceMetadata;
+import org.apache.pinot.segment.spi.datasource.MapDataSource;
 import org.apache.pinot.segment.spi.index.reader.Dictionary;
 import org.apache.pinot.segment.spi.index.reader.ForwardIndexReader;
 import org.apache.pinot.segment.spi.index.reader.ForwardIndexReaderContext;
@@ -75,8 +75,17 @@ public class DataFetcher implements AutoCloseable {
 
   public void addDataSource(String column, DataSource dataSource) {
     ForwardIndexReader<?> forwardIndexReader = dataSource.getForwardIndex();
-    Preconditions.checkState(forwardIndexReader != null,
-        "Forward index disabled for column: %s, cannot create DataFetcher!", column);
+    if (forwardIndexReader == null) {
+      // MapDataSource columns with no forward index (e.g. COLUMNAR_MAP) expose their values through
+      // per-key DataSources that are added lazily by DataBlockCache.addDataSource() when
+      // ProjectionBlock.getBlockValueSet(String[] paths) resolves a map-item expression such as
+      // metrics['key']. Skip these columns here; they do not need a ColumnValueReader.
+      if (dataSource instanceof MapDataSource) {
+        return;
+      }
+      throw new IllegalStateException(
+          String.format("Forward index disabled for column: %s, cannot create DataFetcher!", column));
+    }
     ColumnValueReader columnValueReader = new ColumnValueReader(forwardIndexReader, dataSource.getDictionary());
     _columnValueReaderMap.put(column, columnValueReader);
   }

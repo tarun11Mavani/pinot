@@ -33,11 +33,13 @@ import org.apache.pinot.core.common.BlockDocIdSet;
 import org.apache.pinot.core.common.Operator;
 import org.apache.pinot.core.operator.ExplainAttributeBuilder;
 import org.apache.pinot.core.query.request.context.QueryContext;
+import org.apache.pinot.segment.local.segment.index.columnarmap.ColumnarMapDataSource;
 import org.apache.pinot.segment.spi.IndexSegment;
 import org.apache.pinot.segment.spi.datasource.DataSource;
 import org.apache.pinot.segment.spi.index.IndexService;
 import org.apache.pinot.segment.spi.index.IndexType;
 import org.apache.pinot.segment.spi.index.reader.JsonIndexReader;
+import org.apache.pinot.segment.spi.index.reader.ColumnarMapIndexReader;
 
 
 /**
@@ -50,6 +52,7 @@ public class MapFilterOperator extends BaseFilterOperator {
 
   private final JsonMatchFilterOperator _jsonMatchOperator;
   private final ExpressionFilterOperator _expressionFilterOperator;
+  private final ColumnarMapFilterOperator _columnarMapFilterOperator;
   private final String _columnName;
   private final String _keyName;
   private final Predicate _predicate;
@@ -68,28 +71,46 @@ public class MapFilterOperator extends BaseFilterOperator {
     _columnName = arguments.get(0).getIdentifier();
     _keyName = arguments.get(1).getLiteral().getStringValue();
 
-    JsonIndexReader jsonIndex = null;
-    if (canUseJsonIndex(_predicate.getType())) {
-      DataSource dataSource = indexSegment.getDataSourceNullable(_columnName);
-      if (dataSource != null) {
-        jsonIndex = dataSource.getJsonIndex();
-        if (jsonIndex == null) {
-          // Fallback to Composite JSON Index if standard JSON index is not available
-          Optional<IndexType<?, ?, ?>> compositeIndex =
-              IndexService.getInstance().getOptional("composite_json_index");
-          if (compositeIndex.isPresent()) {
-            jsonIndex = (JsonIndexReader) dataSource.getIndex(compositeIndex.get());
+    // Check for ColumnarMap index first (for COLUMNAR_MAP columns)
+    ColumnarMapIndexReader columnarMapReader = null;
+    DataSource dataSource = indexSegment.getDataSourceNullable(_columnName);
+    if (dataSource instanceof ColumnarMapDataSource) {
+      columnarMapReader = ((ColumnarMapDataSource) dataSource).getColumnarMapIndexReader();
+    }
+
+    if (columnarMapReader != null && canUseColumnarMapIndex(predicate.getType())) {
+      _columnarMapFilterOperator = new ColumnarMapFilterOperator(columnarMapReader, predicate, _keyName, numDocs);
+      _jsonMatchOperator = null;
+      _expressionFilterOperator = null;
+    } else if (columnarMapReader != null) {
+      // Range and other non-index predicates on COLUMNAR_MAP fall back to expression filter
+      _columnarMapFilterOperator = null;
+      _jsonMatchOperator = null;
+      _expressionFilterOperator = new ExpressionFilterOperator(indexSegment, queryContext, predicate, numDocs);
+    } else {
+      _columnarMapFilterOperator = null;
+      JsonIndexReader jsonIndex = null;
+      if (canUseJsonIndex(_predicate.getType())) {
+        if (dataSource != null) {
+          jsonIndex = dataSource.getJsonIndex();
+          if (jsonIndex == null) {
+            // Fallback to Composite JSON Index if standard JSON index is not available
+            Optional<IndexType<?, ?, ?>> compositeIndex =
+                IndexService.getInstance().getOptional("composite_json_index");
+            if (compositeIndex.isPresent()) {
+              jsonIndex = (JsonIndexReader) dataSource.getIndex(compositeIndex.get());
+            }
           }
         }
       }
-    }
-    if (jsonIndex != null) {
-      FilterContext filterContext = createFilterContext();
-      _jsonMatchOperator = new JsonMatchFilterOperator(jsonIndex, filterContext, numDocs);
-      _expressionFilterOperator = null;
-    } else {
-      _jsonMatchOperator = null;
-      _expressionFilterOperator = new ExpressionFilterOperator(indexSegment, queryContext, predicate, numDocs);
+      if (jsonIndex != null) {
+        FilterContext filterContext = createFilterContext();
+        _jsonMatchOperator = new JsonMatchFilterOperator(jsonIndex, filterContext, numDocs);
+        _expressionFilterOperator = null;
+      } else {
+        _jsonMatchOperator = null;
+        _expressionFilterOperator = new ExpressionFilterOperator(indexSegment, queryContext, predicate, numDocs);
+      }
     }
   }
 
@@ -125,7 +146,9 @@ public class MapFilterOperator extends BaseFilterOperator {
 
   @Override
   protected BlockDocIdSet getTrues() {
-    if (_jsonMatchOperator != null) {
+    if (_columnarMapFilterOperator != null) {
+      return _columnarMapFilterOperator.getTrues();
+    } else if (_jsonMatchOperator != null) {
       return _jsonMatchOperator.getTrues();
     } else {
       return _expressionFilterOperator.getTrues();
@@ -134,7 +157,9 @@ public class MapFilterOperator extends BaseFilterOperator {
 
   @Override
   public boolean canOptimizeCount() {
-    if (_jsonMatchOperator != null) {
+    if (_columnarMapFilterOperator != null) {
+      return _columnarMapFilterOperator.canOptimizeCount();
+    } else if (_jsonMatchOperator != null) {
       return _jsonMatchOperator.canOptimizeCount();
     } else {
       return _expressionFilterOperator.canOptimizeCount();
@@ -143,7 +168,9 @@ public class MapFilterOperator extends BaseFilterOperator {
 
   @Override
   public int getNumMatchingDocs() {
-    if (_jsonMatchOperator != null) {
+    if (_columnarMapFilterOperator != null) {
+      return _columnarMapFilterOperator.getNumMatchingDocs();
+    } else if (_jsonMatchOperator != null) {
       return _jsonMatchOperator.getNumMatchingDocs();
     } else {
       return _expressionFilterOperator.getNumMatchingDocs();
@@ -152,7 +179,9 @@ public class MapFilterOperator extends BaseFilterOperator {
 
   @Override
   public boolean canProduceBitmaps() {
-    if (_jsonMatchOperator != null) {
+    if (_columnarMapFilterOperator != null) {
+      return _columnarMapFilterOperator.canProduceBitmaps();
+    } else if (_jsonMatchOperator != null) {
       return _jsonMatchOperator.canProduceBitmaps();
     } else {
       return _expressionFilterOperator.canProduceBitmaps();
@@ -161,7 +190,9 @@ public class MapFilterOperator extends BaseFilterOperator {
 
   @Override
   public BitmapCollection getBitmaps() {
-    if (_jsonMatchOperator != null) {
+    if (_columnarMapFilterOperator != null) {
+      return _columnarMapFilterOperator.getBitmaps();
+    } else if (_jsonMatchOperator != null) {
       return _jsonMatchOperator.getBitmaps();
     } else {
       return _expressionFilterOperator.getBitmaps();
@@ -207,6 +238,25 @@ public class MapFilterOperator extends BaseFilterOperator {
       attributeBuilder.putString("delegateTo", "json_match");
     } else {
       attributeBuilder.putString("delegateTo", "expression_filter");
+    }
+  }
+
+  /**
+   * Determines whether the ColumnarMap inverted index can handle the given predicate type.
+   * Only EQ/NEQ/IN/NOT_IN are supported via the inverted index; range and other predicates
+   * must fall back to a scan-based expression filter.
+   */
+  private static boolean canUseColumnarMapIndex(Predicate.Type predicateType) {
+    switch (predicateType) {
+      case EQ:
+      case NOT_EQ:
+      case IN:
+      case NOT_IN:
+      case IS_NULL:
+      case IS_NOT_NULL:
+        return true;
+      default:
+        return false;
     }
   }
 
