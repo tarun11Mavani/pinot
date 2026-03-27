@@ -150,7 +150,6 @@ public class DataBlockBuilder {
               setColumn(fixedSize, varSize, (ByteArray) value);
               break;
             case MAP:
-            case SPARSE_MAP:
               setColumn(fixedSize, varSize, (Map) value);
               break;
             // Multi-value column
@@ -368,8 +367,7 @@ public class DataBlockBuilder {
         });
         break;
       }
-      case MAP:
-      case SPARSE_MAP: {
+      case MAP: {
         Map nullPlaceholder = (Map) storedType.getNullPlaceholder();
         interruptableLoop(0, numRows, interruptableLoopStep, (start, end) -> {
           for (int rowId = 0; rowId < numRows; rowId++) {

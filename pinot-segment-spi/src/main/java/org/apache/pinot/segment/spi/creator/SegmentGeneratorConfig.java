@@ -522,7 +522,20 @@ public class SegmentGeneratorConfig implements Serializable {
   }
 
   public List<String> getSparseMapColumnNames() {
-    return getQualifyingFields(FieldType.SPARSE_MAP, true);
+    List<String> fields = new ArrayList<>();
+    for (FieldSpec fieldSpec : getSchema().getAllFieldSpecs()) {
+      if (fieldSpec.isVirtualColumn()) {
+        continue;
+      }
+      if (fieldSpec.getDataType() == FieldSpec.DataType.MAP) {
+        FieldIndexConfigs indexConfigs = _indexConfigsByColName.get(fieldSpec.getName());
+        if (indexConfigs != null && indexConfigs.getConfig(StandardIndexes.sparseMap()).isEnabled()) {
+          fields.add(fieldSpec.getName());
+        }
+      }
+    }
+    Collections.sort(fields);
+    return fields;
   }
 
   public void setSegmentPartitionConfig(SegmentPartitionConfig segmentPartitionConfig) {

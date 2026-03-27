@@ -556,7 +556,7 @@ public class MutableSegmentImpl implements MutableSegment {
    */
   private boolean isNoDictionaryColumn(FieldIndexConfigs indexConfigs, FieldSpec fieldSpec, String column) {
     DataType dataType = fieldSpec.getDataType();
-    if (dataType == DataType.MAP || dataType == DataType.SPARSE_MAP) {
+    if (dataType == DataType.MAP) {
       return true;
     }
     if (indexConfigs == null) {
@@ -933,7 +933,7 @@ public class MutableSegmentImpl implements MutableSegment {
           }
         }
 
-        if (dictId < 0 && dataType != DataType.SPARSE_MAP) {
+        if (dictId < 0 && dataType != DataType.MAP) {
           // Update min/max value from raw value
           // NOTE: Skip updating min/max value for aggregated metrics because the value will change over time.
           if (!isAggregateMetricsEnabled() || fieldSpec.getFieldType() != FieldSpec.FieldType.METRIC) {
@@ -1649,7 +1649,7 @@ public class MutableSegmentImpl implements MutableSegment {
         @Nullable MutableDictionary dictionary, @Nullable MutableNullValueVector nullValueVector,
         @Nullable String sourceColumn, @Nullable ValueAggregator valueAggregator) {
       Preconditions.checkArgument(
-          fieldSpec.getDataType() == DataType.SPARSE_MAP || mutableIndexes.containsKey(StandardIndexes.forward()),
+          fieldSpec.getDataType() == DataType.MAP || mutableIndexes.containsKey(StandardIndexes.forward()),
           "Forward index is required");
       _fieldSpec = fieldSpec;
       _mutableIndexes = mutableIndexes;
@@ -1663,7 +1663,7 @@ public class MutableSegmentImpl implements MutableSegment {
     }
 
     DataSource toDataSource() {
-      if (_fieldSpec.getDataType() == DataType.SPARSE_MAP) {
+      if (_fieldSpec.getDataType() == DataType.MAP) {
         MutableIndex sparseMapIdx = _mutableIndexes.get(StandardIndexes.sparseMap());
         if (sparseMapIdx instanceof org.apache.pinot.segment.spi.index.reader.SparseMapIndexReader) {
           return new org.apache.pinot.segment.local.segment.index.sparsemap.SparseMapDataSource(

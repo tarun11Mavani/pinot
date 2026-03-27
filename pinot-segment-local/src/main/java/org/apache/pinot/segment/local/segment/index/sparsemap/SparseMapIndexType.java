@@ -28,7 +28,9 @@ import org.apache.pinot.segment.spi.ColumnMetadata;
 import org.apache.pinot.segment.spi.V1Constants;
 import org.apache.pinot.segment.spi.creator.IndexCreationContext;
 import org.apache.pinot.segment.spi.index.AbstractIndexType;
+import org.apache.pinot.segment.spi.index.ColumnConfigDeserializer;
 import org.apache.pinot.segment.spi.index.FieldIndexConfigs;
+import org.apache.pinot.segment.spi.index.IndexConfigDeserializer;
 import org.apache.pinot.segment.spi.index.IndexHandler;
 import org.apache.pinot.segment.spi.index.IndexReaderConstraintException;
 import org.apache.pinot.segment.spi.index.IndexReaderFactory;
@@ -40,6 +42,7 @@ import org.apache.pinot.segment.spi.index.mutable.provider.MutableIndexContext;
 import org.apache.pinot.segment.spi.index.reader.SparseMapIndexReader;
 import org.apache.pinot.segment.spi.memory.PinotDataBuffer;
 import org.apache.pinot.segment.spi.store.SegmentDirectory;
+import org.apache.pinot.spi.config.table.FieldConfig;
 import org.apache.pinot.spi.config.table.SparseMapIndexConfig;
 import org.apache.pinot.spi.config.table.TableConfig;
 import org.apache.pinot.spi.data.FieldSpec;
@@ -47,7 +50,7 @@ import org.apache.pinot.spi.data.Schema;
 
 
 /**
- * Index type for SPARSE_MAP columns. Provides per-key columnar storage with presence bitmaps,
+ * Index type for MAP columns with sparse map index. Provides per-key columnar storage with presence bitmaps,
  * typed forward indexes, and optional inverted indexes for fast value-based filtering.
  */
 public class SparseMapIndexType
@@ -71,14 +74,20 @@ public class SparseMapIndexType
   }
 
   @Override
+  protected ColumnConfigDeserializer<SparseMapIndexConfig> createDeserializerForLegacyConfigs() {
+    return IndexConfigDeserializer.fromIndexTypes(FieldConfig.IndexType.MAP,
+        (tableConfig, fieldConfig) -> SparseMapIndexConfig.fromProperties(fieldConfig.getProperties()));
+  }
+
+  @Override
   public void validate(FieldIndexConfigs indexConfigs, FieldSpec fieldSpec, TableConfig tableConfig) {
     SparseMapIndexConfig config = indexConfigs.getConfig(this);
     if (config.isEnabled()) {
       String column = fieldSpec.getName();
       Preconditions.checkState(fieldSpec.isSingleValueField(),
           "Cannot create SparseMap index on multi-value column: %s", column);
-      Preconditions.checkState(fieldSpec.getDataType() == FieldSpec.DataType.SPARSE_MAP,
-          "SparseMap index can only be created on SPARSE_MAP columns, got: %s for column: %s",
+      Preconditions.checkState(fieldSpec.getDataType() == FieldSpec.DataType.MAP,
+          "SparseMap index can only be created on MAP columns, got: %s for column: %s",
           fieldSpec.getDataType(), column);
     }
   }
@@ -128,7 +137,7 @@ public class SparseMapIndexType
     if (!config.isEnabled()) {
       return null;
     }
-    if (context.getFieldSpec().getFieldType() != FieldSpec.FieldType.SPARSE_MAP) {
+    if (context.getFieldSpec().getDataType() != FieldSpec.DataType.MAP) {
       return null;
     }
     return new MutableSparseMapIndexImpl(context, config);

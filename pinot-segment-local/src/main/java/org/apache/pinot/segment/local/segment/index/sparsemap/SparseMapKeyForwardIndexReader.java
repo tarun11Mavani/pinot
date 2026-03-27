@@ -30,7 +30,7 @@ import org.apache.pinot.spi.data.FieldSpec.DataType;
 /**
  * A per-key {@link ForwardIndexReader} backed by a {@link SparseMapIndexReader}.
  *
- * <p>Each instance is bound to a single key within a SPARSE_MAP column. Reads for document IDs
+ * <p>Each instance is bound to a single key within a MAP column. Reads for document IDs
  * that do not contain the key return the type-appropriate zero/empty default value; the caller can
  * combine this with the presence bitmap ({@link SparseMapIndexReader#getPresenceBitmap}) when null
  * semantics are required.

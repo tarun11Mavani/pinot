@@ -46,9 +46,8 @@ public final class StatsCollectorUtil {
       FieldIndexConfigs indexConfig, StatsCollectorConfig statsCollectorConfig) {
     boolean dictionaryEnabled = indexConfig.getConfig(StandardIndexes.dictionary()).isEnabled();
     if (!dictionaryEnabled) {
-      // MAP and SPARSE_MAP collectors are optimised for no-dictionary collection
-      if (!fieldSpec.getDataType().getStoredType().equals(FieldSpec.DataType.MAP)
-          && !fieldSpec.getDataType().getStoredType().equals(FieldSpec.DataType.SPARSE_MAP)) {
+      // MAP collectors are optimised for no-dictionary collection
+      if (!fieldSpec.getDataType().getStoredType().equals(FieldSpec.DataType.MAP)) {
         if (ClusterConfigForTable.useOptimizedNoDictCollector(statsCollectorConfig.getTableConfig())) {
           return new NoDictColumnStatisticsCollector(columnName, statsCollectorConfig);
         }
@@ -70,9 +69,10 @@ public final class StatsCollectorUtil {
       case BYTES:
         return new BytesColumnPredIndexStatsCollector(columnName, statsCollectorConfig);
       case MAP:
+        if (indexConfig.getConfig(StandardIndexes.sparseMap()).isEnabled()) {
+          return new SparseMapColumnPreIndexStatsCollector(columnName, statsCollectorConfig);
+        }
         return new MapColumnPreIndexStatsCollector(columnName, statsCollectorConfig);
-      case SPARSE_MAP:
-        return new SparseMapColumnPreIndexStatsCollector(columnName, statsCollectorConfig);
       default:
         throw new IllegalStateException("Unsupported data type: " + fieldSpec.getDataType());
     }

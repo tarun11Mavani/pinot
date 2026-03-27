@@ -34,9 +34,9 @@ import org.apache.pinot.segment.spi.index.mutable.MutableIndex;
 import org.apache.pinot.segment.spi.index.mutable.provider.MutableIndexContext;
 import org.apache.pinot.segment.spi.index.reader.SparseMapIndexReader;
 import org.apache.pinot.spi.config.table.SparseMapIndexConfig;
+import org.apache.pinot.spi.data.ComplexFieldSpec;
 import org.apache.pinot.spi.data.FieldSpec;
 import org.apache.pinot.spi.data.FieldSpec.DataType;
-import org.apache.pinot.spi.data.SparseMapFieldSpec;
 import org.roaringbitmap.buffer.ImmutableRoaringBitmap;
 import org.roaringbitmap.buffer.MutableRoaringBitmap;
 import org.slf4j.Logger;
@@ -72,17 +72,22 @@ public class MutableSparseMapIndexImpl implements MutableIndex, SparseMapIndexRe
   private int _droppedKeyCount;
 
   public MutableSparseMapIndexImpl(MutableIndexContext context, SparseMapIndexConfig config) {
+    this(context, config, null, null);
+  }
+
+  public MutableSparseMapIndexImpl(MutableIndexContext context, SparseMapIndexConfig config,
+      @Nullable Map<String, DataType> explicitKeyTypes,
+      @Nullable DataType explicitDefaultValueType) {
     FieldSpec fieldSpec = context.getFieldSpec();
-    if (fieldSpec instanceof SparseMapFieldSpec) {
-      SparseMapFieldSpec sparseMapSpec = (SparseMapFieldSpec) fieldSpec;
-      Map<String, DataType> keyTypes = sparseMapSpec.getKeyTypes();
-      _keyTypes = keyTypes != null ? new HashMap<>(keyTypes) : new HashMap<>();
-      DataType defaultType = sparseMapSpec.getDefaultValueType();
-      _defaultValueType = defaultType != null ? defaultType : DataType.STRING;
-    } else {
-      _keyTypes = new HashMap<>();
-      _defaultValueType = DataType.STRING;
+    Map<String, DataType> keyTypes = explicitKeyTypes;
+    DataType defaultType = explicitDefaultValueType;
+    if (keyTypes == null && fieldSpec instanceof ComplexFieldSpec) {
+      ComplexFieldSpec.MapFieldSpec mapFieldSpec = ComplexFieldSpec.toMapFieldSpec((ComplexFieldSpec) fieldSpec);
+      keyTypes = mapFieldSpec.getKeyTypes();
+      defaultType = mapFieldSpec.getDefaultValueType();
     }
+    _keyTypes = keyTypes != null ? new HashMap<>(keyTypes) : new HashMap<>();
+    _defaultValueType = defaultType != null ? defaultType : DataType.STRING;
     _config = config;
     _maxKeys = config.getMaxKeys();
     _columnName = context.getFieldSpec().getName();

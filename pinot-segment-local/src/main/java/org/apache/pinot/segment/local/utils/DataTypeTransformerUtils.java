@@ -56,9 +56,8 @@ public class DataTypeTransformerUtils {
       return null;
     }
 
-    // Standardize the value (except for JSON, MAP, and SPARSE_MAP types)
-    if (destDataType != PinotDataType.JSON && destDataType != PinotDataType.MAP
-        && destDataType != PinotDataType.SPARSE_MAP) {
+    // Standardize the value (except for JSON and MAP types)
+    if (destDataType != PinotDataType.JSON && destDataType != PinotDataType.MAP) {
       value = standardize(column, value, destDataType.isSingleValue());
     }
 

@@ -130,7 +130,6 @@ public class DataBlockTestUtils {
           row[colId] = timestampArray;
           break;
         case MAP:
-        case SPARSE_MAP:
           length = RANDOM.nextInt(ARRAY_SIZE);
           Map<String, Object> map = new HashMap<>();
           for (int i = 0; i < length; i++) {
@@ -190,7 +189,6 @@ public class DataBlockTestUtils {
       case STRING_ARRAY:
         return dataBlock.getStringArray(rowId, colId);
       case MAP:
-      case SPARSE_MAP:
         return dataBlock.getMap(rowId, colId);
       case UNKNOWN:
         return null;

@@ -35,8 +35,9 @@ import org.apache.pinot.segment.spi.V1Constants;
 import org.apache.pinot.segment.spi.index.reader.SparseMapIndexReader;
 import org.apache.pinot.segment.spi.memory.PinotDataBuffer;
 import org.apache.pinot.spi.config.table.SparseMapIndexConfig;
+import org.apache.pinot.spi.data.ComplexFieldSpec;
+import org.apache.pinot.spi.data.DimensionFieldSpec;
 import org.apache.pinot.spi.data.FieldSpec;
-import org.apache.pinot.spi.data.SparseMapFieldSpec;
 import org.roaringbitmap.buffer.ImmutableRoaringBitmap;
 import org.testng.annotations.AfterMethod;
 import org.testng.annotations.BeforeMethod;
@@ -66,26 +67,29 @@ public class SparseMapIndexTest {
     FileUtils.deleteDirectory(INDEX_DIR);
   }
 
-  // ---- Helper to build a FieldSpec for SPARSE_MAP ----
+  // ---- Helper to build a ComplexFieldSpec for MAP ----
 
-  private static SparseMapFieldSpec buildFieldSpec(Map<String, FieldSpec.DataType> keyTypes) {
-    SparseMapFieldSpec spec = new SparseMapFieldSpec(COLUMN_NAME, keyTypes);
-    spec.setDefaultValueType(FieldSpec.DataType.STRING);
-    return spec;
+  private static ComplexFieldSpec buildMapFieldSpec(String columnName) {
+    Map<String, FieldSpec> childFieldSpecs = Map.of(
+        "key", new DimensionFieldSpec("key", FieldSpec.DataType.STRING, true),
+        "value", new DimensionFieldSpec("value", FieldSpec.DataType.STRING, true)
+    );
+    return new ComplexFieldSpec(columnName, FieldSpec.DataType.MAP, true, childFieldSpecs);
   }
 
   // ---- Helper to create index file ----
 
   private File createIndex(Map<String, FieldSpec.DataType> keyTypes, Map<String, Object>[] docs)
       throws IOException {
-    SparseMapFieldSpec fieldSpec = buildFieldSpec(keyTypes);
+    ComplexFieldSpec fieldSpec = buildMapFieldSpec(COLUMN_NAME);
     SparseMapIndexConfig config = new SparseMapIndexConfig(true, null, false, null, 1000);
 
     File indexFile =
         new File(INDEX_DIR, COLUMN_NAME + V1Constants.Indexes.SPARSE_MAP_INDEX_FILE_EXTENSION);
 
     try (OnHeapSparseMapIndexCreator creator =
-        new OnHeapSparseMapIndexCreator(INDEX_DIR, COLUMN_NAME, fieldSpec, config)) {
+        new OnHeapSparseMapIndexCreator(INDEX_DIR, COLUMN_NAME, fieldSpec, config,
+            keyTypes, FieldSpec.DataType.STRING)) {
       for (Map<String, Object> doc : docs) {
         creator.add(doc);
       }
@@ -222,13 +226,13 @@ public class SparseMapIndexTest {
         Map.of("color", "green")
     };
 
-    SparseMapFieldSpec fieldSpec = buildFieldSpec(keyTypes);
+    ComplexFieldSpec fieldSpec = buildMapFieldSpec(COLUMN_NAME);
     SparseMapIndexConfig config = new SparseMapIndexConfig(true, null, true, null, 1000);
     File indexFile =
         new File(INDEX_DIR, COLUMN_NAME + V1Constants.Indexes.SPARSE_MAP_INDEX_FILE_EXTENSION);
 
     try (OnHeapSparseMapIndexCreator creator = new OnHeapSparseMapIndexCreator(
-        INDEX_DIR, COLUMN_NAME, fieldSpec, config)) {
+        INDEX_DIR, COLUMN_NAME, fieldSpec, config, keyTypes, FieldSpec.DataType.STRING)) {
       for (Map<String, Object> doc : docs) {
         creator.add(doc);
       }
@@ -262,11 +266,11 @@ public class SparseMapIndexTest {
     keyTypes.put("price", FieldSpec.DataType.FLOAT);
     keyTypes.put("brand", FieldSpec.DataType.STRING);
 
-    SparseMapFieldSpec fieldSpec = buildFieldSpec(keyTypes);
+    ComplexFieldSpec fieldSpec = buildMapFieldSpec(COLUMN_NAME);
     SparseMapIndexConfig config = new SparseMapIndexConfig(true, null, false, null, 100);
 
     try (MutableSparseMapIndexImpl mutableIndex = new MutableSparseMapIndexImpl(
-        buildMutableContext(fieldSpec), config)) {
+        buildMutableContext(fieldSpec), config, keyTypes, FieldSpec.DataType.STRING)) {
 
       mutableIndex.add(Map.of("price", 9.99f, "brand", "acme"), -1, 0);
       mutableIndex.add(Map.of("price", 14.99f), -1, 1);
@@ -307,7 +311,7 @@ public class SparseMapIndexTest {
   public void testMaxKeysDropsExcessKeysImmutable()
       throws Exception {
     String colName = "maxkeys_imm_test";
-    SparseMapFieldSpec fieldSpec = new SparseMapFieldSpec(colName);
+    ComplexFieldSpec fieldSpec = buildMapFieldSpec(colName);
     SparseMapIndexConfig config = new SparseMapIndexConfig(true, null, false, null, 2); // maxKeys=2
     OnHeapSparseMapIndexCreator creator = new OnHeapSparseMapIndexCreator(INDEX_DIR, colName, fieldSpec, config);
 
@@ -332,7 +336,7 @@ public class SparseMapIndexTest {
   public void testMaxKeysDropsExcessKeysMutable()
       throws Exception {
     SparseMapIndexConfig config = new SparseMapIndexConfig(true, null, false, null, 2); // maxKeys=2
-    SparseMapFieldSpec fieldSpec = new SparseMapFieldSpec("mutable_maxkeys_test");
+    ComplexFieldSpec fieldSpec = buildMapFieldSpec("mutable_maxkeys_test");
 
     try (MutableSparseMapIndexImpl mutableIndex = new MutableSparseMapIndexImpl(
         buildMutableContext(fieldSpec), config)) {
@@ -352,7 +356,7 @@ public class SparseMapIndexTest {
   public void testNullValueTreatedAsAbsentImmutable()
       throws Exception {
     String colName = "null_absent_imm_test";
-    SparseMapFieldSpec fieldSpec = new SparseMapFieldSpec(colName);
+    ComplexFieldSpec fieldSpec = buildMapFieldSpec(colName);
     SparseMapIndexConfig config = new SparseMapIndexConfig(true, null, false, null, 10);
     OnHeapSparseMapIndexCreator creator = new OnHeapSparseMapIndexCreator(INDEX_DIR, colName, fieldSpec, config);
 
@@ -376,8 +380,7 @@ public class SparseMapIndexTest {
   public void testNullValueTreatedAsAbsentMutable()
       throws Exception {
     SparseMapIndexConfig config = new SparseMapIndexConfig(true, null, false, null, 10);
-    SparseMapFieldSpec fieldSpec =
-        new SparseMapFieldSpec("mutable_null_absent_test");
+    ComplexFieldSpec fieldSpec = buildMapFieldSpec("mutable_null_absent_test");
 
     try (MutableSparseMapIndexImpl mutableIndex = new MutableSparseMapIndexImpl(
         buildMutableContext(fieldSpec), config)) {
@@ -404,7 +407,7 @@ public class SparseMapIndexTest {
       throws Exception {
     // Build a minimal valid index
     String colName = "magic_test";
-    SparseMapFieldSpec fieldSpec = new SparseMapFieldSpec(colName);
+    ComplexFieldSpec fieldSpec = buildMapFieldSpec(colName);
     SparseMapIndexConfig config = new SparseMapIndexConfig(true, null, false, null, 10);
     OnHeapSparseMapIndexCreator creator =
         new OnHeapSparseMapIndexCreator(INDEX_DIR, colName, fieldSpec, config);
@@ -428,8 +431,7 @@ public class SparseMapIndexTest {
   @Test
   public void testConcurrentAddAndReadDoesNotThrow()
       throws Exception {
-    SparseMapFieldSpec fieldSpec =
-        new SparseMapFieldSpec("concurrent_test");
+    ComplexFieldSpec fieldSpec = buildMapFieldSpec("concurrent_test");
     SparseMapIndexConfig config = new SparseMapIndexConfig(true, null, false, null, 100);
     MutableSparseMapIndexImpl idx;
     try (MutableSparseMapIndexImpl tmp = new MutableSparseMapIndexImpl(buildMutableContext(fieldSpec), config)) {
@@ -478,7 +480,7 @@ public class SparseMapIndexTest {
   public void testMaxKeysRetainsExactlyMaxKeysKeys()
       throws Exception {
     String colName = "maxkeys_exact_test";
-    SparseMapFieldSpec fieldSpec = new SparseMapFieldSpec(colName);
+    ComplexFieldSpec fieldSpec = buildMapFieldSpec(colName);
     SparseMapIndexConfig config = new SparseMapIndexConfig(true, null, false, null, 2);
     OnHeapSparseMapIndexCreator creator = new OnHeapSparseMapIndexCreator(INDEX_DIR, colName, fieldSpec, config);
 
@@ -511,10 +513,11 @@ public class SparseMapIndexTest {
   public void testSealAfterManyAddsProducesValidIndex()
       throws Exception {
     String colName = "many_docs_test";
-    SparseMapFieldSpec fieldSpec = new SparseMapFieldSpec(colName,
-        Collections.singletonMap("count", FieldSpec.DataType.INT));
+    Map<String, FieldSpec.DataType> keyTypes = Collections.singletonMap("count", FieldSpec.DataType.INT);
+    ComplexFieldSpec fieldSpec = buildMapFieldSpec(colName);
     SparseMapIndexConfig config = new SparseMapIndexConfig(true, null, false, null, 10);
-    OnHeapSparseMapIndexCreator creator = new OnHeapSparseMapIndexCreator(INDEX_DIR, colName, fieldSpec, config);
+    OnHeapSparseMapIndexCreator creator = new OnHeapSparseMapIndexCreator(INDEX_DIR, colName, fieldSpec, config,
+        keyTypes, FieldSpec.DataType.STRING);
 
     int numDocs = 500;
     for (int i = 0; i < numDocs; i++) {
@@ -549,16 +552,17 @@ public class SparseMapIndexTest {
   public void testByteOrderRoundTripAllTypes()
       throws Exception {
     String colName = "byteorder_test";
-    SparseMapFieldSpec fieldSpec = new SparseMapFieldSpec(colName, Map.of(
+    Map<String, FieldSpec.DataType> keyTypes = Map.of(
         "intKey", FieldSpec.DataType.INT,
         "longKey", FieldSpec.DataType.LONG,
         "floatKey", FieldSpec.DataType.FLOAT,
         "doubleKey", FieldSpec.DataType.DOUBLE
-    ));
+    );
+    ComplexFieldSpec fieldSpec = buildMapFieldSpec(colName);
 
     SparseMapIndexConfig config = new SparseMapIndexConfig(true, null, false, null, 10);
     try (OnHeapSparseMapIndexCreator creator =
-        new OnHeapSparseMapIndexCreator(INDEX_DIR, colName, fieldSpec, config)) {
+        new OnHeapSparseMapIndexCreator(INDEX_DIR, colName, fieldSpec, config, keyTypes, FieldSpec.DataType.STRING)) {
       creator.add(Map.of(
           "intKey", 0x12345678,
           "longKey", 0x123456789ABCDEF0L,
@@ -591,7 +595,7 @@ public class SparseMapIndexTest {
     keyTypes.put("color", FieldSpec.DataType.STRING);
     keyTypes.put("size", FieldSpec.DataType.STRING);
 
-    SparseMapFieldSpec fieldSpec = buildFieldSpec(keyTypes);
+    ComplexFieldSpec fieldSpec = buildMapFieldSpec(COLUMN_NAME);
     SparseMapIndexConfig config =
         new SparseMapIndexConfig(true, null, false, Set.of("color"), 1000);
     File indexFile =
@@ -605,7 +609,8 @@ public class SparseMapIndexTest {
     };
 
     try (OnHeapSparseMapIndexCreator creator =
-        new OnHeapSparseMapIndexCreator(INDEX_DIR, COLUMN_NAME, fieldSpec, config)) {
+        new OnHeapSparseMapIndexCreator(INDEX_DIR, COLUMN_NAME, fieldSpec, config,
+            keyTypes, FieldSpec.DataType.STRING)) {
       for (Map<String, Object> doc : docs) {
         creator.add(doc);
       }
@@ -635,7 +640,7 @@ public class SparseMapIndexTest {
     keyTypes.put("color", FieldSpec.DataType.STRING);
     keyTypes.put("size", FieldSpec.DataType.STRING);
 
-    SparseMapFieldSpec fieldSpec = buildFieldSpec(keyTypes);
+    ComplexFieldSpec fieldSpec = buildMapFieldSpec(COLUMN_NAME);
     SparseMapIndexConfig config =
         new SparseMapIndexConfig(true, null, true, Set.of("color"), 1000);
     File indexFile =
@@ -648,7 +653,8 @@ public class SparseMapIndexTest {
     };
 
     try (OnHeapSparseMapIndexCreator creator =
-        new OnHeapSparseMapIndexCreator(INDEX_DIR, COLUMN_NAME, fieldSpec, config)) {
+        new OnHeapSparseMapIndexCreator(INDEX_DIR, COLUMN_NAME, fieldSpec, config,
+            keyTypes, FieldSpec.DataType.STRING)) {
       for (Map<String, Object> doc : docs) {
         creator.add(doc);
       }
@@ -670,7 +676,7 @@ public class SparseMapIndexTest {
     Map<String, FieldSpec.DataType> keyTypes = new HashMap<>();
     keyTypes.put("color", FieldSpec.DataType.STRING);
 
-    SparseMapFieldSpec fieldSpec = buildFieldSpec(keyTypes);
+    ComplexFieldSpec fieldSpec = buildMapFieldSpec(COLUMN_NAME);
     SparseMapIndexConfig config = new SparseMapIndexConfig(true, null, false, null, 1000);
     File indexFile =
         new File(INDEX_DIR, COLUMN_NAME + V1Constants.Indexes.SPARSE_MAP_INDEX_FILE_EXTENSION);
@@ -679,7 +685,8 @@ public class SparseMapIndexTest {
     Map<String, Object>[] docs = new Map[]{Map.of("color", "red")};
 
     try (OnHeapSparseMapIndexCreator creator =
-        new OnHeapSparseMapIndexCreator(INDEX_DIR, COLUMN_NAME, fieldSpec, config)) {
+        new OnHeapSparseMapIndexCreator(INDEX_DIR, COLUMN_NAME, fieldSpec, config,
+            keyTypes, FieldSpec.DataType.STRING)) {
       for (Map<String, Object> doc : docs) {
         creator.add(doc);
       }
@@ -700,12 +707,12 @@ public class SparseMapIndexTest {
     keyTypes.put("brand", FieldSpec.DataType.STRING);
     keyTypes.put("sku", FieldSpec.DataType.STRING);
 
-    SparseMapFieldSpec fieldSpec = buildFieldSpec(keyTypes);
+    ComplexFieldSpec fieldSpec = buildMapFieldSpec(COLUMN_NAME);
     SparseMapIndexConfig config =
         new SparseMapIndexConfig(true, null, false, Set.of("brand"), 100);
 
     try (MutableSparseMapIndexImpl mutableIndex = new MutableSparseMapIndexImpl(
-        buildMutableContext(fieldSpec), config)) {
+        buildMutableContext(fieldSpec), config, keyTypes, FieldSpec.DataType.STRING)) {
       mutableIndex.add(Map.of("brand", "acme", "sku", "A1"), -1, 0);
       mutableIndex.add(Map.of("brand", "acme", "sku", "B2"), -1, 1);
       mutableIndex.add(Map.of("brand", "beta", "sku", "A1"), -1, 2);
@@ -812,13 +819,13 @@ public class SparseMapIndexTest {
         Map.of("color", "green", "size", 10)
     };
 
-    SparseMapFieldSpec fieldSpec = buildFieldSpec(keyTypes);
+    ComplexFieldSpec fieldSpec = buildMapFieldSpec(COLUMN_NAME);
     SparseMapIndexConfig config = new SparseMapIndexConfig(true, null, true, null, 1000);
     File indexFile =
         new File(INDEX_DIR, COLUMN_NAME + V1Constants.Indexes.SPARSE_MAP_INDEX_FILE_EXTENSION);
 
     try (OnHeapSparseMapIndexCreator creator = new OnHeapSparseMapIndexCreator(
-        INDEX_DIR, COLUMN_NAME, fieldSpec, config)) {
+        INDEX_DIR, COLUMN_NAME, fieldSpec, config, keyTypes, FieldSpec.DataType.STRING)) {
       for (Map<String, Object> doc : docs) {
         creator.add(doc);
       }
@@ -881,11 +888,11 @@ public class SparseMapIndexTest {
     keyTypes.put("brand", FieldSpec.DataType.STRING);
     keyTypes.put("count", FieldSpec.DataType.INT);
 
-    SparseMapFieldSpec fieldSpec = buildFieldSpec(keyTypes);
+    ComplexFieldSpec fieldSpec = buildMapFieldSpec(COLUMN_NAME);
     SparseMapIndexConfig config = new SparseMapIndexConfig(true, null, true, null, 100);
 
     try (MutableSparseMapIndexImpl mutableIndex = new MutableSparseMapIndexImpl(
-        buildMutableContext(fieldSpec), config)) {
+        buildMutableContext(fieldSpec), config, keyTypes, FieldSpec.DataType.STRING)) {
 
       mutableIndex.add(Map.of("brand", "acme", "count", 5), -1, 0);
       mutableIndex.add(Map.of("brand", "beta", "count", 10), -1, 1);
@@ -924,13 +931,13 @@ public class SparseMapIndexTest {
         Map.of("status", "active")
     };
 
-    SparseMapFieldSpec fieldSpec = buildFieldSpec(keyTypes);
+    ComplexFieldSpec fieldSpec = buildMapFieldSpec(COLUMN_NAME);
     SparseMapIndexConfig config = new SparseMapIndexConfig(true, null, true, null, 1000);
     File indexFile =
         new File(INDEX_DIR, COLUMN_NAME + V1Constants.Indexes.SPARSE_MAP_INDEX_FILE_EXTENSION);
 
     try (OnHeapSparseMapIndexCreator creator = new OnHeapSparseMapIndexCreator(
-        INDEX_DIR, COLUMN_NAME, fieldSpec, config)) {
+        INDEX_DIR, COLUMN_NAME, fieldSpec, config, keyTypes, FieldSpec.DataType.STRING)) {
       for (Map<String, Object> doc : docs) {
         creator.add(doc);
       }
@@ -1005,13 +1012,13 @@ public class SparseMapIndexTest {
         Map.of("color", "green")    // doc 4
     };
 
-    SparseMapFieldSpec fieldSpec = buildFieldSpec(keyTypes);
+    ComplexFieldSpec fieldSpec = buildMapFieldSpec(COLUMN_NAME);
     SparseMapIndexConfig config = new SparseMapIndexConfig(true, null, true, null, 1000);
     File indexFile =
         new File(INDEX_DIR, COLUMN_NAME + V1Constants.Indexes.SPARSE_MAP_INDEX_FILE_EXTENSION);
 
     try (OnHeapSparseMapIndexCreator creator = new OnHeapSparseMapIndexCreator(
-        INDEX_DIR, COLUMN_NAME, fieldSpec, config)) {
+        INDEX_DIR, COLUMN_NAME, fieldSpec, config, keyTypes, FieldSpec.DataType.STRING)) {
       for (Map<String, Object> doc : docs) {
         creator.add(doc);
       }
@@ -1066,13 +1073,13 @@ public class SparseMapIndexTest {
         Map.of("status", "pending")     // doc 4
     };
 
-    SparseMapFieldSpec fieldSpec = buildFieldSpec(keyTypes);
+    ComplexFieldSpec fieldSpec = buildMapFieldSpec(COLUMN_NAME);
     SparseMapIndexConfig config = new SparseMapIndexConfig(true, null, true, null, 1000);
     File indexFile =
         new File(INDEX_DIR, COLUMN_NAME + V1Constants.Indexes.SPARSE_MAP_INDEX_FILE_EXTENSION);
 
     try (OnHeapSparseMapIndexCreator creator = new OnHeapSparseMapIndexCreator(
-        INDEX_DIR, COLUMN_NAME, fieldSpec, config)) {
+        INDEX_DIR, COLUMN_NAME, fieldSpec, config, keyTypes, FieldSpec.DataType.STRING)) {
       for (Map<String, Object> doc : docs) {
         creator.add(doc);
       }
@@ -1132,12 +1139,12 @@ public class SparseMapIndexTest {
     }
   }
 
-  private static SparseMapFieldSpec fieldSpec(Map<String, FieldSpec.DataType> keyTypes) {
-    return buildFieldSpec(keyTypes);
+  private static ComplexFieldSpec fieldSpec(Map<String, FieldSpec.DataType> keyTypes) {
+    return buildMapFieldSpec(COLUMN_NAME);
   }
 
   private static org.apache.pinot.segment.spi.ColumnMetadata buildColumnMetadata(
-      SparseMapFieldSpec fieldSpec, int numDocs) {
+      FieldSpec fieldSpec, int numDocs) {
     return new org.apache.pinot.segment.spi.ColumnMetadata() {
       @Override
       public FieldSpec getFieldSpec() {

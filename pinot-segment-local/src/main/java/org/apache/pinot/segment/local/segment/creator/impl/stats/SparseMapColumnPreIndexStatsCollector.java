@@ -22,9 +22,9 @@ import org.apache.pinot.segment.spi.creator.StatsCollectorConfig;
 
 
 /**
- * Statistics collector for SPARSE_MAP columns.
+ * Statistics collector for MAP columns with sparse map index.
  *
- * <p>Unlike regular columns, SPARSE_MAP columns store all per-key data in the SparseMapIndex itself.
+ * <p>Unlike regular columns, MAP columns with sparse map index store all per-key data in the SparseMapIndex itself.
  * This collector only tracks document count; no min/max/cardinality/dictionary is needed.
  */
 public class SparseMapColumnPreIndexStatsCollector extends AbstractColumnStatisticsCollector {
