@@ -556,6 +556,23 @@ public class SegmentGeneratorConfig implements Serializable {
     return getQualifyingFields(FieldType.COMPLEX, true);
   }
 
+  public List<String> getColumnarMapColumnNames() {
+    List<String> fields = new ArrayList<>();
+    for (FieldSpec fieldSpec : getSchema().getAllFieldSpecs()) {
+      if (fieldSpec.isVirtualColumn()) {
+        continue;
+      }
+      if (fieldSpec.getDataType() == FieldSpec.DataType.MAP) {
+        FieldIndexConfigs indexConfigs = _indexConfigsByColName.get(fieldSpec.getName());
+        if (indexConfigs != null && indexConfigs.getConfig(StandardIndexes.columnarMap()).isEnabled()) {
+          fields.add(fieldSpec.getName());
+        }
+      }
+    }
+    Collections.sort(fields);
+    return fields;
+  }
+
   public void setSegmentPartitionConfig(SegmentPartitionConfig segmentPartitionConfig) {
     _segmentPartitionConfig = segmentPartitionConfig;
   }
