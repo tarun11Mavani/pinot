@@ -9,9 +9,10 @@
       "dataType": "STRING"
     }
   ],
-  "sparseMapFieldSpecs": [
+  "complexFieldSpecs": [
     {
       "name": "metrics",
+      "dataType": "MAP",
       "keyTypes": {
         "clicks": "LONG",
         "spend": "DOUBLE",

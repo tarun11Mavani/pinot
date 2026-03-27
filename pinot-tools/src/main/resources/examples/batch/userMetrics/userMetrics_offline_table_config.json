@@ -11,13 +11,11 @@
   "fieldConfigList": [
     {
       "name": "metrics",
-      "indexes": {
-        "sparse_map": {
-          "enabled": true,
-          "enableInvertedIndexForAll": false,
-          "invertedIndexKeys": ["country", "sessions"],
-          "maxKeys": 100
-        }
+      "indexTypes": ["MAP"],
+      "properties": {
+        "maxKeys": "100",
+        "invertedIndexKeys": "country,sessions",
+        "enableInvertedIndexForAll": "false"
       }
     }
   ],

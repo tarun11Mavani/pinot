@@ -19,20 +19,18 @@
 package org.apache.pinot.integration.tests;
 
 import com.fasterxml.jackson.databind.JsonNode;
-import com.fasterxml.jackson.databind.node.ObjectNode;
 import java.io.File;
-import java.util.HashMap;
 import java.util.List;
 import java.util.Map;
 import org.apache.commons.io.FileUtils;
 import org.apache.pinot.spi.config.table.FieldConfig;
 import org.apache.pinot.spi.config.table.TableConfig;
 import org.apache.pinot.spi.config.table.TableType;
+import org.apache.pinot.spi.data.ComplexFieldSpec;
+import org.apache.pinot.spi.data.DimensionFieldSpec;
 import org.apache.pinot.spi.data.FieldSpec;
 import org.apache.pinot.spi.data.Schema;
-import org.apache.pinot.spi.data.SparseMapFieldSpec;
 import org.apache.pinot.spi.data.readers.FileFormat;
-import org.apache.pinot.spi.utils.JsonUtils;
 import org.apache.pinot.spi.utils.builder.TableConfigBuilder;
 import org.apache.pinot.util.TestUtils;
 import org.testng.Assert;
@@ -191,14 +189,11 @@ public class SparseMapClusterIntegrationTest extends BaseClusterIntegrationTest 
   // -------------------------------------------------------------------------
 
   private Schema buildSparseMapSchema() {
-    Map<String, FieldSpec.DataType> keyTypes = new HashMap<>();
-    keyTypes.put("clicks", FieldSpec.DataType.LONG);
-    keyTypes.put("spend", FieldSpec.DataType.DOUBLE);
-    keyTypes.put("sessions", FieldSpec.DataType.INT);
-    keyTypes.put("country", FieldSpec.DataType.STRING);
-
-    SparseMapFieldSpec metricsField = new SparseMapFieldSpec("metrics", keyTypes);
-    metricsField.setDefaultValueType(FieldSpec.DataType.STRING);
+    Map<String, FieldSpec> childFieldSpecs = Map.of(
+        "key", new DimensionFieldSpec("key", FieldSpec.DataType.STRING, true),
+        "value", new DimensionFieldSpec("value", FieldSpec.DataType.STRING, true)
+    );
+    ComplexFieldSpec metricsField = new ComplexFieldSpec("metrics", FieldSpec.DataType.MAP, true, childFieldSpecs);
 
     return new Schema.SchemaBuilder()
         .setSchemaName(TABLE_NAME)
@@ -210,14 +205,12 @@ public class SparseMapClusterIntegrationTest extends BaseClusterIntegrationTest 
   }
 
   private TableConfig buildSparseMapTableConfig() {
-    ObjectNode sparseMapNode = JsonUtils.newObjectNode();
-    sparseMapNode.put("enabled", true);
-    sparseMapNode.put("enableInvertedIndexForAll", true);
-    sparseMapNode.put("maxKeys", 100);
-    ObjectNode indexesNode = JsonUtils.newObjectNode();
-    indexesNode.set("sparse_map", sparseMapNode);
     FieldConfig metricsFieldConfig = new FieldConfig.Builder("metrics")
-        .withIndexes(indexesNode)
+        .withIndexTypes(List.of(FieldConfig.IndexType.MAP))
+        .withProperties(Map.of(
+            FieldConfig.MAP_INDEX_MAX_KEYS, "100",
+            FieldConfig.MAP_INDEX_ENABLE_INVERTED_FOR_ALL, "true"
+        ))
         .build();
 
     return new TableConfigBuilder(TableType.OFFLINE)
