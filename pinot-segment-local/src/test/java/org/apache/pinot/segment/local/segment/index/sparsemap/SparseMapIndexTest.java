@@ -83,10 +83,16 @@ public class SparseMapIndexTest {
       throws IOException {
     ComplexFieldSpec fieldSpec = buildMapFieldSpec(COLUMN_NAME);
     SparseMapIndexConfig config = new SparseMapIndexConfig(true, null, false, null, 1000);
-    return createIndex(fieldSpec, config, docs);
+    return createIndex(fieldSpec, config, keyTypes, docs);
   }
 
-  private File createIndex(SparseMapFieldSpec fieldSpec, SparseMapIndexConfig config, Map<String, Object>[] docs)
+  private File createIndex(ComplexFieldSpec fieldSpec, SparseMapIndexConfig config, Map<String, Object>[] docs)
+      throws IOException {
+    return createIndex(fieldSpec, config, null, docs);
+  }
+
+  private File createIndex(ComplexFieldSpec fieldSpec, SparseMapIndexConfig config,
+      Map<String, FieldSpec.DataType> keyTypes, Map<String, Object>[] docs)
       throws IOException {
     File indexFile =
         new File(INDEX_DIR, COLUMN_NAME + V1Constants.Indexes.SPARSE_MAP_INDEX_FILE_EXTENSION);
@@ -981,7 +987,7 @@ public class SparseMapIndexTest {
     };
 
     // Force raw encoding via noDictionaryKeys
-    SparseMapFieldSpec fieldSpec = buildFieldSpec(keyTypes);
+    ComplexFieldSpec fieldSpec = buildMapFieldSpec(COLUMN_NAME);
     SparseMapIndexConfig config = new SparseMapIndexConfig(true, null, false, null, Set.of("name"), 1000);
     File indexFile = createIndex(fieldSpec, config, docs);
 
