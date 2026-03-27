@@ -206,10 +206,10 @@ public class ColumnarMapClusterIntegrationTest extends BaseClusterIntegrationTes
 
   private TableConfig buildColumnarMapTableConfig() {
     FieldConfig metricsFieldConfig = new FieldConfig.Builder("metrics")
-        .withIndexTypes(List.of(FieldConfig.IndexType.MAP))
+        .withIndexTypes(List.of(FieldConfig.IndexType.COLUMNAR_MAP))
         .withProperties(Map.of(
-            FieldConfig.MAP_INDEX_MAX_KEYS, "100",
-            FieldConfig.MAP_INDEX_ENABLE_INVERTED_FOR_ALL, "true"
+            FieldConfig.COLUMNAR_MAP_INDEX_MAX_KEYS, "100",
+            FieldConfig.COLUMNAR_MAP_INDEX_ENABLE_INVERTED_FOR_ALL, "true"
         ))
         .build();
 

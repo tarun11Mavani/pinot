@@ -11,7 +11,7 @@
   "fieldConfigList": [
     {
       "name": "metrics",
-      "indexTypes": ["MAP"],
+      "indexTypes": ["COLUMNAR_MAP"],
       "properties": {
         "maxKeys": "100",
         "invertedIndexKeys": "country,sessions",
