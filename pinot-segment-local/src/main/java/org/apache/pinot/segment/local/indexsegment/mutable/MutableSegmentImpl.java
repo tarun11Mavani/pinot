@@ -63,6 +63,7 @@ import org.apache.pinot.segment.local.realtime.impl.forward.FixedByteMVMutableFo
 import org.apache.pinot.segment.local.realtime.impl.forward.SameValueMutableForwardIndex;
 import org.apache.pinot.segment.local.realtime.impl.invertedindex.MultiColumnRealtimeLuceneTextIndex;
 import org.apache.pinot.segment.local.realtime.impl.nullvalue.MutableNullValueVector;
+import org.apache.pinot.segment.local.segment.index.columnarmap.ColumnarMapDataSource;
 import org.apache.pinot.segment.local.segment.index.datasource.MutableDataSource;
 import org.apache.pinot.segment.local.segment.index.dictionary.DictionaryIndexType;
 import org.apache.pinot.segment.local.segment.index.map.MutableMapDataSource;
@@ -95,6 +96,7 @@ import org.apache.pinot.segment.spi.index.mutable.MutableIndex;
 import org.apache.pinot.segment.spi.index.mutable.MutableInvertedIndex;
 import org.apache.pinot.segment.spi.index.mutable.ThreadSafeMutableRoaringBitmap;
 import org.apache.pinot.segment.spi.index.mutable.provider.MutableIndexContext;
+import org.apache.pinot.segment.spi.index.reader.ColumnarMapIndexReader;
 import org.apache.pinot.segment.spi.index.reader.MultiColumnTextIndexReader;
 import org.apache.pinot.segment.spi.index.reader.TextIndexReader;
 import org.apache.pinot.segment.spi.index.startree.AggregationFunctionColumnPair;
@@ -1663,15 +1665,15 @@ public class MutableSegmentImpl implements MutableSegment {
     }
 
     DataSource toDataSource() {
-      if (_fieldSpec.getDataType() == DataType.MAP) {
-        MutableIndex columnarMapIdx = _mutableIndexes.get(StandardIndexes.columnarMap());
-        if (columnarMapIdx instanceof org.apache.pinot.segment.spi.index.reader.ColumnarMapIndexReader) {
-          return new org.apache.pinot.segment.local.segment.index.columnarmap.ColumnarMapDataSource(
-              _fieldSpec, _numDocsIndexed,
-              (org.apache.pinot.segment.spi.index.reader.ColumnarMapIndexReader) columnarMapIdx);
-        }
-      }
       if (_fieldSpec.getDataType() == MAP) {
+        MutableIndex columnarMapIdx = _mutableIndexes.get(StandardIndexes.columnarMap());
+
+        if (columnarMapIdx instanceof ColumnarMapIndexReader) {
+          return new ColumnarMapDataSource(
+              _fieldSpec, _numDocsIndexed,
+              (ColumnarMapIndexReader) columnarMapIdx);
+        }
+
         return new MutableMapDataSource(_fieldSpec, _numDocsIndexed, _valuesInfo._numValues,
             _valuesInfo._maxNumValuesPerMVEntry, _dictionary == null ? -1 : _dictionary.length(), _partitionFunction,
             _partitions, _minValue, _maxValue, _mutableIndexes, _dictionary, _nullValueVector,
