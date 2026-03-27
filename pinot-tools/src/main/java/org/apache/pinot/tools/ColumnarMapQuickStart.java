@@ -26,11 +26,11 @@ import org.apache.pinot.tools.admin.command.QuickstartRunner;
 
 
 /**
- * Quickstart demonstrating SPARSE_MAP column type vs JSON column type on identical data.
+ * Quickstart demonstrating COLUMNAR_MAP column type vs JSON column type on identical data.
  *
  * <p>Two tables are loaded with the same 200-row user-metrics dataset:
  * <ul>
- *   <li>{@code userMetrics} — {@code metrics} column is {@code SPARSE_MAP} with declared keys
+ *   <li>{@code userMetrics} — {@code metrics} column is {@code COLUMNAR_MAP} with declared keys
  *       {@code clicks} (LONG), {@code spend} (DOUBLE), {@code sessions} (INT), and
  *       {@code country} (STRING). Values are stored in a compact columnar bitmap index enabling
  *       O(1) per-key retrieval and fast EQ/IN filtering via per-key inverted indexes.</li>
@@ -42,11 +42,11 @@ import org.apache.pinot.tools.admin.command.QuickstartRunner;
  * <p>Equivalent queries are run against both tables so you can compare query syntax and
  * inspect execution plans to observe the performance difference.
  */
-public class SparseMapQuickStart extends Quickstart {
+public class ColumnarMapQuickStart extends Quickstart {
 
   @Override
   public List<String> types() {
-    return Arrays.asList("SPARSE_MAP", "BATCH_SPARSE_MAP", "BATCH-SPARSE-MAP", "OFFLINE_SPARSE_MAP",
+    return Arrays.asList("COLUMNAR_MAP", "BATCH_COLUMNAR_MAP", "BATCH-SPARSE-MAP", "OFFLINE_COLUMNAR_MAP",
         "OFFLINE-SPARSE-MAP");
   }
 
@@ -62,7 +62,7 @@ public class SparseMapQuickStart extends Quickstart {
   @Override
   public void runSampleQueries(QuickstartRunner runner)
       throws Exception {
-    printStatus(Color.GREEN, "[SPARSE_MAP_QUICKSTART_BUILD=v6] Starting sample queries");
+    printStatus(Color.GREEN, "[COLUMNAR_MAP_QUICKSTART_BUILD=v6] Starting sample queries");
 
     // -----------------------------------------------------------------------
     // Legacy schema validation — baseballStats uses a traditional schema with
@@ -91,17 +91,17 @@ public class SparseMapQuickStart extends Quickstart {
     printStatus(Color.YELLOW, prettyPrintResponse(runner.runQuery(legacy3)));
     printStatus(Color.GREEN, "***************************************************");
 
-    printStatus(Color.GREEN, "=== Legacy schema validation PASSED — coexists with SPARSE_MAP tables ===");
+    printStatus(Color.GREEN, "=== Legacy schema validation PASSED — coexists with COLUMNAR_MAP tables ===");
 
     // -----------------------------------------------------------------------
-    // SPARSE_MAP vs JSON comparison queries
+    // COLUMNAR_MAP vs JSON comparison queries
     // -----------------------------------------------------------------------
 
     // -----------------------------------------------------------------------
     // Q1: Total record count — both tables have identical row counts
     // -----------------------------------------------------------------------
     String q1sm = "SELECT COUNT(*) FROM userMetrics";
-    printStatus(Color.YELLOW, "[SPARSE_MAP] Total number of user metric records");
+    printStatus(Color.YELLOW, "[COLUMNAR_MAP] Total number of user metric records");
     printStatus(Color.CYAN, "Query : " + q1sm);
     printStatus(Color.YELLOW, prettyPrintResponse(runner.runQuery(q1sm)));
     printStatus(Color.GREEN, "***************************************************");
@@ -116,7 +116,7 @@ public class SparseMapQuickStart extends Quickstart {
     // Q2: Simple projection of non-map columns
     // -----------------------------------------------------------------------
     String q2sm = "SELECT userId, region FROM userMetrics LIMIT 10";
-    printStatus(Color.YELLOW, "[SPARSE_MAP] Show first 10 rows (userId and region columns)");
+    printStatus(Color.YELLOW, "[COLUMNAR_MAP] Show first 10 rows (userId and region columns)");
     printStatus(Color.CYAN, "Query : " + q2sm);
     printStatus(Color.YELLOW, prettyPrintResponse(runner.runQuery(q2sm)));
     printStatus(Color.GREEN, "***************************************************");
@@ -131,7 +131,7 @@ public class SparseMapQuickStart extends Quickstart {
     // Q3: Group-by on a regular column
     // -----------------------------------------------------------------------
     String q3sm = "SELECT region, COUNT(*) AS userCount FROM userMetrics GROUP BY region ORDER BY userCount DESC";
-    printStatus(Color.YELLOW, "[SPARSE_MAP] Count users per region");
+    printStatus(Color.YELLOW, "[COLUMNAR_MAP] Count users per region");
     printStatus(Color.CYAN, "Query : " + q3sm);
     printStatus(Color.YELLOW, prettyPrintResponse(runner.runQuery(q3sm)));
     printStatus(Color.GREEN, "***************************************************");
@@ -146,7 +146,7 @@ public class SparseMapQuickStart extends Quickstart {
     // Q4: EQ filter on regular column + group-by
     // -----------------------------------------------------------------------
     String q4sm = "SELECT region, COUNT(*) FROM userMetrics WHERE region = 'US' GROUP BY region";
-    printStatus(Color.YELLOW, "[SPARSE_MAP] Count records for US region");
+    printStatus(Color.YELLOW, "[COLUMNAR_MAP] Count records for US region");
     printStatus(Color.CYAN, "Query : " + q4sm);
     printStatus(Color.YELLOW, prettyPrintResponse(runner.runQuery(q4sm)));
     printStatus(Color.GREEN, "***************************************************");
@@ -158,10 +158,10 @@ public class SparseMapQuickStart extends Quickstart {
     printStatus(Color.GREEN, "***************************************************");
 
     // -----------------------------------------------------------------------
-    // Q5: Key projection — SPARSE_MAP uses col['key']; JSON uses JSON_EXTRACT_SCALAR
+    // Q5: Key projection — COLUMNAR_MAP uses col['key']; JSON uses JSON_EXTRACT_SCALAR
     // -----------------------------------------------------------------------
     String q5sm = "SELECT userId, metrics['clicks'] FROM userMetrics LIMIT 10";
-    printStatus(Color.YELLOW, "[SPARSE_MAP] Project metrics['clicks'] — O(1) bitmap-rank lookup per doc");
+    printStatus(Color.YELLOW, "[COLUMNAR_MAP] Project metrics['clicks'] — O(1) bitmap-rank lookup per doc");
     printStatus(Color.CYAN, "Query : " + q5sm);
     printStatus(Color.YELLOW, prettyPrintResponse(runner.runQuery(q5sm)));
     printStatus(Color.GREEN, "***************************************************");
@@ -173,11 +173,11 @@ public class SparseMapQuickStart extends Quickstart {
     printStatus(Color.GREEN, "***************************************************");
 
     // -----------------------------------------------------------------------
-    // Q6: Range predicate on map key — SPARSE_MAP uses expression scan over typed values;
+    // Q6: Range predicate on map key — COLUMNAR_MAP uses expression scan over typed values;
     //     JSON_MATCH does not guarantee numeric ordering so JSON_EXTRACT_SCALAR is used here
     // -----------------------------------------------------------------------
     String q6sm = "SELECT userId, metrics['clicks'] FROM userMetrics WHERE metrics['clicks'] >= 5 LIMIT 100";
-    printStatus(Color.YELLOW, "[SPARSE_MAP] Filter metrics['clicks'] >= 5 — typed per-key forward index scan");
+    printStatus(Color.YELLOW, "[COLUMNAR_MAP] Filter metrics['clicks'] >= 5 — typed per-key forward index scan");
     printStatus(Color.CYAN, "Query : " + q6sm);
     printStatus(Color.YELLOW, prettyPrintResponse(runner.runQuery(q6sm)));
     printStatus(Color.GREEN, "***************************************************");
@@ -192,11 +192,11 @@ public class SparseMapQuickStart extends Quickstart {
     printStatus(Color.GREEN, "***************************************************");
 
     // -----------------------------------------------------------------------
-    // Q7: EQ filter on map key — SPARSE_MAP uses per-key inverted index (no scan);
+    // Q7: EQ filter on map key — COLUMNAR_MAP uses per-key inverted index (no scan);
     //     JSON_MATCH uses the JSON index (inverted lookup) — both avoid full doc scan
     // -----------------------------------------------------------------------
     String q7sm = "SELECT userId, metrics['country'] FROM userMetrics WHERE metrics['country'] = 'US' LIMIT 100";
-    printStatus(Color.YELLOW, "[SPARSE_MAP] Filter metrics['country'] = 'US' — inverted index lookup, no doc scan");
+    printStatus(Color.YELLOW, "[COLUMNAR_MAP] Filter metrics['country'] = 'US' — inverted index lookup, no doc scan");
     printStatus(Color.CYAN, "Query : " + q7sm);
     printStatus(Color.YELLOW, prettyPrintResponse(runner.runQuery(q7sm)));
     printStatus(Color.GREEN, "***************************************************");
@@ -213,7 +213,7 @@ public class SparseMapQuickStart extends Quickstart {
     // Q8: SUM aggregation on a numeric map key
     // -----------------------------------------------------------------------
     String q8sm = "SELECT SUM(metrics['clicks']) AS totalClicks FROM userMetrics";
-    printStatus(Color.YELLOW, "[SPARSE_MAP] SUM of metrics['clicks'] across all users");
+    printStatus(Color.YELLOW, "[COLUMNAR_MAP] SUM of metrics['clicks'] across all users");
     printStatus(Color.CYAN, "Query : " + q8sm);
     printStatus(Color.YELLOW, prettyPrintResponse(runner.runQuery(q8sm)));
     printStatus(Color.GREEN, "***************************************************");
@@ -231,7 +231,7 @@ public class SparseMapQuickStart extends Quickstart {
         "SELECT metrics['country'], COUNT(*) AS cnt FROM userMetrics"
             + " WHERE metrics['country'] != '' GROUP BY metrics['country'] ORDER BY cnt DESC";
     printStatus(Color.YELLOW,
-        "[SPARSE_MAP] GROUP BY metrics['country'] — per-key forward index, inverted index assists filter");
+        "[COLUMNAR_MAP] GROUP BY metrics['country'] — per-key forward index, inverted index assists filter");
     printStatus(Color.CYAN, "Query : " + q9sm);
     printStatus(Color.YELLOW, prettyPrintResponse(runner.runQuery(q9sm)));
     printStatus(Color.GREEN, "***************************************************");
@@ -247,12 +247,12 @@ public class SparseMapQuickStart extends Quickstart {
     printStatus(Color.GREEN, "***************************************************");
 
     // -----------------------------------------------------------------------
-    // Q10: IS NOT NULL on map key — SPARSE_MAP uses presence bitmap (O(1));
+    // Q10: IS NOT NULL on map key — COLUMNAR_MAP uses presence bitmap (O(1));
     //      JSON uses JSON_MATCH IS NOT NULL
     // -----------------------------------------------------------------------
     String q10sm = "SELECT COUNT(*) FROM userMetrics WHERE metrics['clicks'] IS NOT NULL";
     printStatus(Color.YELLOW,
-        "[SPARSE_MAP] COUNT where metrics['clicks'] IS NOT NULL — presence bitmap, zero doc scan");
+        "[COLUMNAR_MAP] COUNT where metrics['clicks'] IS NOT NULL — presence bitmap, zero doc scan");
     printStatus(Color.CYAN, "Query : " + q10sm);
     printStatus(Color.YELLOW, prettyPrintResponse(runner.runQuery(q10sm)));
     printStatus(Color.GREEN, "***************************************************");
@@ -265,11 +265,11 @@ public class SparseMapQuickStart extends Quickstart {
     printStatus(Color.GREEN, "***************************************************");
 
     // -----------------------------------------------------------------------
-    // Q11: IS NULL on map key — SPARSE_MAP flips presence bitmap;
+    // Q11: IS NULL on map key — COLUMNAR_MAP flips presence bitmap;
     //      JSON uses JSON_MATCH IS NULL
     // -----------------------------------------------------------------------
     String q11sm = "SELECT COUNT(*) FROM userMetrics WHERE metrics['clicks'] IS NULL";
-    printStatus(Color.YELLOW, "[SPARSE_MAP] COUNT where metrics['clicks'] IS NULL — flipped presence bitmap");
+    printStatus(Color.YELLOW, "[COLUMNAR_MAP] COUNT where metrics['clicks'] IS NULL — flipped presence bitmap");
     printStatus(Color.CYAN, "Query : " + q11sm);
     printStatus(Color.YELLOW, prettyPrintResponse(runner.runQuery(q11sm)));
     printStatus(Color.GREEN, "***************************************************");
@@ -285,7 +285,7 @@ public class SparseMapQuickStart extends Quickstart {
     // Q12: IS NOT NULL + aggregation
     // -----------------------------------------------------------------------
     String q12sm = "SELECT SUM(metrics['clicks']) FROM userMetrics WHERE metrics['clicks'] IS NOT NULL";
-    printStatus(Color.YELLOW, "[SPARSE_MAP] SUM clicks WHERE IS NOT NULL — bitmap-filtered aggregation");
+    printStatus(Color.YELLOW, "[COLUMNAR_MAP] SUM clicks WHERE IS NOT NULL — bitmap-filtered aggregation");
     printStatus(Color.CYAN, "Query : " + q12sm);
     printStatus(Color.YELLOW, prettyPrintResponse(runner.runQuery(q12sm)));
     printStatus(Color.GREEN, "***************************************************");
@@ -295,7 +295,7 @@ public class SparseMapQuickStart extends Quickstart {
     // -----------------------------------------------------------------------
     String q13sm = "SELECT region, COUNT(*) FROM userMetrics"
         + " WHERE metrics['country'] IS NOT NULL GROUP BY region ORDER BY COUNT(*) DESC";
-    printStatus(Color.YELLOW, "[SPARSE_MAP] GROUP BY region WHERE country IS NOT NULL — bitmap + group-by");
+    printStatus(Color.YELLOW, "[COLUMNAR_MAP] GROUP BY region WHERE country IS NOT NULL — bitmap + group-by");
     printStatus(Color.CYAN, "Query : " + q13sm);
     printStatus(Color.YELLOW, prettyPrintResponse(runner.runQuery(q13sm)));
     printStatus(Color.GREEN, "***************************************************");
@@ -306,7 +306,7 @@ public class SparseMapQuickStart extends Quickstart {
     // -----------------------------------------------------------------------
     String q14sm = "SELECT COUNT(*) FROM userMetrics WHERE metrics['sessions'] IS NULL";
     printStatus(Color.YELLOW,
-        "[SPARSE_MAP] COUNT where sessions IS NULL — complement check: IS_NOT_NULL + IS_NULL = total");
+        "[COLUMNAR_MAP] COUNT where sessions IS NULL — complement check: IS_NOT_NULL + IS_NULL = total");
     printStatus(Color.CYAN, "Query : " + q14sm);
     printStatus(Color.YELLOW, prettyPrintResponse(runner.runQuery(q14sm)));
     printStatus(Color.GREEN, "***************************************************");
@@ -315,7 +315,7 @@ public class SparseMapQuickStart extends Quickstart {
   public static void main(String[] args)
       throws Exception {
     List<String> arguments = new ArrayList<>();
-    arguments.addAll(Arrays.asList("QuickStart", "-type", "SPARSE_MAP"));
+    arguments.addAll(Arrays.asList("QuickStart", "-type", "COLUMNAR_MAP"));
     arguments.addAll(Arrays.asList(args));
     PinotAdministrator.main(arguments.toArray(new String[arguments.size()]));
   }

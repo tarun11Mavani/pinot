@@ -40,24 +40,24 @@ import org.testng.annotations.Test;
 
 
 /**
- * Integration test for the SPARSE_MAP column type.
+ * Integration test for the COLUMNAR_MAP column type.
  *
  * <p>Starts a standalone Pinot cluster (ZooKeeper, Controller, Broker, Server), ingests
- * a {@code userMetrics} table from JSON records with a {@code metrics} SPARSE_MAP column,
+ * a {@code userMetrics} table from JSON records with a {@code metrics} COLUMNAR_MAP column,
  * and validates currently-supported queries:
  * <ul>
  *   <li>COUNT(*) over the full table.</li>
- *   <li>Projection of regular (non-SPARSE_MAP) columns.</li>
+ *   <li>Projection of regular (non-COLUMNAR_MAP) columns.</li>
  *   <li>GROUP BY / aggregation on regular columns.</li>
- *   <li>WHERE filtering on SPARSE_MAP key values via the sparse-map inverted index
- *       ({@code SparseMapFilterOperator}).</li>
+ *   <li>WHERE filtering on COLUMNAR_MAP key values via the sparse-map inverted index
+ *       ({@code ColumnarMapFilterOperator}).</li>
  * </ul>
  *
- * <p>Queries that require projection of SPARSE_MAP key values (e.g.
+ * <p>Queries that require projection of COLUMNAR_MAP key values (e.g.
  * {@code SELECT metrics['clicks']}) are intentionally excluded until the corresponding
  * {@code MapDataSource} implementation is completed (Task 15 in the design plan).
  */
-public class SparseMapClusterIntegrationTest extends BaseClusterIntegrationTest {
+public class ColumnarMapClusterIntegrationTest extends BaseClusterIntegrationTest {
 
   private static final String TABLE_NAME = "userMetrics";
 
@@ -159,10 +159,10 @@ public class SparseMapClusterIntegrationTest extends BaseClusterIntegrationTest 
     startBroker();
     startServer();
 
-    Schema schema = buildSparseMapSchema();
+    Schema schema = buildColumnarMapSchema();
     addSchema(schema);
 
-    TableConfig tableConfig = buildSparseMapTableConfig();
+    TableConfig tableConfig = buildColumnarMapTableConfig();
     addTableConfig(tableConfig);
 
     File jsonFile = writeJsonData();
@@ -188,7 +188,7 @@ public class SparseMapClusterIntegrationTest extends BaseClusterIntegrationTest 
   // Schema and table config helpers
   // -------------------------------------------------------------------------
 
-  private Schema buildSparseMapSchema() {
+  private Schema buildColumnarMapSchema() {
     Map<String, FieldSpec> childFieldSpecs = Map.of(
         "key", new DimensionFieldSpec("key", FieldSpec.DataType.STRING, true),
         "value", new DimensionFieldSpec("value", FieldSpec.DataType.STRING, true)
@@ -204,7 +204,7 @@ public class SparseMapClusterIntegrationTest extends BaseClusterIntegrationTest 
         .build();
   }
 
-  private TableConfig buildSparseMapTableConfig() {
+  private TableConfig buildColumnarMapTableConfig() {
     FieldConfig metricsFieldConfig = new FieldConfig.Builder("metrics")
         .withIndexTypes(List.of(FieldConfig.IndexType.MAP))
         .withProperties(Map.of(
@@ -293,13 +293,13 @@ public class SparseMapClusterIntegrationTest extends BaseClusterIntegrationTest 
   }
 
   /**
-   * Filtering on a SPARSE_MAP key value must use the sparse-map inverted index
-   * ({@code SparseMapFilterOperator}) and return the correct count.
+   * Filtering on a COLUMNAR_MAP key value must use the sparse-map inverted index
+   * ({@code ColumnarMapFilterOperator}) and return the correct count.
    *
    * <p>Records with {@code metrics['country'] = 'US'}: u001, u005, u010, u016, u019 → 5 rows.
    */
   @Test
-  public void testSparseMapKeyFilter()
+  public void testColumnarMapKeyFilter()
       throws Exception {
     JsonNode response = postQuery(
         "SELECT COUNT(*) FROM " + TABLE_NAME + " WHERE metrics['country'] = 'US'");
@@ -309,14 +309,14 @@ public class SparseMapClusterIntegrationTest extends BaseClusterIntegrationTest 
   }
 
   /**
-   * Filtering on a SPARSE_MAP key combined with a regular-column filter must intersect correctly.
+   * Filtering on a COLUMNAR_MAP key combined with a regular-column filter must intersect correctly.
    *
    * <p>Records with {@code region = 'US'} AND {@code metrics['country'] = 'US'}:
    * u001, u005, u010, u016, u019 (all US-region rows with country=US are within the US region
    * so the result is still 5).
    */
   @Test
-  public void testSparseMapKeyFilterAndRegularColumnFilter()
+  public void testColumnarMapKeyFilterAndRegularColumnFilter()
       throws Exception {
     JsonNode response = postQuery(
         "SELECT COUNT(*) FROM " + TABLE_NAME
@@ -328,12 +328,12 @@ public class SparseMapClusterIntegrationTest extends BaseClusterIntegrationTest 
   }
 
   /**
-   * Filtering for a SPARSE_MAP key value that matches zero rows must return 0.
+   * Filtering for a COLUMNAR_MAP key value that matches zero rows must return 0.
    *
    * <p>No record has {@code metrics['country'] = 'ZZ'}.
    */
   @Test
-  public void testSparseMapKeyFilterNoMatch()
+  public void testColumnarMapKeyFilterNoMatch()
       throws Exception {
     JsonNode response = postQuery(
         "SELECT COUNT(*) FROM " + TABLE_NAME + " WHERE metrics['country'] = 'ZZ'");
@@ -343,13 +343,13 @@ public class SparseMapClusterIntegrationTest extends BaseClusterIntegrationTest 
   }
 
   /**
-   * SELECT on regular columns filtered by a SPARSE_MAP key value must project the right rows.
+   * SELECT on regular columns filtered by a COLUMNAR_MAP key value must project the right rows.
    *
    * <p>Rows with {@code metrics['country'] = 'US'}: u001, u005, u010, u016, u019.
    * All are in the US region.
    */
   @Test
-  public void testProjectRegularColumnsWithSparseMapFilter()
+  public void testProjectRegularColumnsWithColumnarMapFilter()
       throws Exception {
     JsonNode response = postQuery(
         "SELECT userId, region FROM " + TABLE_NAME
@@ -366,12 +366,12 @@ public class SparseMapClusterIntegrationTest extends BaseClusterIntegrationTest 
   }
 
   /**
-   * Filtering on a numeric SPARSE_MAP key (LONG type) must work correctly.
+   * Filtering on a numeric COLUMNAR_MAP key (LONG type) must work correctly.
    *
    * <p>Records with {@code metrics['clicks'] = 42}: u001 → 1 row.
    */
   @Test
-  public void testSparseMapNumericKeyFilter()
+  public void testColumnarMapNumericKeyFilter()
       throws Exception {
     JsonNode response = postQuery(
         "SELECT COUNT(*) FROM " + TABLE_NAME + " WHERE metrics['clicks'] = '42'");
@@ -381,13 +381,13 @@ public class SparseMapClusterIntegrationTest extends BaseClusterIntegrationTest 
   }
 
   /**
-   * Projecting a SPARSE_MAP key in the SELECT clause must return per-row values.
+   * Projecting a COLUMNAR_MAP key in the SELECT clause must return per-row values.
    *
    * <p>All 20 rows are returned; docs that do not contain the 'clicks' key return 0 (the
    * LONG zero-default). Row for u001 must have clicks = 42.
    */
   @Test
-  public void testSparseMapKeyProjection()
+  public void testColumnarMapKeyProjection()
       throws Exception {
     JsonNode response = postQuery(
         "SELECT userId, metrics['clicks'] FROM " + TABLE_NAME + " ORDER BY userId LIMIT 20");
@@ -408,12 +408,12 @@ public class SparseMapClusterIntegrationTest extends BaseClusterIntegrationTest 
   }
 
   /**
-   * Projecting multiple SPARSE_MAP keys for a single row must return the correct typed values.
+   * Projecting multiple COLUMNAR_MAP keys for a single row must return the correct typed values.
    *
    * <p>u005 has clicks=150 and spend=45.0.
    */
   @Test
-  public void testMultipleSparseMapKeyProjection()
+  public void testMultipleColumnarMapKeyProjection()
       throws Exception {
     JsonNode response = postQuery(
         "SELECT userId, metrics['clicks'], metrics['spend'] FROM " + TABLE_NAME
@@ -427,14 +427,14 @@ public class SparseMapClusterIntegrationTest extends BaseClusterIntegrationTest 
   }
 
   /**
-   * Range predicate ({@code >=}) on a numeric SPARSE_MAP key must return matching rows.
+   * Range predicate ({@code >=}) on a numeric COLUMNAR_MAP key must return matching rows.
    * Docs without the key contribute the zero-default (0L) and do not match {@code >= 5}.
    *
    * <p>Records with clicks ≥ 5: u001, u003, u005, u008, u010, u011, u013, u015, u017, u018,
    * u020 → 11 rows.
    */
   @Test
-  public void testSparseMapRangeFilter()
+  public void testColumnarMapRangeFilter()
       throws Exception {
     JsonNode response = postQuery(
         "SELECT COUNT(*) FROM " + TABLE_NAME + " WHERE metrics['clicks'] >= 5");
@@ -444,13 +444,13 @@ public class SparseMapClusterIntegrationTest extends BaseClusterIntegrationTest 
   }
 
   /**
-   * BETWEEN predicate on a numeric SPARSE_MAP key must return only rows in the inclusive range.
+   * BETWEEN predicate on a numeric COLUMNAR_MAP key must return only rows in the inclusive range.
    *
    * <p>Records with clicks in [10, 100]: u001(42), u008(88), u011(15), u015(62), u018(19),
    * u020(77) → 6 rows.
    */
   @Test
-  public void testSparseMapBetweenFilter()
+  public void testColumnarMapBetweenFilter()
       throws Exception {
     JsonNode response = postQuery(
         "SELECT COUNT(*) FROM " + TABLE_NAME + " WHERE metrics['clicks'] BETWEEN 10 AND 100");
@@ -460,12 +460,12 @@ public class SparseMapClusterIntegrationTest extends BaseClusterIntegrationTest 
   }
 
   /**
-   * IN predicate on a string SPARSE_MAP key uses the inverted index for fast lookup.
+   * IN predicate on a string COLUMNAR_MAP key uses the inverted index for fast lookup.
    *
    * <p>Records with country in ('US', 'DE'): u001, u002, u005, u010, u012, u016, u019 → 7 rows.
    */
   @Test
-  public void testSparseMapInFilter()
+  public void testColumnarMapInFilter()
       throws Exception {
     JsonNode response = postQuery(
         "SELECT COUNT(*) FROM " + TABLE_NAME + " WHERE metrics['country'] IN ('US', 'DE')");
@@ -475,13 +475,13 @@ public class SparseMapClusterIntegrationTest extends BaseClusterIntegrationTest 
   }
 
   /**
-   * NOT_EQ predicate on a SPARSE_MAP key uses the inverted index: returns docs that
+   * NOT_EQ predicate on a COLUMNAR_MAP key uses the inverted index: returns docs that
    * <em>have</em> the key but whose value is not equal to the target.
    *
    * <p>15 docs have a 'country' value; 5 of them equal 'US' → 10 rows returned.
    */
   @Test
-  public void testSparseMapNotEqFilter()
+  public void testColumnarMapNotEqFilter()
       throws Exception {
     JsonNode response = postQuery(
         "SELECT COUNT(*) FROM " + TABLE_NAME + " WHERE metrics['country'] != 'US'");
@@ -491,13 +491,13 @@ public class SparseMapClusterIntegrationTest extends BaseClusterIntegrationTest 
   }
 
   /**
-   * SUM aggregation over a SPARSE_MAP key must sum the stored values across all documents.
+   * SUM aggregation over a COLUMNAR_MAP key must sum the stored values across all documents.
    * Docs that do not have the key contribute the zero-default (0L) to the sum.
    *
    * <p>SUM(clicks) = 42+7+150+3+88+210+15+330+62+5+19+77 = 1008.
    */
   @Test
-  public void testSparseMapSumAggregation()
+  public void testColumnarMapSumAggregation()
       throws Exception {
     JsonNode response = postQuery("SELECT SUM(metrics['clicks']) FROM " + TABLE_NAME);
     Assert.assertEquals(response.get("exceptions").size(), 0, "Query had exceptions: " + response);
@@ -506,14 +506,14 @@ public class SparseMapClusterIntegrationTest extends BaseClusterIntegrationTest 
   }
 
   /**
-   * GROUP BY on a SPARSE_MAP key must group rows by the key value.
+   * GROUP BY on a COLUMNAR_MAP key must group rows by the key value.
    *
    * <p>Using a WHERE filter to limit to known countries avoids the empty-string group
    * that would appear for docs without a 'country' key (absent keys return "").
    * Expected groups: US=5, DE=2, JP=1.
    */
   @Test
-  public void testGroupBySparseMapKey()
+  public void testGroupByColumnarMapKey()
       throws Exception {
     JsonNode response = postQuery(
         "SELECT metrics['country'], COUNT(*) FROM " + TABLE_NAME
@@ -534,13 +534,13 @@ public class SparseMapClusterIntegrationTest extends BaseClusterIntegrationTest 
   }
 
   /**
-   * Combining SPARSE_MAP key projection with a range filter must return only the matching rows
+   * Combining COLUMNAR_MAP key projection with a range filter must return only the matching rows
    * with the correct projected values.
    *
    * <p>clicks ≥ 100: u005(150), u010(210), u013(330) → 3 rows ordered by clicks DESC.
    */
   @Test
-  public void testSparseMapKeyProjectionWithRangeFilter()
+  public void testColumnarMapKeyProjectionWithRangeFilter()
       throws Exception {
     JsonNode response = postQuery(
         "SELECT userId, metrics['clicks'] FROM " + TABLE_NAME
@@ -559,11 +559,11 @@ public class SparseMapClusterIntegrationTest extends BaseClusterIntegrationTest 
   }
 
   /**
-   * Selecting all non-SPARSE_MAP columns (equivalent of SELECT * excluding the map column) must
+   * Selecting all non-COLUMNAR_MAP columns (equivalent of SELECT * excluding the map column) must
    * return all 20 rows with correct values for the regular columns.
    *
-   * <p>Note: {@code SELECT *} on a table that contains a SPARSE_MAP column is not yet fully
-   * supported because SPARSE_MAP columns have no traditional forward index and cannot be directly
+   * <p>Note: {@code SELECT *} on a table that contains a COLUMNAR_MAP column is not yet fully
+   * supported because COLUMNAR_MAP columns have no traditional forward index and cannot be directly
    * projected without the {@code metrics['key']} syntax.
    */
   @Test
@@ -587,7 +587,7 @@ public class SparseMapClusterIntegrationTest extends BaseClusterIntegrationTest 
   }
 
   /**
-   * IS NOT NULL on a SPARSE_MAP key must return docs that have the key present.
+   * IS NOT NULL on a COLUMNAR_MAP key must return docs that have the key present.
    * Uses the presence bitmap — O(1), zero doc scanning.
    */
   @Test
@@ -601,7 +601,7 @@ public class SparseMapClusterIntegrationTest extends BaseClusterIntegrationTest 
   }
 
   /**
-   * IS NULL on a SPARSE_MAP key must return docs where the key is absent.
+   * IS NULL on a COLUMNAR_MAP key must return docs where the key is absent.
    * Uses the flipped presence bitmap.
    */
   @Test
