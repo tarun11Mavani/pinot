@@ -24,7 +24,7 @@
   <parent>
     <artifactId>pinot-input-format</artifactId>
     <groupId>org.apache.pinot</groupId>
-    <version>1.5.0-uber-early-release-2-SNAPSHOT</version>
+    <version>1.5.21-tarunm</version>
   </parent>
 
   <artifactId>pinot-json</artifactId>
