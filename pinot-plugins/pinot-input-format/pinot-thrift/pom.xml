@@ -24,7 +24,7 @@
   <parent>
     <artifactId>pinot-input-format</artifactId>
     <groupId>org.apache.pinot</groupId>
-    <version>1.5.23-tarunm-SNAPSHOT</version>
+    <version>1.5.23-tarunm</version>
   </parent>
 
   <artifactId>pinot-thrift</artifactId>
