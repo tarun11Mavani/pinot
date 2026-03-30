@@ -24,7 +24,7 @@
   <parent>
     <artifactId>pinot-plugins</artifactId>
     <groupId>org.apache.pinot</groupId>
-    <version>1.5.22-tarunm</version>
+    <version>1.5.23-tarunm-SNAPSHOT</version>
   </parent>
   <artifactId>pinot-batch-ingestion</artifactId>
   <packaging>pom</packaging>

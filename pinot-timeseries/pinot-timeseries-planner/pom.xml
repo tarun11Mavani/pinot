@@ -24,7 +24,7 @@
   <parent>
     <groupId>org.apache.pinot</groupId>
     <artifactId>pinot-timeseries</artifactId>
-    <version>1.5.22-tarunm</version>
+    <version>1.5.23-tarunm-SNAPSHOT</version>
   </parent>
 
   <artifactId>pinot-timeseries-planner</artifactId>
