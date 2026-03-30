@@ -19,6 +19,7 @@
 package org.apache.pinot.tools.admin.command;
 
 import java.lang.reflect.InvocationTargetException;
+import org.apache.pinot.tools.ColumnarMapQuickStart;
 import org.apache.pinot.tools.EmptyQuickstart;
 import org.apache.pinot.tools.HybridQuickstart;
 import org.apache.pinot.tools.JoinQuickStart;
@@ -30,7 +31,6 @@ import org.apache.pinot.tools.RealtimeComplexTypeHandlingQuickStart;
 import org.apache.pinot.tools.RealtimeJsonIndexQuickStart;
 import org.apache.pinot.tools.RealtimeQuickStart;
 import org.apache.pinot.tools.RealtimeQuickStartWithMinion;
-import org.apache.pinot.tools.ColumnarMapQuickStart;
 import org.apache.pinot.tools.TimestampIndexQuickstart;
 import org.apache.pinot.tools.UpsertJsonQuickStart;
 import org.apache.pinot.tools.UpsertQuickStart;
