@@ -917,7 +917,7 @@ public class MutableSegmentImpl implements MutableSegment {
           }
         }
 
-        if (dictId < 0 && dataType != DataType.MAP) {
+        if (dictId < 0 && !indexContainer._mutableIndexes.containsKey(StandardIndexes.columnarMap())) {
           // Update min/max value from raw value
           // NOTE: Skip updating min/max value for aggregated metrics because the value will change over time.
           if (!isAggregateMetricsEnabled() || fieldSpec.getFieldType() != FieldSpec.FieldType.METRIC) {
@@ -1580,7 +1580,8 @@ public class MutableSegmentImpl implements MutableSegment {
         @Nullable MutableDictionary dictionary, @Nullable MutableNullValueVector nullValueVector,
         @Nullable String sourceColumn, @Nullable ValueAggregator valueAggregator) {
       Preconditions.checkArgument(
-          fieldSpec.getDataType() == DataType.MAP || mutableIndexes.containsKey(StandardIndexes.forward()),
+          mutableIndexes.containsKey(StandardIndexes.columnarMap())
+              || mutableIndexes.containsKey(StandardIndexes.forward()),
           "Forward index is required");
       _fieldSpec = fieldSpec;
       _mutableIndexes = mutableIndexes;
