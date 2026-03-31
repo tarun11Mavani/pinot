@@ -24,7 +24,7 @@
   <parent>
     <artifactId>pinot-batch-ingestion</artifactId>
     <groupId>org.apache.pinot</groupId>
-    <version>1.5.25-tarunm</version>
+    <version>1.5.26-tuber-SNAPSHOT</version>
   </parent>
 
   <artifactId>pinot-batch-ingestion-spark-3</artifactId>
