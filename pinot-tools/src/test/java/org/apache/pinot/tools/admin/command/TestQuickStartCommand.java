@@ -118,11 +118,6 @@ public class TestQuickStartCommand {
     Assert.assertEquals(quickStartClassFor("BATCH-SPARSE-MAP"), ColumnarMapQuickStart.class);
     Assert.assertEquals(quickStartClassFor("OFFLINE_COLUMNAR_MAP"), ColumnarMapQuickStart.class);
     Assert.assertEquals(quickStartClassFor("OFFLINE-SPARSE-MAP"), ColumnarMapQuickStart.class);
-
-    Assert.assertEquals(quickStartClassFor("MULTI_CLUSTER"),
-        MultiClusterQuickstart.class);
-    Assert.assertEquals(quickStartClassFor("MULTICLUSTER"),
-        MultiClusterQuickstart.class);
   }
 
   private Class<? extends QuickStartBase> quickStartClassFor(String type)
