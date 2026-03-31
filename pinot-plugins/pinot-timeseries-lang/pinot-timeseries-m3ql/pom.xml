@@ -24,7 +24,7 @@
   <parent>
     <groupId>org.apache.pinot</groupId>
     <artifactId>pinot-timeseries-lang</artifactId>
-    <version>1.5.24-tarunm</version>
+    <version>1.5.25-tuber-SNAPSHOT</version>
   </parent>
 
   <artifactId>pinot-timeseries-m3ql</artifactId>
