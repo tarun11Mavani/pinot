@@ -24,7 +24,7 @@
   <parent>
     <artifactId>pinot</artifactId>
     <groupId>org.apache.pinot</groupId>
-    <version>1.5.26-tuber-SNAPSHOT</version>
+    <version>1.5.26-tarunm</version>
   </parent>
   <artifactId>pinot-common</artifactId>
   <name>Pinot Common</name>
