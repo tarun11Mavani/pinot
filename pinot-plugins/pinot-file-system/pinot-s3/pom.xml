@@ -24,7 +24,7 @@
   <parent>
     <artifactId>pinot-file-system</artifactId>
     <groupId>org.apache.pinot</groupId>
-    <version>1.5.26-tarunm</version>
+    <version>1.5.27-tuber-SNAPSHOT</version>
   </parent>
 
   <artifactId>pinot-s3</artifactId>
