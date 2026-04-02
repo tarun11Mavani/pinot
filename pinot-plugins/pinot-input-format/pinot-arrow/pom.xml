@@ -24,7 +24,7 @@
   <parent>
     <artifactId>pinot-input-format</artifactId>
     <groupId>org.apache.pinot</groupId>
-    <version>1.5.28-tarunm</version>
+    <version>1.5.29-tuber-SNAPSHOT</version>
   </parent>
 
   <artifactId>pinot-arrow</artifactId>
