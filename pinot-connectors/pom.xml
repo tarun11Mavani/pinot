@@ -24,7 +24,7 @@
   <parent>
     <artifactId>pinot</artifactId>
     <groupId>org.apache.pinot</groupId>
-    <version>1.5.29-tarunm</version>
+    <version>1.5.30-tuber-SNAPSHOT</version>
   </parent>
   <artifactId>pinot-connectors</artifactId>
   <packaging>pom</packaging>
