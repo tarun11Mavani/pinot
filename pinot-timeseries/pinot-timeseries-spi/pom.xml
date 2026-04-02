@@ -24,7 +24,7 @@
   <parent>
     <groupId>org.apache.pinot</groupId>
     <artifactId>pinot-timeseries</artifactId>
-    <version>1.5.27-tuber-SNAPSHOT</version>
+    <version>1.5.28-tarunm</version>
   </parent>
 
   <artifactId>pinot-timeseries-spi</artifactId>

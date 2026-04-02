@@ -24,7 +24,7 @@
   <parent>
     <artifactId>pinot-input-format</artifactId>
     <groupId>org.apache.pinot</groupId>
-    <version>1.5.27-tuber-SNAPSHOT</version>
+    <version>1.5.28-tarunm</version>
   </parent>
 
   <artifactId>pinot-confluent-json</artifactId>
