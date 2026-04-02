@@ -22,6 +22,7 @@ import java.io.IOException;
 import javax.annotation.Nullable;
 import org.apache.pinot.segment.local.io.util.FixedBitIntReaderWriter;
 import org.apache.pinot.segment.spi.index.reader.ColumnarMapIndexReader;
+import org.apache.pinot.segment.spi.index.reader.Dictionary;
 import org.apache.pinot.segment.spi.index.reader.ForwardIndexReader;
 import org.apache.pinot.segment.spi.index.reader.ForwardIndexReaderContext;
 import org.apache.pinot.spi.data.FieldSpec.DataType;
@@ -145,7 +146,7 @@ public class ColumnarMapKeyForwardIndexReader implements ForwardIndexReader<Forw
           iter.next();
           ordinal++;
         } else {
-          dictIdBuffer[i] = _defaultDictId;
+          dictIdBuffer[i] = Dictionary.NULL_VALUE_INDEX;
         }
       }
     } else if (_dictIdReader != null) {
@@ -158,7 +159,7 @@ public class ColumnarMapKeyForwardIndexReader implements ForwardIndexReader<Forw
       for (int i = 0; i < length; i++) {
         String rawValue = _columnarMapIndexReader.getString(docIds[i], _key);
         if (rawValue == null || rawValue.isEmpty()) {
-          dictIdBuffer[i] = _defaultDictId; // default value position in dictionary
+          dictIdBuffer[i] = Dictionary.NULL_VALUE_INDEX; // default value position in dictionary
         } else {
           dictIdBuffer[i] = _dictionary.indexOf(rawValue);
         }

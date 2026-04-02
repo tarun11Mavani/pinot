@@ -34,6 +34,7 @@ import org.apache.commons.io.FileUtils;
 import org.apache.pinot.segment.local.io.util.FixedBitIntReaderWriter;
 import org.apache.pinot.segment.spi.V1Constants;
 import org.apache.pinot.segment.spi.index.reader.ColumnarMapIndexReader;
+import org.apache.pinot.segment.spi.index.reader.Dictionary;
 import org.apache.pinot.segment.spi.memory.PinotDataBuffer;
 import org.apache.pinot.spi.config.table.ColumnarMapIndexConfig;
 import org.apache.pinot.spi.data.ComplexFieldSpec;
