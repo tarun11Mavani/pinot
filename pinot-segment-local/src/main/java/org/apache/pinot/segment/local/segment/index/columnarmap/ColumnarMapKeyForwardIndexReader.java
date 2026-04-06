@@ -58,6 +58,7 @@ public class ColumnarMapKeyForwardIndexReader implements ForwardIndexReader<Forw
   private final FixedBitIntReaderWriter _dictIdReader;
   private final ImmutableRoaringBitmap _presenceBitmap;
   private final int _defaultDictId;
+  private final boolean _isDocIdIndexed;
 
   public ColumnarMapKeyForwardIndexReader(ColumnarMapIndexReader columnarMapIndexReader, String key,
       DataType storedType) {
@@ -84,7 +85,14 @@ public class ColumnarMapKeyForwardIndexReader implements ForwardIndexReader<Forw
     _storedType = storedType;
     _dictionary = dictionary;
     _dictIdReader = dictIdReader;
-    _presenceBitmap = presenceBitmap;
+    _presenceBitmap = presenceBitmap != null ? presenceBitmap : ImmutableRoaringBitmap.bitmapOf();
+    _isDocIdIndexed = presenceBitmap == null && dictIdReader != null;
+    if (dictionary != null) {
+      String defaultValueStr = ColumnarMapKeyDictionary.getDefaultValueString(storedType);
+      _defaultDictId = dictionary.indexOf(defaultValueStr);
+    } else {
+      _defaultDictId = 0;
+    }
   }
 
   @Override
@@ -124,7 +132,12 @@ public class ColumnarMapKeyForwardIndexReader implements ForwardIndexReader<Forw
     if (_dictionary == null) {
       throw new UnsupportedOperationException("Dictionary not available for key: " + _key);
     }
-    if (_dictIdReader != null) {
+    if (_isDocIdIndexed) {
+      // Expanded path: dictIdReader is docId-indexed, direct read with no bitmap overhead
+      for (int i = 0; i < length; i++) {
+        dictIdBuffer[i] = _dictIdReader.readInt(docIds[i]);
+      }
+    } else if (_dictIdReader != null) {
       // Fast path: co-iterate sorted docIds with presence bitmap iterator.
       // Seed ordinal with one rankLong() call for the first docId, then walk forward.
       int firstDocId = docIds[0];
