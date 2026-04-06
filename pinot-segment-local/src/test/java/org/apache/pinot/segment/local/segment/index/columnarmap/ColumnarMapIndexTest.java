@@ -1386,4 +1386,651 @@ public class ColumnarMapIndexTest {
       }
     };
   }
+
+  // ---- GROUP BY readDictIds benchmark across key densities ----
+
+  /**
+   * Creates a segment with three MAP keys at different fill rates and benchmarks
+   * readDictIds for each, comparing against a baseline FixedBitSVForwardIndexReader
+   * that simulates how a flattened dimension column reads dictIds.
+   *
+   * This test validates:
+   * 1. Correctness: every dictId resolves to the expected value at every density
+   * 2. Performance profile: measures ns/doc for dense, medium, and sparse keys
+   *    and compares against the equivalent flattened-column read path
+   */
+  @Test
+  public void testReadDictIdsPerformanceByDensity()
+      throws IOException {
+    int numDocs = 100_000;
+    double[] fillRates = {1.0, 0.6, 0.05};
+    String[] keyNames = {"dense_key", "medium_key", "sparse_key"};
+    String[] values = {"alpha", "beta", "gamma", "delta", "epsilon"};
+
+    Map<String, FieldSpec.DataType> keyTypes = new HashMap<>();
+    for (String k : keyNames) {
+      keyTypes.put(k, FieldSpec.DataType.STRING);
+    }
+
+    // Build docs with controlled fill rates per key
+    @SuppressWarnings("unchecked")
+    Map<String, Object>[] docs = new Map[numDocs];
+    // Track expected value per doc per key for correctness validation
+    String[][] expectedValues = new String[keyNames.length][numDocs]; // null = absent
+    java.util.Random rng = new java.util.Random(42);
+
+    for (int d = 0; d < numDocs; d++) {
+      Map<String, Object> doc = new HashMap<>();
+      for (int k = 0; k < keyNames.length; k++) {
+        if (rng.nextDouble() < fillRates[k]) {
+          String val = values[rng.nextInt(values.length)];
+          doc.put(keyNames[k], val);
+          expectedValues[k][d] = val;
+        }
+      }
+      docs[d] = doc;
+    }
+
+    ComplexFieldSpec fieldSpec = buildMapFieldSpec(COLUMN_NAME);
+    ColumnarMapIndexConfig config = new ColumnarMapIndexConfig(true, null, true, null, 1000);
+    File indexFile = new File(INDEX_DIR, COLUMN_NAME + V1Constants.Indexes.COLUMNAR_MAP_INDEX_FILE_EXTENSION);
+
+    try (OnHeapColumnarMapIndexCreator creator = new OnHeapColumnarMapIndexCreator(
+        INDEX_DIR, COLUMN_NAME, fieldSpec, config, keyTypes, FieldSpec.DataType.STRING)) {
+      for (Map<String, Object> doc : docs) {
+        creator.add(doc);
+      }
+      creator.seal();
+    }
+
+    try (PinotDataBuffer buffer = PinotDataBuffer.mapReadOnlyBigEndianFile(indexFile);
+        ImmutableColumnarMapIndexReader reader = new ImmutableColumnarMapIndexReader(buffer, null)) {
+
+      ColumnarMapDataSource mapDataSource = new ColumnarMapDataSource(buildColumnMetadata(fieldSpec, numDocs), reader);
+
+      int blockSize = 10_000;
+      int numBlocks = numDocs / blockSize;
+
+      for (int k = 0; k < keyNames.length; k++) {
+        String key = keyNames[k];
+        org.apache.pinot.segment.spi.datasource.DataSource keyDs = mapDataSource.getKeyDataSource(key);
+        assertNotNull(keyDs, "Key DataSource should exist for: " + key);
+
+        org.apache.pinot.segment.spi.index.reader.ForwardIndexReader<?> fwd = keyDs.getForwardIndex();
+        assertTrue(fwd.isDictionaryEncoded(), key + " should be dictionary encoded");
+        org.apache.pinot.segment.spi.index.reader.Dictionary dict = keyDs.getDictionary();
+        assertNotNull(dict, key + " dictionary should not be null");
+
+        ImmutableRoaringBitmap presence = reader.getPresenceBitmap(key);
+        long presentCount = presence.getLongCardinality();
+        double actualFillRate = (double) presentCount / numDocs;
+
+        // --- Correctness: read all docs in blocks and verify every value ---
+        int correctCount = 0;
+        int absentCorrectCount = 0;
+
+        for (int b = 0; b < numBlocks; b++) {
+          int start = b * blockSize;
+          int[] docIds = new int[blockSize];
+          for (int i = 0; i < blockSize; i++) {
+            docIds[i] = start + i;
+          }
+
+          int[] dictIdBuffer = new int[blockSize];
+          fwd.readDictIds(docIds, blockSize, dictIdBuffer, null);
+
+          for (int i = 0; i < blockSize; i++) {
+            int docId = start + i;
+            String resolved = dict.getStringValue(dictIdBuffer[i]);
+
+            if (expectedValues[k][docId] != null) {
+              assertEquals(resolved, expectedValues[k][docId],
+                  key + " doc " + docId + " expected " + expectedValues[k][docId] + " got " + resolved);
+              correctCount++;
+            } else {
+              // Absent doc — should get default value (empty string for STRING type)
+              assertEquals(resolved, "",
+                  key + " doc " + docId + " absent but got non-default: " + resolved);
+              absentCorrectCount++;
+            }
+          }
+        }
+
+        // --- Performance: time readDictIds over all blocks, 3 runs ---
+        long[] timesNs = new long[3];
+        for (int run = 0; run < 3; run++) {
+          long startNs = System.nanoTime();
+          for (int b = 0; b < numBlocks; b++) {
+            int start = b * blockSize;
+            int[] docIds = new int[blockSize];
+            for (int i = 0; i < blockSize; i++) {
+              docIds[i] = start + i;
+            }
+            int[] dictIdBuffer = new int[blockSize];
+            fwd.readDictIds(docIds, blockSize, dictIdBuffer, null);
+          }
+          timesNs[run] = System.nanoTime() - startNs;
+        }
+        java.util.Arrays.sort(timesNs);
+        long medianNs = timesNs[1];
+        double nsPerDoc = (double) medianNs / numDocs;
+
+        System.out.printf("[ColumnarMap] key=%-12s fill=%.0f%% (%6d/%d) correct=%d absent=%d "
+                + "| median=%.1fms (%.0f ns/doc)%n",
+            key, actualFillRate * 100, presentCount, numDocs,
+            correctCount, absentCorrectCount, medianNs / 1e6, nsPerDoc);
+      }
+
+      // --- Baseline: simulate flattened column with FixedBitSVForwardIndexReader ---
+      // Build a FixedBitIntReaderWriter with the same dictIds as the dense key, indexed by docId
+      org.apache.pinot.segment.spi.datasource.DataSource denseDs = mapDataSource.getKeyDataSource("dense_key");
+      org.apache.pinot.segment.spi.index.reader.Dictionary denseDict = denseDs.getDictionary();
+      int numBits = org.apache.pinot.segment.local.io.util.PinotDataBitSet.getNumBitsPerValue(
+          Math.max(denseDict.length() - 1, 0));
+
+      // Write dictIds into a flat forward index buffer
+      long bufferSize = ((long) numDocs * numBits + Byte.SIZE - 1) / Byte.SIZE;
+      File flatFile = new File(INDEX_DIR, "flat_fwd.idx");
+      try (PinotDataBuffer flatBuf = PinotDataBuffer.mapFile(flatFile, false, 0, bufferSize,
+          java.nio.ByteOrder.BIG_ENDIAN, "flat-fwd");
+          FixedBitIntReaderWriter flatWriter = new FixedBitIntReaderWriter(flatBuf, numDocs, numBits)) {
+
+        // Read dictIds from columnar map to populate the flat forward index
+        org.apache.pinot.segment.spi.index.reader.ForwardIndexReader<?> denseFwd = denseDs.getForwardIndex();
+        for (int b = 0; b < numBlocks; b++) {
+          int start = b * blockSize;
+          int[] docIds = new int[blockSize];
+          for (int i = 0; i < blockSize; i++) {
+            docIds[i] = start + i;
+          }
+          int[] dictIdBuffer = new int[blockSize];
+          denseFwd.readDictIds(docIds, blockSize, dictIdBuffer, null);
+          for (int i = 0; i < blockSize; i++) {
+            flatWriter.writeInt(start + i, dictIdBuffer[i]);
+          }
+        }
+
+        // Now benchmark reading from the flat forward index (simulates FixedBitSVForwardIndexReader)
+        long[] flatTimesNs = new long[3];
+        for (int run = 0; run < 3; run++) {
+          long startNs = System.nanoTime();
+          for (int b = 0; b < numBlocks; b++) {
+            int start = b * blockSize;
+            int[] docIds = new int[blockSize];
+            for (int i = 0; i < blockSize; i++) {
+              docIds[i] = start + i;
+            }
+            int[] dictIdBuffer = new int[blockSize];
+            for (int i = 0; i < blockSize; i++) {
+              dictIdBuffer[i] = flatWriter.readInt(docIds[i]);
+            }
+          }
+          flatTimesNs[run] = System.nanoTime() - startNs;
+        }
+        java.util.Arrays.sort(flatTimesNs);
+        long flatMedianNs = flatTimesNs[1];
+        double flatNsPerDoc = (double) flatMedianNs / numDocs;
+
+        System.out.printf("[Flat FwdIdx] baseline                              "
+                + "| median=%.1fms (%.0f ns/doc)%n", flatMedianNs / 1e6, flatNsPerDoc);
+      }
+    }
+  }
+
+  // ---- Micro-benchmark isolating each cost component in readDictIds ----
+
+  /**
+   * Isolates the overhead sources in ColumnarMapKeyForwardIndexReader.readDictIds():
+   *
+   * 1. "flat baseline" — FixedBitIntReaderWriter.readInt(docIds[i]) per doc (the target)
+   * 2. "flat batch" — FixedBitIntReaderWriter.readInt(startIndex, length, buffer) (sequential batch)
+   * 3. "bitmap iter only" — co-iterator walk without any readInt (cost of bitmap traversal alone)
+   * 4. "rankLong only" — per-block rankLong() without iterator (cost of the seed operation)
+   * 5. "iter + readInt(ordinal)" — full columnar map path (current readDictIds)
+   * 6. "rank per doc" — rankLong() per doc instead of iterator (alternative approach)
+   * 7. "dense shortcut" — skip bitmap entirely when fill=100%, read docId as ordinal
+   */
+  @Test
+  public void testReadDictIdsMicroBenchmark()
+      throws IOException {
+    double[] fillRates = {1.0, 0.6, 0.05};
+    for (double fillRate : fillRates) {
+      runMicroBenchmarkForFillRate(fillRate);
+    }
+  }
+
+  private void runMicroBenchmarkForFillRate(double fillRate)
+      throws IOException {
+    // Clean up any previous index files for this run
+    FileUtils.cleanDirectory(INDEX_DIR);
+
+    int numDocs = 500_000;
+    int blockSize = 10_000;
+    int numBlocks = numDocs / blockSize;
+    int warmupRuns = 3;
+    int measuredRuns = 5;
+    String[] values = {"alpha", "beta", "gamma", "delta", "epsilon"};
+
+    // Build segment with a single 100% fill key
+    Map<String, FieldSpec.DataType> keyTypes = Map.of("test_key", FieldSpec.DataType.STRING);
+
+    @SuppressWarnings("unchecked")
+    Map<String, Object>[] docs = new Map[numDocs];
+    java.util.Random rng = new java.util.Random(42);
+    for (int d = 0; d < numDocs; d++) {
+      Map<String, Object> doc = new HashMap<>();
+      if (rng.nextDouble() < fillRate) {
+        doc.put("test_key", values[rng.nextInt(values.length)]);
+      }
+      docs[d] = doc;
+    }
+
+    ComplexFieldSpec fieldSpec = buildMapFieldSpec(COLUMN_NAME);
+    ColumnarMapIndexConfig config = new ColumnarMapIndexConfig(true, null, true, null, 1000);
+    File indexFile = new File(INDEX_DIR, COLUMN_NAME + V1Constants.Indexes.COLUMNAR_MAP_INDEX_FILE_EXTENSION);
+
+    try (OnHeapColumnarMapIndexCreator creator = new OnHeapColumnarMapIndexCreator(
+        INDEX_DIR, COLUMN_NAME, fieldSpec, config, keyTypes, FieldSpec.DataType.STRING)) {
+      for (Map<String, Object> doc : docs) {
+        creator.add(doc);
+      }
+      creator.seal();
+    }
+
+    try (PinotDataBuffer buffer = PinotDataBuffer.mapReadOnlyBigEndianFile(indexFile);
+        ImmutableColumnarMapIndexReader reader = new ImmutableColumnarMapIndexReader(buffer, null)) {
+
+      ColumnarMapDataSource mapDataSource = new ColumnarMapDataSource(buildColumnMetadata(fieldSpec, numDocs), reader);
+      org.apache.pinot.segment.spi.datasource.DataSource keyDs = mapDataSource.getKeyDataSource("test_key");
+      org.apache.pinot.segment.spi.index.reader.ForwardIndexReader<?> fwd = keyDs.getForwardIndex();
+      org.apache.pinot.segment.spi.index.reader.Dictionary dict = keyDs.getDictionary();
+      ImmutableRoaringBitmap presence = reader.getPresenceBitmap("test_key");
+
+      int numBits = org.apache.pinot.segment.local.io.util.PinotDataBitSet.getNumBitsPerValue(
+          Math.max(dict.length() - 1, 0));
+
+      // Build flat forward index for comparison
+      long flatBufSize = ((long) numDocs * numBits + Byte.SIZE - 1) / Byte.SIZE;
+      File flatFile = new File(INDEX_DIR, "micro_flat.idx");
+      PinotDataBuffer flatBuf = PinotDataBuffer.mapFile(flatFile, false, 0, flatBufSize,
+          java.nio.ByteOrder.BIG_ENDIAN, "flat-micro");
+      FixedBitIntReaderWriter flatFwd = new FixedBitIntReaderWriter(flatBuf, numDocs, numBits);
+
+      // Get the dictIdReader from the columnar map reader for direct access
+      FixedBitIntReaderWriter cmDictIdReader = reader.getDictIdReader("test_key");
+      assertNotNull(cmDictIdReader, "dictIdReader should exist for test_key");
+
+      // Populate flat with same dictIds
+      for (int b = 0; b < numBlocks; b++) {
+        int start = b * blockSize;
+        int[] docIds = new int[blockSize];
+        for (int i = 0; i < blockSize; i++) {
+          docIds[i] = start + i;
+        }
+        int[] dictIdBuf = new int[blockSize];
+        fwd.readDictIds(docIds, blockSize, dictIdBuf, null);
+        for (int i = 0; i < blockSize; i++) {
+          flatFwd.writeInt(start + i, dictIdBuf[i]);
+        }
+      }
+
+      System.out.printf("%n=== readDictIds Micro-Benchmark (%,d docs, %,d blocks of %,d) ===%n",
+          numDocs, numBlocks, blockSize);
+      System.out.printf("Key fill rate: %.0f%%, dict cardinality: %d, bits/value: %d%n%n",
+          (double) presence.getLongCardinality() / numDocs * 100, dict.length(), numBits);
+
+      // --- Test 1: Flat baseline (random access by docId) ---
+      {
+        long[] times = benchmarkRuns(warmupRuns, measuredRuns, () -> {
+          for (int b = 0; b < numBlocks; b++) {
+            int start = b * blockSize;
+            int[] docIds = new int[blockSize];
+            for (int i = 0; i < blockSize; i++) {
+              docIds[i] = start + i;
+            }
+            int[] dictIdBuf = new int[blockSize];
+            for (int i = 0; i < blockSize; i++) {
+              dictIdBuf[i] = flatFwd.readInt(docIds[i]);
+            }
+          }
+        });
+        printBenchResult("1. flat readInt(docId)", times, numDocs);
+      }
+
+      // --- Test 2: Flat batch (sequential, no docId array) ---
+      {
+        long[] times = benchmarkRuns(warmupRuns, measuredRuns, () -> {
+          for (int b = 0; b < numBlocks; b++) {
+            int start = b * blockSize;
+            int[] dictIdBuf = new int[blockSize];
+            flatFwd.readInt(start, blockSize, dictIdBuf);
+          }
+        });
+        printBenchResult("2. flat batch readInt(start, len, buf)", times, numDocs);
+      }
+
+      // --- Test 3: Bitmap iterator only (no readInt) ---
+      {
+        long[] times = benchmarkRuns(warmupRuns, measuredRuns, () -> {
+          for (int b = 0; b < numBlocks; b++) {
+            int start = b * blockSize;
+            int end = start + blockSize;
+            org.roaringbitmap.PeekableIntIterator iter = presence.getIntIterator();
+            iter.advanceIfNeeded(start);
+            int ordinal = (start == 0) ? 0 : (int) presence.rankLong(start - 1);
+            int[] docIds = new int[blockSize];
+            for (int i = 0; i < blockSize; i++) {
+              docIds[i] = start + i;
+            }
+            for (int i = 0; i < blockSize; i++) {
+              int docId = docIds[i];
+              while (iter.hasNext() && iter.peekNext() < docId) {
+                iter.next();
+                ordinal++;
+              }
+              if (iter.hasNext() && iter.peekNext() == docId) {
+                // just consume ordinal, don't read anything
+                int o = ordinal;
+                iter.next();
+                ordinal++;
+              }
+            }
+          }
+        });
+        printBenchResult("3. bitmap co-iterator only (no readInt)", times, numDocs);
+      }
+
+      // --- Test 4: rankLong per block only ---
+      {
+        long[] times = benchmarkRuns(warmupRuns, measuredRuns, () -> {
+          for (int b = 0; b < numBlocks; b++) {
+            int start = b * blockSize;
+            int ordinal = (start == 0) ? 0 : (int) presence.rankLong(start - 1);
+          }
+        });
+        printBenchResult("4. rankLong() per block only", times, numDocs);
+      }
+
+      // --- Test 5: Full columnar map readDictIds (current implementation) ---
+      {
+        long[] times = benchmarkRuns(warmupRuns, measuredRuns, () -> {
+          for (int b = 0; b < numBlocks; b++) {
+            int start = b * blockSize;
+            int[] docIds = new int[blockSize];
+            for (int i = 0; i < blockSize; i++) {
+              docIds[i] = start + i;
+            }
+            int[] dictIdBuf = new int[blockSize];
+            fwd.readDictIds(docIds, blockSize, dictIdBuf, null);
+          }
+        });
+        printBenchResult("5. columnar map readDictIds (current)", times, numDocs);
+      }
+
+      // --- Test 6: rankLong per doc (alternative: no iterator) ---
+      {
+        long[] times = benchmarkRuns(warmupRuns, measuredRuns, () -> {
+          for (int b = 0; b < numBlocks; b++) {
+            int start = b * blockSize;
+            int[] docIds = new int[blockSize];
+            for (int i = 0; i < blockSize; i++) {
+              docIds[i] = start + i;
+            }
+            int[] dictIdBuf = new int[blockSize];
+            for (int i = 0; i < blockSize; i++) {
+              int docId = docIds[i];
+              if (presence.contains(docId)) {
+                int ordinal = (int) presence.rankLong(docId) - 1;
+                dictIdBuf[i] = cmDictIdReader.readInt(ordinal);
+              } else {
+                dictIdBuf[i] = 0;
+              }
+            }
+          }
+        });
+        printBenchResult("6. rank per doc (contains+rankLong+readInt)", times, numDocs);
+      }
+
+      // --- Test 7: Dense shortcut (ordinal == docId, skip bitmap) --- only valid at 100% fill
+      if (presence.getLongCardinality() == numDocs) {
+        long[] times = benchmarkRuns(warmupRuns, measuredRuns, () -> {
+          for (int b = 0; b < numBlocks; b++) {
+            int start = b * blockSize;
+            int[] docIds = new int[blockSize];
+            for (int i = 0; i < blockSize; i++) {
+              docIds[i] = start + i;
+            }
+            int[] dictIdBuf = new int[blockSize];
+            for (int i = 0; i < blockSize; i++) {
+              dictIdBuf[i] = cmDictIdReader.readInt(docIds[i]);
+            }
+          }
+        });
+        printBenchResult("7. dense shortcut (ordinal=docId, no bitmap)", times, numDocs);
+      } else {
+        System.out.printf("  %-50s (skipped — fill < 100%%)%n", "7. dense shortcut (ordinal=docId, no bitmap)");
+      }
+
+      // --- Test 8: Iterator + batch readInt from ordinal start ---
+      // For 100% fill, all docs in a block map to contiguous ordinals.
+      // So we can: rankLong(firstDocId) → batch readInt(ordinalStart, blockSize, buffer)
+      {
+        long[] times = benchmarkRuns(warmupRuns, measuredRuns, () -> {
+          for (int b = 0; b < numBlocks; b++) {
+            int start = b * blockSize;
+            int ordinalStart = (start == 0) ? 0 : (int) presence.rankLong(start - 1);
+            // Check if all docs in block are present (block is fully dense)
+            int ordinalEnd = (int) presence.rankLong(start + blockSize - 1);
+            int[] dictIdBuf = new int[blockSize];
+            if (ordinalEnd - ordinalStart == blockSize) {
+              // Fully dense block: batch read
+              cmDictIdReader.readInt(ordinalStart, blockSize, dictIdBuf);
+            } else {
+              // Sparse block: fall back to co-iterator
+              org.roaringbitmap.PeekableIntIterator iter = presence.getIntIterator();
+              iter.advanceIfNeeded(start);
+              int ordinal = ordinalStart;
+              int[] docIds = new int[blockSize];
+              for (int i = 0; i < blockSize; i++) {
+                docIds[i] = start + i;
+              }
+              for (int i = 0; i < blockSize; i++) {
+                int docId = docIds[i];
+                while (iter.hasNext() && iter.peekNext() < docId) {
+                  iter.next();
+                  ordinal++;
+                }
+                if (iter.hasNext() && iter.peekNext() == docId) {
+                  dictIdBuf[i] = cmDictIdReader.readInt(ordinal);
+                  iter.next();
+                  ordinal++;
+                } else {
+                  dictIdBuf[i] = 0;
+                }
+              }
+            }
+          }
+        });
+        printBenchResult("8. per-block dense check + batch readInt", times, numDocs);
+      }
+
+      // --- Test 9: Measure expansion cost (ordinal→docId indexed) at load time ---
+      {
+        long[] times = benchmarkRuns(warmupRuns, measuredRuns, () -> {
+          int numBitsLocal = org.apache.pinot.segment.local.io.util.PinotDataBitSet.getNumBitsPerValue(
+              Math.max(dict.length() - 1, 0));
+          // Allocate expanded array
+          long expandedSize = ((long) numDocs * numBitsLocal + Byte.SIZE - 1) / Byte.SIZE;
+          // Simulate: iterate presence bitmap, read ordinal dictIds, write to expanded positions
+          // Use a simple int[] to avoid file I/O overhead in the measurement
+          int[] expanded = new int[numDocs];
+          java.util.Arrays.fill(expanded, 0); // default dictId
+          org.roaringbitmap.PeekableIntIterator expIter = presence.getIntIterator();
+          int ord = 0;
+          while (expIter.hasNext()) {
+            int docId = expIter.next();
+            expanded[docId] = cmDictIdReader.readInt(ord);
+            ord++;
+          }
+        });
+        printBenchResult("9. expansion cost (build docId-indexed array)", times, numDocs);
+      }
+
+      flatFwd.close();
+      flatBuf.close();
+    }
+  }
+
+  private long[] benchmarkRuns(int warmup, int measured, Runnable task) {
+    for (int i = 0; i < warmup; i++) {
+      task.run();
+    }
+    long[] times = new long[measured];
+    for (int i = 0; i < measured; i++) {
+      long start = System.nanoTime();
+      task.run();
+      times[i] = System.nanoTime() - start;
+    }
+    java.util.Arrays.sort(times);
+    return times;
+  }
+
+  private void printBenchResult(String label, long[] sortedTimesNs, int numDocs) {
+    long median = sortedTimesNs[sortedTimesNs.length / 2];
+    double nsPerDoc = (double) median / numDocs;
+    System.out.printf("  %-50s median=%6.1fms  %5.0f ns/doc%n", label, median / 1e6, nsPerDoc);
+  }
+
+  // ---- Threshold sweep: compare expanded vs co-iterator at each fill rate ----
+
+  @Test
+  public void testExpansionThresholdSweep()
+      throws IOException {
+    double[] fillRates = {0.005, 0.01, 0.02, 0.05, 0.10, 0.20, 0.30, 0.40, 0.50, 0.60, 0.80, 0.95, 1.0};
+    int numDocs = 500_000;
+    int blockSize = 10_000;
+    int numBlocks = numDocs / blockSize;
+    int warmupRuns = 3;
+    int measuredRuns = 5;
+    String[] values = {"alpha", "beta", "gamma", "delta", "epsilon"};
+
+    System.out.printf("%n=== Expansion Threshold Sweep (%,d docs, %,d-doc blocks) ===%n", numDocs, blockSize);
+    System.out.printf("%-8s  %12s  %12s  %8s  %12s  %12s%n",
+        "Fill%", "CoIter ns/d", "Expand ns/d", "Speedup", "Ordinal KB", "Expanded KB");
+    System.out.printf("%-8s  %12s  %12s  %8s  %12s  %12s%n",
+        "------", "-----------", "-----------", "-------", "----------", "-----------");
+
+    for (double fillRate : fillRates) {
+      FileUtils.cleanDirectory(INDEX_DIR);
+
+      Map<String, FieldSpec.DataType> keyTypes = Map.of("k", FieldSpec.DataType.STRING);
+      @SuppressWarnings("unchecked")
+      Map<String, Object>[] docs = new Map[numDocs];
+      java.util.Random rng = new java.util.Random(42);
+      for (int d = 0; d < numDocs; d++) {
+        Map<String, Object> doc = new HashMap<>();
+        if (rng.nextDouble() < fillRate) {
+          doc.put("k", values[rng.nextInt(values.length)]);
+        }
+        docs[d] = doc;
+      }
+
+      ComplexFieldSpec fieldSpec = buildMapFieldSpec(COLUMN_NAME);
+      ColumnarMapIndexConfig config = new ColumnarMapIndexConfig(true, null, true, null, 1000);
+      File indexFile = new File(INDEX_DIR, COLUMN_NAME + V1Constants.Indexes.COLUMNAR_MAP_INDEX_FILE_EXTENSION);
+
+      try (OnHeapColumnarMapIndexCreator creator = new OnHeapColumnarMapIndexCreator(
+          INDEX_DIR, COLUMN_NAME, fieldSpec, config, keyTypes, FieldSpec.DataType.STRING)) {
+        for (Map<String, Object> doc : docs) {
+          creator.add(doc);
+        }
+        creator.seal();
+      }
+
+      try (PinotDataBuffer buffer = PinotDataBuffer.mapReadOnlyBigEndianFile(indexFile);
+          ImmutableColumnarMapIndexReader reader = new ImmutableColumnarMapIndexReader(buffer, null)) {
+
+        ImmutableRoaringBitmap presence = reader.getPresenceBitmap("k");
+        ColumnarMapKeyDictionary dict = reader.getKeyDictionary("k");
+        FixedBitIntReaderWriter sparseDictIdReader = reader.getDictIdReader("k");
+        if (dict == null || sparseDictIdReader == null) {
+          System.out.printf("%-8s  (no dictionary — skipped)%n", String.format("%.1f%%", fillRate * 100));
+          continue;
+        }
+
+        int numBits = org.apache.pinot.segment.local.io.util.PinotDataBitSet.getNumBitsPerValue(
+            Math.max(dict.length() - 1, 0));
+        long presentCount = presence.getLongCardinality();
+
+        // Memory sizes
+        long ordinalBytes = ((long) presentCount * numBits + Byte.SIZE - 1) / Byte.SIZE;
+        long expandedBytes = ((long) numDocs * numBits + Byte.SIZE - 1) / Byte.SIZE;
+
+        // Build co-iterator reader (sparse, with bitmap)
+        String defaultValueStr = ColumnarMapKeyDictionary.getDefaultValueString(FieldSpec.DataType.STRING);
+        int defaultDictId = dict.indexOf(defaultValueStr);
+        ColumnarMapKeyForwardIndexReader coIterReader =
+            new ColumnarMapKeyForwardIndexReader(reader, "k", FieldSpec.DataType.STRING, dict,
+                sparseDictIdReader, presence);
+
+        // Build expanded reader (docId-indexed, no bitmap)
+        PinotDataBuffer expandedBuf = PinotDataBuffer.allocateDirect(
+            expandedBytes, java.nio.ByteOrder.BIG_ENDIAN, "sweep-expanded");
+        FixedBitIntReaderWriter expandedWriter = new FixedBitIntReaderWriter(expandedBuf, numDocs, numBits);
+        for (int d = 0; d < numDocs; d++) {
+          expandedWriter.writeInt(d, defaultDictId);
+        }
+        org.roaringbitmap.PeekableIntIterator iter = presence.getIntIterator();
+        int ordinal = 0;
+        while (iter.hasNext()) {
+          int docId = iter.next();
+          expandedWriter.writeInt(docId, sparseDictIdReader.readInt(ordinal));
+          ordinal++;
+        }
+        ColumnarMapKeyForwardIndexReader expandedReader =
+            new ColumnarMapKeyForwardIndexReader(reader, "k", FieldSpec.DataType.STRING, dict,
+                expandedWriter, null);
+
+        // Benchmark co-iterator path
+        long[] coIterTimes = benchmarkRuns(warmupRuns, measuredRuns, () -> {
+          for (int b = 0; b < numBlocks; b++) {
+            int start = b * blockSize;
+            int[] docIds = new int[blockSize];
+            for (int i = 0; i < blockSize; i++) {
+              docIds[i] = start + i;
+            }
+            int[] dictIdBuf = new int[blockSize];
+            coIterReader.readDictIds(docIds, blockSize, dictIdBuf, null);
+          }
+        });
+
+        // Benchmark expanded path
+        long[] expandedTimes = benchmarkRuns(warmupRuns, measuredRuns, () -> {
+          for (int b = 0; b < numBlocks; b++) {
+            int start = b * blockSize;
+            int[] docIds = new int[blockSize];
+            for (int i = 0; i < blockSize; i++) {
+              docIds[i] = start + i;
+            }
+            int[] dictIdBuf = new int[blockSize];
+            expandedReader.readDictIds(docIds, blockSize, dictIdBuf, null);
+          }
+        });
+
+        long coIterMedian = coIterTimes[coIterTimes.length / 2];
+        long expandedMedian = expandedTimes[expandedTimes.length / 2];
+        double coIterNs = (double) coIterMedian / numDocs;
+        double expandedNs = (double) expandedMedian / numDocs;
+        double speedup = coIterNs / expandedNs;
+
+        System.out.printf("%-8s  %9.0f      %9.0f      %6.1fx    %9.1f    %9.1f%n",
+            String.format("%.1f%%", fillRate * 100),
+            coIterNs, expandedNs, speedup,
+            ordinalBytes / 1024.0, expandedBytes / 1024.0);
+
+        expandedWriter.close();
+        expandedBuf.close();
+      }
+    }
+  }
 }

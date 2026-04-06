@@ -18,13 +18,18 @@
  */
 package org.apache.pinot.segment.local.segment.index.columnarmap;
 
+import java.io.Closeable;
+import java.io.IOException;
 import java.util.Comparator;
 import java.util.HashMap;
+import java.util.List;
 import java.util.Map;
 import java.util.Set;
 import java.util.concurrent.ConcurrentHashMap;
+import java.util.concurrent.CopyOnWriteArrayList;
 import javax.annotation.Nullable;
 import org.apache.pinot.segment.local.io.util.FixedBitIntReaderWriter;
+import org.apache.pinot.segment.local.io.util.PinotDataBitSet;
 import org.apache.pinot.segment.local.segment.index.datasource.BaseDataSource;
 import org.apache.pinot.segment.spi.ColumnMetadata;
 import org.apache.pinot.segment.spi.datasource.DataSource;
@@ -33,10 +38,13 @@ import org.apache.pinot.segment.spi.datasource.MapDataSource;
 import org.apache.pinot.segment.spi.index.StandardIndexes;
 import org.apache.pinot.segment.spi.index.column.ColumnIndexContainer;
 import org.apache.pinot.segment.spi.index.reader.ColumnarMapIndexReader;
+import org.apache.pinot.segment.spi.memory.PinotDataBuffer;
 import org.apache.pinot.segment.spi.partition.PartitionFunction;
 import org.apache.pinot.spi.data.ComplexFieldSpec;
 import org.apache.pinot.spi.data.DimensionFieldSpec;
 import org.apache.pinot.spi.data.FieldSpec;
+import org.roaringbitmap.PeekableIntIterator;
+import org.roaringbitmap.buffer.ImmutableRoaringBitmap;
 
 
 /**
@@ -49,10 +57,13 @@ import org.apache.pinot.spi.data.FieldSpec;
  * {@link ColumnarMapKeyForwardIndexReader} that delegates typed reads directly to the underlying
  * {@link ColumnarMapIndexReader}.
  */
-public class ColumnarMapDataSource extends BaseDataSource implements MapDataSource {
+public class ColumnarMapDataSource extends BaseDataSource implements MapDataSource, Closeable {
+
+  private static final double DENSE_KEY_FILL_RATE_THRESHOLD = 0.05;
 
   private final ColumnarMapIndexReader _columnarMapIndexReader;
   private final Map<String, DataSource> _keyDataSourceCache = new ConcurrentHashMap<>();
+  private final List<PinotDataBuffer> _expandedBuffers = new CopyOnWriteArrayList<>();
 
   /**
    * Constructs a ColumnarMapDataSource for an immutable segment.
@@ -169,9 +180,49 @@ public class ColumnarMapDataSource extends BaseDataSource implements MapDataSour
       }
     }
 
+    // For dense keys, expand ordinal-indexed dictId array to docId-indexed for O(1) reads
+    ImmutableRoaringBitmap presenceBitmap = _columnarMapIndexReader.getPresenceBitmap(key);
+    FixedBitIntReaderWriter readerForFwdIndex = dictIdReader;
+    ImmutableRoaringBitmap bitmapForFwdIndex = presenceBitmap;
+
+    if (dictIdReader != null && keyDictionary != null && presenceBitmap != null) {
+      int numDocs = getDataSourceMetadata().getNumDocs();
+      long presentCount = presenceBitmap.getLongCardinality();
+      double fillRate = numDocs > 0 ? (double) presentCount / numDocs : 0;
+
+      if (fillRate >= DENSE_KEY_FILL_RATE_THRESHOLD) {
+        int numBitsPerValue = PinotDataBitSet.getNumBitsPerValue(Math.max(keyDictionary.length() - 1, 0));
+        long bufferSize = ((long) numDocs * numBitsPerValue + Byte.SIZE - 1) / Byte.SIZE;
+        PinotDataBuffer expandedBuffer = PinotDataBuffer.allocateDirect(
+            bufferSize, java.nio.ByteOrder.BIG_ENDIAN, "expanded-dictId-" + key);
+        _expandedBuffers.add(expandedBuffer);
+
+        FixedBitIntReaderWriter expandedReader = new FixedBitIntReaderWriter(expandedBuffer, numDocs, numBitsPerValue);
+
+        // Fill with default dictId for absent docs
+        String defaultValueStr = ColumnarMapKeyDictionary.getDefaultValueString(keyType);
+        int defaultDictId = keyDictionary.indexOf(defaultValueStr);
+        for (int docId = 0; docId < numDocs; docId++) {
+          expandedReader.writeInt(docId, defaultDictId);
+        }
+
+        // Overwrite present docs with actual dictIds from ordinal-indexed reader
+        PeekableIntIterator iter = presenceBitmap.getIntIterator();
+        int ordinal = 0;
+        while (iter.hasNext()) {
+          int docId = iter.next();
+          expandedReader.writeInt(docId, dictIdReader.readInt(ordinal));
+          ordinal++;
+        }
+
+        readerForFwdIndex = expandedReader;
+        bitmapForFwdIndex = null;  // no bitmap needed for docId-indexed reader
+      }
+    }
+
     ColumnarMapKeyForwardIndexReader keyReader =
-        new ColumnarMapKeyForwardIndexReader(_columnarMapIndexReader, key, keyType, keyDictionary, dictIdReader,
-            _columnarMapIndexReader.getPresenceBitmap(key));
+        new ColumnarMapKeyForwardIndexReader(_columnarMapIndexReader, key, keyType, keyDictionary, readerForFwdIndex,
+            bitmapForFwdIndex);
 
     ColumnIndexContainer.FromMap.Builder containerBuilder =
         new ColumnIndexContainer.FromMap.Builder().with(StandardIndexes.forward(), keyReader);
@@ -424,5 +475,14 @@ public class ColumnarMapDataSource extends BaseDataSource implements MapDataSour
     public int getMaxRowLengthInBytes() {
       return 0;
     }
+  }
+
+  @Override
+  public void close()
+      throws IOException {
+    for (PinotDataBuffer buffer : _expandedBuffers) {
+      buffer.close();
+    }
+    _expandedBuffers.clear();
   }
 }
