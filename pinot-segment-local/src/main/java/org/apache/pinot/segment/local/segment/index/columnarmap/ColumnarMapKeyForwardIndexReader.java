@@ -134,8 +134,14 @@ public class ColumnarMapKeyForwardIndexReader implements ForwardIndexReader<Forw
     }
     if (_isDocIdIndexed) {
       // Expanded path: dictIdReader is docId-indexed, direct read with no bitmap overhead
-      for (int i = 0; i < length; i++) {
-        dictIdBuffer[i] = _dictIdReader.readInt(docIds[i]);
+      if (length > 1 && docIds[length - 1] - docIds[0] == length - 1) {
+        // Sequential docIds (full-scan GROUP BY): batch read for incremental byte walking
+        _dictIdReader.readInt(docIds[0], length, dictIdBuffer);
+      } else {
+        // Non-sequential docIds (filtered GROUP BY): random access
+        for (int i = 0; i < length; i++) {
+          dictIdBuffer[i] = _dictIdReader.readInt(docIds[i]);
+        }
       }
     } else if (_dictIdReader != null) {
       // Fast path: co-iterate sorted docIds with presence bitmap iterator.
