@@ -384,6 +384,7 @@ public class OnHeapColumnarMapIndexCreator implements ColumnarMapIndexCreator {
         DataType storedType = dataType.getStoredType();
 
         // Always write presence bitmap
+        presence.runOptimize();
         byte[] presenceBytes = RoaringBitmapUtils.serialize(presence);
         long presenceOffset = currentOffset;
         dos.write(presenceBytes);
@@ -560,6 +561,7 @@ public class OnHeapColumnarMapIndexCreator implements ColumnarMapIndexCreator {
       byte[] valueBytes = entry.getKey().getBytes(StandardCharsets.UTF_8);
       dos.writeInt(valueBytes.length);
       dos.write(valueBytes);
+      entry.getValue().runOptimize();
       byte[] bitmapBytes = RoaringBitmapUtils.serialize(entry.getValue());
       dos.writeInt(bitmapBytes.length);
       dos.write(bitmapBytes);
