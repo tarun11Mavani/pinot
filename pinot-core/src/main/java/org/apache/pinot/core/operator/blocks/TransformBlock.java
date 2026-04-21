@@ -65,6 +65,6 @@ public class TransformBlock implements ValueBlock {
 
   @Override
   public BlockValSet getBlockValueSet(String[] paths) {
-    throw new UnsupportedOperationException("Column path is not supported in TransformBlock");
+    return _sourceBlock.getBlockValueSet(paths);
   }
 }
