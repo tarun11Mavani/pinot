@@ -58,6 +58,7 @@ public class MapFilterOperator extends BaseFilterOperator {
   private final BaseFilterOperator _perKeyInvertedIndexOperator;
   private final BitmapBasedFilterOperator _presenceBitmapOperator;
   private final ExpressionFilterOperator _expressionFilterOperator;
+  private final BaseFilterOperator _missingKeyOperator;
   private final String _columnName;
   private final String _keyName;
   private final Predicate _predicate;
@@ -75,6 +76,29 @@ public class MapFilterOperator extends BaseFilterOperator {
 
     _columnName = arguments.get(0).getIdentifier();
     _keyName = arguments.get(1).getLiteral().getStringValue();
+
+    // Strategy 0: Short-circuit when the key does not exist in this segment's columnar map.
+    // A missing key means every doc has NULL for this key. Under SQL NULL semantics:
+    //   EQ / NOT_EQ / IN / NOT_IN / IS_NOT_NULL -> 0 matches (NULL comparisons yield UNKNOWN)
+    //   IS_NULL -> all docs match
+    DataSource ds = indexSegment.getDataSourceNullable(_columnName);
+    if (ds instanceof ColumnarMapDataSource) {
+      ColumnarMapIndexReader reader = ((ColumnarMapDataSource) ds).getColumnarMapIndexReader();
+      if (!reader.getKeys().contains(_keyName)) {
+        Predicate.Type predType = _predicate.getType();
+        if (predType == Predicate.Type.IS_NULL) {
+          _missingKeyOperator = new MatchAllFilterOperator(numDocs);
+        } else {
+          _missingKeyOperator = EmptyFilterOperator.getInstance();
+        }
+        _jsonMatchOperator = null;
+        _perKeyInvertedIndexOperator = null;
+        _presenceBitmapOperator = null;
+        _expressionFilterOperator = null;
+        return;
+      }
+    }
+    _missingKeyOperator = null;
 
     // Strategy 1: Try JSON index on the parent MAP column
     JsonIndexReader jsonIndex = null;
@@ -172,7 +196,9 @@ public class MapFilterOperator extends BaseFilterOperator {
 
   @Override
   protected BlockDocIdSet getTrues() {
-    if (_jsonMatchOperator != null) {
+    if (_missingKeyOperator != null) {
+      return _missingKeyOperator.getTrues();
+    } else if (_jsonMatchOperator != null) {
       return _jsonMatchOperator.getTrues();
     } else if (_perKeyInvertedIndexOperator != null) {
       return _perKeyInvertedIndexOperator.getTrues();
@@ -185,7 +211,9 @@ public class MapFilterOperator extends BaseFilterOperator {
 
   @Override
   public boolean canOptimizeCount() {
-    if (_jsonMatchOperator != null) {
+    if (_missingKeyOperator != null) {
+      return _missingKeyOperator.canOptimizeCount();
+    } else if (_jsonMatchOperator != null) {
       return _jsonMatchOperator.canOptimizeCount();
     } else if (_perKeyInvertedIndexOperator != null) {
       return _perKeyInvertedIndexOperator.canOptimizeCount();
@@ -198,7 +226,9 @@ public class MapFilterOperator extends BaseFilterOperator {
 
   @Override
   public int getNumMatchingDocs() {
-    if (_jsonMatchOperator != null) {
+    if (_missingKeyOperator != null) {
+      return _missingKeyOperator.getNumMatchingDocs();
+    } else if (_jsonMatchOperator != null) {
       return _jsonMatchOperator.getNumMatchingDocs();
     } else if (_perKeyInvertedIndexOperator != null) {
       return _perKeyInvertedIndexOperator.getNumMatchingDocs();
@@ -211,7 +241,9 @@ public class MapFilterOperator extends BaseFilterOperator {
 
   @Override
   public boolean canProduceBitmaps() {
-    if (_jsonMatchOperator != null) {
+    if (_missingKeyOperator != null) {
+      return _missingKeyOperator.canProduceBitmaps();
+    } else if (_jsonMatchOperator != null) {
       return _jsonMatchOperator.canProduceBitmaps();
     } else if (_perKeyInvertedIndexOperator != null) {
       return _perKeyInvertedIndexOperator.canProduceBitmaps();
@@ -224,7 +256,9 @@ public class MapFilterOperator extends BaseFilterOperator {
 
   @Override
   public BitmapCollection getBitmaps() {
-    if (_jsonMatchOperator != null) {
+    if (_missingKeyOperator != null) {
+      return _missingKeyOperator.getBitmaps();
+    } else if (_jsonMatchOperator != null) {
       return _jsonMatchOperator.getBitmaps();
     } else if (_perKeyInvertedIndexOperator != null) {
       return _perKeyInvertedIndexOperator.getBitmaps();
@@ -247,7 +281,9 @@ public class MapFilterOperator extends BaseFilterOperator {
             .append(",indexLookUp:map_index").append(",operator:").append(_predicate.getType()).append(",predicate:")
             .append(_predicate);
 
-    if (_jsonMatchOperator != null) {
+    if (_missingKeyOperator != null) {
+      stringBuilder.append(",delegateTo:empty_bitmap_no_key");
+    } else if (_jsonMatchOperator != null) {
       stringBuilder.append(",delegateTo:json_match");
     } else if (_perKeyInvertedIndexOperator != null) {
       stringBuilder.append(",delegateTo:per_key_inverted_index");
@@ -274,7 +310,9 @@ public class MapFilterOperator extends BaseFilterOperator {
     attributeBuilder.putString("operator", _predicate.getType().name());
     attributeBuilder.putString("predicate", _predicate.toString());
 
-    if (_jsonMatchOperator != null) {
+    if (_missingKeyOperator != null) {
+      attributeBuilder.putString("delegateTo", "empty_bitmap_no_key");
+    } else if (_jsonMatchOperator != null) {
       attributeBuilder.putString("delegateTo", "json_match");
     } else if (_perKeyInvertedIndexOperator != null) {
       attributeBuilder.putString("delegateTo", "per_key_inverted_index");
