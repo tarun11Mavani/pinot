@@ -20,7 +20,9 @@ package org.apache.pinot.core.plan;
 
 import java.util.EnumSet;
 import java.util.List;
+import javax.annotation.Nullable;
 import org.apache.pinot.common.request.context.ExpressionContext;
+import org.apache.pinot.common.request.context.FunctionContext;
 import org.apache.pinot.core.common.Operator;
 import org.apache.pinot.core.operator.blocks.results.AggregationResultsBlock;
 import org.apache.pinot.core.operator.filter.BaseFilterOperator;
@@ -29,6 +31,7 @@ import org.apache.pinot.core.operator.query.EmptyAggregationOperator;
 import org.apache.pinot.core.operator.query.FastFilteredCountOperator;
 import org.apache.pinot.core.operator.query.FilteredAggregationOperator;
 import org.apache.pinot.core.operator.query.NonScanBasedAggregationOperator;
+import org.apache.pinot.core.operator.transform.function.ItemTransformFunction;
 import org.apache.pinot.core.query.aggregation.function.AggregationFunction;
 import org.apache.pinot.core.query.aggregation.function.AggregationFunctionUtils;
 import org.apache.pinot.core.query.aggregation.function.AggregationFunctionUtils.AggregationInfo;
@@ -37,6 +40,7 @@ import org.apache.pinot.segment.spi.AggregationFunctionType;
 import org.apache.pinot.segment.spi.IndexSegment;
 import org.apache.pinot.segment.spi.SegmentContext;
 import org.apache.pinot.segment.spi.datasource.DataSource;
+import org.apache.pinot.segment.spi.datasource.MapDataSource;
 import org.apache.pinot.segment.spi.index.reader.NullValueVectorReader;
 
 import static org.apache.pinot.segment.spi.AggregationFunctionType.*;
@@ -121,8 +125,11 @@ public class AggregationPlanNode implements PlanNode {
         for (int i = 0; i < aggregationFunctions.length; i++) {
           List<?> inputExpressions = aggregationFunctions[i].getInputExpressions();
           if (!inputExpressions.isEmpty()) {
-            String column = ((ExpressionContext) inputExpressions.get(0)).getIdentifier();
-            dataSources[i] = _indexSegment.getDataSource(column, _queryContext.getSchema());
+            ExpressionContext expr = (ExpressionContext) inputExpressions.get(0);
+            DataSource ds = resolveDataSource(expr);
+            if (ds != null) {
+              dataSources[i] = ds;
+            }
           }
         }
         return new NonScanBasedAggregationOperator(_queryContext, dataSources, numTotalDocs);
@@ -184,10 +191,10 @@ public class AggregationPlanNode implements PlanNode {
         continue;
       }
       ExpressionContext argument = aggregationFunction.getInputExpressions().get(0);
-      if (argument.getType() != ExpressionContext.Type.IDENTIFIER) {
+      DataSource dataSource = resolveDataSource(argument);
+      if (dataSource == null) {
         return false;
       }
-      DataSource dataSource = _indexSegment.getDataSource(argument.getIdentifier(), _queryContext.getSchema());
       if (DICTIONARY_BASED_FUNCTIONS.contains(aggregationFunction.getType())) {
         if (dataSource.getDictionary() != null) {
           continue;
@@ -202,6 +209,47 @@ public class AggregationPlanNode implements PlanNode {
       return false;
     }
     return true;
+  }
+
+  /**
+   * Resolves a DataSource from an expression. Handles IDENTIFIER expressions directly and item() FUNCTION
+   * expressions by extracting the MAP column and key to obtain the per-key DataSource.
+   * Returns null if the expression type is not supported.
+   */
+  @Nullable
+  private DataSource resolveDataSource(ExpressionContext expression) {
+    if (expression.getType() == ExpressionContext.Type.IDENTIFIER) {
+      return _indexSegment.getDataSource(expression.getIdentifier(), _queryContext.getSchema());
+    }
+    if (expression.getType() == ExpressionContext.Type.FUNCTION) {
+      return tryResolveMapKeyDataSource(expression);
+    }
+    return null;
+  }
+
+  /**
+   * Attempts to resolve a per-key DataSource from an item() function expression.
+   * Returns the key's DataSource if the expression is item(mapColumn, 'key') and the column is a MapDataSource,
+   * null otherwise.
+   */
+  @Nullable
+  private DataSource tryResolveMapKeyDataSource(ExpressionContext expression) {
+    FunctionContext function = expression.getFunction();
+    if (function == null || !ItemTransformFunction.FUNCTION_NAME.equals(function.getFunctionName())) {
+      return null;
+    }
+    List<ExpressionContext> args = function.getArguments();
+    if (args.size() != 2 || args.get(0).getType() != ExpressionContext.Type.IDENTIFIER
+        || args.get(1).getType() != ExpressionContext.Type.LITERAL) {
+      return null;
+    }
+    String columnName = args.get(0).getIdentifier();
+    String key = args.get(1).getLiteral().getStringValue();
+    DataSource columnDs = _indexSegment.getDataSource(columnName, _queryContext.getSchema());
+    if (columnDs instanceof MapDataSource) {
+      return ((MapDataSource) columnDs).getKeyDataSource(key);
+    }
+    return null;
   }
 
   private static boolean canOptimizeFilteredCount(BaseFilterOperator filterOperator,
