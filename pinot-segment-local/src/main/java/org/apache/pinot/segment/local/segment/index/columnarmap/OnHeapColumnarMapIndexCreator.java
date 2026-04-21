@@ -489,12 +489,26 @@ public class OnHeapColumnarMapIndexCreator implements ColumnarMapIndexCreator {
         byte tierFlag = isDense ? TIER_DENSE : TIER_SPARSE;
 
         if (!isDense) {
-          // Sparse key: no per-key data in CMAP, all offsets/lengths are 0
+          // Sparse key: write a presence bitmap into the per-key data section so
+          // IS NULL / IS NOT NULL queries return correct results without consulting
+          // the Sparse Data section. The dense "nullBitmapOffset/Len" slots are
+          // reused: for sparse keys these slots point to a presence bitmap (docs
+          // WHERE the key IS PRESENT). The reader branches on tierFlag to
+          // interpret the slot correctly.
+          RoaringBitmap presenceCopy = presence.clone();
+          presenceCopy.runOptimize();
+          byte[] presenceBytes = RoaringBitmapUtils.serialize(presenceCopy);
+          long presenceOffset = currentOffset;
+          dos.write(presenceBytes);
+          currentOffset += presenceBytes.length;
+
           int entryOffset = i * KEY_METADATA_ENTRY_SIZE;
           keyMetadataSection[entryOffset] = tierFlag;
           keyMetadataSection[entryOffset + 1] = (byte) storedType.ordinal();
           writeInt(keyMetadataSection, entryOffset + 2, values.size());
-          // All 4 offset/length pairs are 0 (already zeroed by array initialization)
+          writeLong(keyMetadataSection, entryOffset + 6, presenceOffset);
+          writeLong(keyMetadataSection, entryOffset + 14, presenceBytes.length);
+          // fwd, inv, dictIdFwd offset/length pairs remain 0 for sparse keys.
           continue;
         }
 

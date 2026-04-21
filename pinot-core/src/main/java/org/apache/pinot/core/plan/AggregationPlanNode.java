@@ -121,8 +121,12 @@ public class AggregationPlanNode implements PlanNode {
         for (int i = 0; i < aggregationFunctions.length; i++) {
           List<?> inputExpressions = aggregationFunctions[i].getInputExpressions();
           if (!inputExpressions.isEmpty()) {
-            String column = ((ExpressionContext) inputExpressions.get(0)).getIdentifier();
-            dataSources[i] = _indexSegment.getDataSource(column, _queryContext.getSchema());
+            ExpressionContext expr = (ExpressionContext) inputExpressions.get(0);
+            if (expr.getType() == ExpressionContext.Type.IDENTIFIER) {
+              dataSources[i] = _indexSegment.getDataSource(expr.getIdentifier(), _queryContext.getSchema());
+            } else {
+              dataSources[i] = tryResolveMapKeyDataSource(expr);
+            }
           }
         }
         return new NonScanBasedAggregationOperator(_queryContext, dataSources, numTotalDocs);
@@ -185,6 +189,16 @@ public class AggregationPlanNode implements PlanNode {
       }
       ExpressionContext argument = aggregationFunction.getInputExpressions().get(0);
       if (argument.getType() != ExpressionContext.Type.IDENTIFIER) {
+        // Check if this is an item(mapCol, key) function that can be resolved to a per-key DataSource
+        DataSource resolvedDataSource = tryResolveMapKeyDataSource(argument);
+        if (resolvedDataSource == null) {
+          return false;
+        }
+        if (DICTIONARY_BASED_FUNCTIONS.contains(aggregationFunction.getType())) {
+          if (resolvedDataSource.getDictionary() != null) {
+            continue;
+          }
+        }
         return false;
       }
       DataSource dataSource = _indexSegment.getDataSource(argument.getIdentifier(), _queryContext.getSchema());
@@ -202,6 +216,33 @@ public class AggregationPlanNode implements PlanNode {
       return false;
     }
     return true;
+  }
+
+  /**
+   * Tries to resolve an item(mapCol, key) function expression to a per-key DataSource.
+   * Returns null if the expression is not an item() call or the MAP column doesn't support it.
+   */
+  @javax.annotation.Nullable
+  private DataSource tryResolveMapKeyDataSource(ExpressionContext expression) {
+    if (expression.getType() != ExpressionContext.Type.FUNCTION) {
+      return null;
+    }
+    org.apache.pinot.common.request.context.FunctionContext func = expression.getFunction();
+    if (!"item".equals(func.getFunctionName())) {
+      return null;
+    }
+    List<ExpressionContext> args = func.getArguments();
+    if (args.size() != 2 || args.get(0).getType() != ExpressionContext.Type.IDENTIFIER
+        || args.get(1).getLiteral() == null) {
+      return null;
+    }
+    String mapColumn = args.get(0).getIdentifier();
+    String keyName = args.get(1).getLiteral().getStringValue();
+    DataSource mapDS = _indexSegment.getDataSource(mapColumn, _queryContext.getSchema());
+    if (mapDS instanceof org.apache.pinot.segment.spi.datasource.MapDataSource) {
+      return ((org.apache.pinot.segment.spi.datasource.MapDataSource) mapDS).getKeyDataSource(keyName);
+    }
+    return null;
   }
 
   private static boolean canOptimizeFilteredCount(BaseFilterOperator filterOperator,

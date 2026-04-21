@@ -23,8 +23,10 @@ import com.google.common.collect.Maps;
 import java.util.Map;
 import java.util.Set;
 import javax.annotation.Nullable;
+import org.apache.pinot.segment.local.segment.creator.impl.stats.ColumnarMapColumnPreIndexStatsCollector;
 import org.apache.pinot.segment.local.segment.creator.impl.stats.EmptyColumnStatistics;
 import org.apache.pinot.segment.local.segment.creator.impl.stats.MapColumnPreIndexStatsCollector;
+import org.apache.pinot.segment.local.segment.index.columnarmap.ColumnarMapDataSource;
 import org.apache.pinot.segment.local.segment.index.map.MutableMapDataSource;
 import org.apache.pinot.segment.spi.MutableSegment;
 import org.apache.pinot.segment.spi.creator.ColumnStatistics;
@@ -78,6 +80,12 @@ public class RealtimeSegmentStatsContainer implements SegmentPreIndexStatsContai
     if (dataSource instanceof MutableMapDataSource) {
       return createMapColumnStatistics(dataSource, validDocIds, statsCollectorConfig);
     }
+    // Handle MAP columns with columnar map index
+    if (dataSource instanceof ColumnarMapDataSource) {
+      String colName = dataSourceMetadata.getFieldSpec().getName();
+      return createColumnarMapColumnStatistics(colName, dataSource, validDocIds != null, validDocIds,
+          statsCollectorConfig);
+    }
     if (validDocIds != null) {
       if (dataSource.getDictionary() != null) {
         return new CompactedColumnStatistics(dataSource, sortedDocIds, isSortedColumn, validDocIds);
@@ -118,6 +126,21 @@ public class RealtimeSegmentStatsContainer implements SegmentPreIndexStatsContai
 
     mapColumnPreIndexStatsCollector.seal();
     return mapColumnPreIndexStatsCollector;
+  }
+
+  private ColumnStatistics createColumnarMapColumnStatistics(String columnName, DataSource dataSource,
+      boolean useCompactedStatistics, RoaringBitmap validDocIds,
+      StatsCollectorConfig statsCollectorConfig) {
+    ColumnarMapColumnPreIndexStatsCollector collector =
+        new ColumnarMapColumnPreIndexStatsCollector(columnName, statsCollectorConfig);
+    int numDocs = useCompactedStatistics && validDocIds != null
+        ? validDocIds.getCardinality()
+        : dataSource.getDataSourceMetadata().getNumDocs();
+    for (int i = 0; i < numDocs; i++) {
+      collector.collect((Object) null);
+    }
+    collector.seal();
+    return collector;
   }
 
   @Override

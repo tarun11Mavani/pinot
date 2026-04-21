@@ -23,6 +23,7 @@ import javax.annotation.Nullable;
 import org.apache.pinot.common.request.context.ExpressionContext;
 import org.apache.pinot.core.common.BlockValSet;
 import org.apache.pinot.core.operator.docvalsets.TransformBlockValSet;
+import org.apache.pinot.core.operator.transform.function.ItemTransformFunction;
 import org.apache.pinot.core.operator.transform.function.TransformFunction;
 
 
@@ -53,9 +54,16 @@ public class TransformBlock implements ValueBlock {
   public BlockValSet getBlockValueSet(ExpressionContext expression) {
     if (expression.getType() == ExpressionContext.Type.IDENTIFIER) {
       return _sourceBlock.getBlockValueSet(expression);
-    } else {
-      return new TransformBlockValSet(_sourceBlock, _transformFunctionMap.get(expression));
     }
+    // Optimization: for item(mapCol, key) expressions on MAP columns, bypass the transform
+    // function and delegate directly to ProjectionBlock's path-based resolution. This avoids
+    // the TransformBlockValSet → ItemTransformFunction → ProjectionBlock round-trip overhead.
+    TransformFunction tf = _transformFunctionMap.get(expression);
+    if (tf instanceof ItemTransformFunction) {
+      ItemTransformFunction itemTf = (ItemTransformFunction) tf;
+      return _sourceBlock.getBlockValueSet(itemTf.getKeyPath());
+    }
+    return new TransformBlockValSet(_sourceBlock, tf);
   }
 
   @Override
