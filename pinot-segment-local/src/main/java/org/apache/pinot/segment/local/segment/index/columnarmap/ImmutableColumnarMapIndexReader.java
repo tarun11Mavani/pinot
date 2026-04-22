@@ -233,8 +233,16 @@ public class ImmutableColumnarMapIndexReader implements ColumnarMapIndexReader {
         _nullBitmaps[i] = new ImmutableRoaringBitmap(ByteBuffer.wrap(bitmapBytes));
         _presenceBitmaps[i] = ImmutableRoaringBitmap.flip(_nullBitmaps[i], 0L, (long) _numDocs);
       } else if (_tierFlags[i] == TIER_SPARSE) {
-        // Sparse key: no per-key data in CMAP
-        _presenceBitmaps[i] = ImmutableRoaringBitmap.bitmapOf();
+        // Sparse key: per-key data slot holds a presence bitmap (docs where key IS PRESENT).
+        // The dense "nullBitmap" slot is reused for sparse presence — reader branches on
+        // tierFlag to interpret it correctly.
+        if (nullBitmapLen > 0) {
+          byte[] bitmapBytes = new byte[(int) nullBitmapLen];
+          dataBuffer.copyTo(_perKeyDataSectionOffset + nullBitmapOffset, bitmapBytes, 0, bitmapBytes.length);
+          _presenceBitmaps[i] = new ImmutableRoaringBitmap(ByteBuffer.wrap(bitmapBytes));
+        } else {
+          _presenceBitmaps[i] = ImmutableRoaringBitmap.bitmapOf();
+        }
         _nullBitmaps[i] = null;
       }
     }
@@ -781,7 +789,7 @@ public class ImmutableColumnarMapIndexReader implements ColumnarMapIndexReader {
       }
       result.put(_keys[i], getValueByKeyId(docId, i));
     }
-    // Sparse keys from sidecar
+    // Sparse keys from in-CMAP sparse section
     Map<String, Object> sparseMap = getSparseMap(docId);
     result.putAll(sparseMap);
     return result;
