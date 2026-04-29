@@ -71,6 +71,15 @@ public class FieldConfig extends BaseJsonConfig {
   public static final String TEXT_INDEX_LUCENE_NRT_CACHING_DIRECTORY_BUFFER_SIZE =
       "luceneNRTCachingDirectoryMaxBufferSizeMB";
 
+  // COLUMNAR_MAP index properties
+  public static final String COLUMNAR_MAP_INDEX_MAX_KEYS = "maxKeys";
+  public static final String COLUMNAR_MAP_INDEX_DENSE_KEYS = "denseKeys";
+  public static final String COLUMNAR_MAP_INDEX_DENSE_KEY_MIN_FILL_RATE = "denseKeyMinFillRate";
+  public static final String COLUMNAR_MAP_INDEX_INVERTED_INDEX_KEYS = "invertedIndexKeys";
+  public static final String COLUMNAR_MAP_INDEX_NO_DICTIONARY_KEYS = "noDictionaryKeys";
+  public static final String COLUMNAR_MAP_INDEX_ENABLE_INVERTED_FOR_DENSE = "enableInvertedIndexForDense";
+  public static final String COLUMNAR_MAP_INDEX_KEY_SEPARATOR = ",";
+
   private final String _name;
   private final EncodingType _encodingType;
   private final List<IndexType> _indexTypes;
@@ -128,7 +137,7 @@ public class FieldConfig extends BaseJsonConfig {
   // If null, there won't be any index
   // NOTE: TIMESTAMP is ignored. In order to create TIMESTAMP index, configure 'timestampConfig' instead.
   public enum IndexType {
-    INVERTED, SORTED, TEXT, FST, IFST, H3, JSON, TIMESTAMP, VECTOR, RANGE
+    INVERTED, SORTED, TEXT, FST, IFST, H3, JSON, TIMESTAMP, VECTOR, RANGE, COLUMNAR_MAP
   }
 
   public enum CompressionCodec {

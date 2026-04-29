@@ -1,0 +1,59 @@
+/**
+ * Licensed to the Apache Software Foundation (ASF) under one
+ * or more contributor license agreements.  See the NOTICE file
+ * distributed with this work for additional information
+ * regarding copyright ownership.  The ASF licenses this file
+ * to you under the Apache License, Version 2.0 (the
+ * "License"); you may not use this file except in compliance
+ * with the License.  You may obtain a copy of the License at
+ *
+ *   http://www.apache.org/licenses/LICENSE-2.0
+ *
+ * Unless required by applicable law or agreed to in writing,
+ * software distributed under the License is distributed on an
+ * "AS IS" BASIS, WITHOUT WARRANTIES OR CONDITIONS OF ANY
+ * KIND, either express or implied.  See the License for the
+ * specific language governing permissions and limitations
+ * under the License.
+ */
+package org.apache.pinot.spi.data;
+
+
+/**
+ * Naming convention for COLUMNAR_MAP virtual columns. Each dense MAP key is stored as
+ * a virtual column named {@code <mapColumn>$__<key>}. Sparse keys share a single
+ * synthetic JSON column named {@code <mapColumn>$____sparse__}.
+ */
+public final class ColumnarMapNaming {
+  public static final String SEPARATOR = "$__";
+  public static final String SPARSE_SUFFIX = "__sparse__";
+
+  private ColumnarMapNaming() {
+  }
+
+  public static String virtualColumnName(String mapColumn, String key) {
+    return mapColumn + SEPARATOR + key;
+  }
+
+  public static String sparseColumnName(String mapColumn) {
+    return mapColumn + SEPARATOR + SPARSE_SUFFIX;
+  }
+
+  public static boolean isColumnarMapVirtualColumn(String columnName) {
+    return columnName.contains(SEPARATOR);
+  }
+
+  public static boolean isSparseColumn(String columnName) {
+    return columnName.endsWith(SEPARATOR + SPARSE_SUFFIX);
+  }
+
+  public static String parseMapColumn(String virtualColumnName) {
+    int idx = virtualColumnName.indexOf(SEPARATOR);
+    return idx >= 0 ? virtualColumnName.substring(0, idx) : virtualColumnName;
+  }
+
+  public static String parseKey(String virtualColumnName) {
+    int idx = virtualColumnName.indexOf(SEPARATOR);
+    return idx >= 0 ? virtualColumnName.substring(idx + SEPARATOR.length()) : virtualColumnName;
+  }
+}

@@ -20,10 +20,12 @@ package org.apache.pinot.spi.data;
 
 import com.fasterxml.jackson.annotation.JsonIgnore;
 import com.fasterxml.jackson.annotation.JsonIgnoreProperties;
+import com.fasterxml.jackson.annotation.JsonProperty;
 import com.fasterxml.jackson.databind.node.ObjectNode;
 import com.google.common.base.Preconditions;
 import java.util.HashMap;
 import java.util.Map;
+import javax.annotation.Nullable;
 import org.apache.pinot.spi.utils.JsonUtils;
 import org.apache.pinot.spi.utils.StringUtil;
 
@@ -58,9 +60,21 @@ public final class ComplexFieldSpec extends FieldSpec {
 
   private final Map<String, FieldSpec> _childFieldSpecs;
 
+  @JsonProperty("keyTypes")
+  private Map<String, DataType> _keyTypes;
+
+  @JsonProperty("defaultValueType")
+  private DataType _defaultValueType;
+
   // Default constructor required by JSON de-serializer
   public ComplexFieldSpec() {
     super();
+    _childFieldSpecs = new HashMap<>();
+  }
+
+  public ComplexFieldSpec(String name, DataType dataType, boolean isSingleValueField) {
+    super(name, dataType, isSingleValueField);
+    Preconditions.checkArgument(dataType == DataType.STRUCT || dataType == DataType.MAP || dataType == DataType.LIST);
     _childFieldSpecs = new HashMap<>();
   }
 
@@ -68,7 +82,7 @@ public final class ComplexFieldSpec extends FieldSpec {
       Map<String, FieldSpec> childFieldSpecs) {
     super(name, dataType, isSingleValueField);
     Preconditions.checkArgument(dataType == DataType.STRUCT || dataType == DataType.MAP || dataType == DataType.LIST);
-    _childFieldSpecs = childFieldSpecs;
+    _childFieldSpecs = new HashMap<>(childFieldSpecs);
   }
 
   public static String[] getColumnPath(String column) {
@@ -81,6 +95,24 @@ public final class ComplexFieldSpec extends FieldSpec {
 
   public Map<String, FieldSpec> getChildFieldSpecs() {
     return _childFieldSpecs;
+  }
+
+  @Nullable
+  public Map<String, DataType> getKeyTypes() {
+    return _keyTypes;
+  }
+
+  public void setKeyTypes(@Nullable Map<String, DataType> keyTypes) {
+    _keyTypes = keyTypes;
+  }
+
+  @Nullable
+  public DataType getDefaultValueType() {
+    return _defaultValueType;
+  }
+
+  public void setDefaultValueType(@Nullable DataType defaultValueType) {
+    _defaultValueType = defaultValueType;
   }
 
   @JsonIgnore
@@ -99,15 +131,21 @@ public final class ComplexFieldSpec extends FieldSpec {
     private final String _fieldName;
     private final FieldSpec _keyFieldSpec;
     private final FieldSpec _valueFieldSpec;
+    private final Map<String, DataType> _keyTypes;
+    private final DataType _defaultValueType;
 
     private MapFieldSpec(ComplexFieldSpec complexFieldSpec) {
-      Preconditions.checkState(complexFieldSpec.getChildFieldSpecs().containsKey(KEY_FIELD),
-          "Missing 'key' in the 'childFieldSpec'");
-      Preconditions.checkState(complexFieldSpec.getChildFieldSpecs().containsKey(VALUE_FIELD),
-          "Missing 'value' in the 'childFieldSpec'");
-      _keyFieldSpec = complexFieldSpec.getChildFieldSpec(KEY_FIELD);
-      _valueFieldSpec = complexFieldSpec.getChildFieldSpec(VALUE_FIELD);
       _fieldName = complexFieldSpec.getName();
+      Map<String, FieldSpec> children = complexFieldSpec.getChildFieldSpecs();
+      if (children.containsKey(KEY_FIELD) && children.containsKey(VALUE_FIELD)) {
+        _keyFieldSpec = complexFieldSpec.getChildFieldSpec(KEY_FIELD);
+        _valueFieldSpec = complexFieldSpec.getChildFieldSpec(VALUE_FIELD);
+      } else {
+        _keyFieldSpec = new DimensionFieldSpec(KEY_FIELD, DataType.STRING, true);
+        _valueFieldSpec = new DimensionFieldSpec(VALUE_FIELD, DataType.STRING, true);
+      }
+      _keyTypes = complexFieldSpec.getKeyTypes();
+      _defaultValueType = complexFieldSpec.getDefaultValueType();
     }
 
     public String getFieldName() {
@@ -120,6 +158,16 @@ public final class ComplexFieldSpec extends FieldSpec {
 
     public FieldSpec getValueFieldSpec() {
       return _valueFieldSpec;
+    }
+
+    @Nullable
+    public Map<String, DataType> getKeyTypes() {
+      return _keyTypes;
+    }
+
+    @Nullable
+    public DataType getDefaultValueType() {
+      return _defaultValueType;
     }
   }
 
@@ -143,11 +191,23 @@ public final class ComplexFieldSpec extends FieldSpec {
 
   public ObjectNode toJsonObject() {
     ObjectNode jsonObject = super.toJsonObject();
-    ObjectNode childFieldSpecsNode = JsonUtils.newObjectNode();
-    for (Map.Entry<String, FieldSpec> entry : _childFieldSpecs.entrySet()) {
-      childFieldSpecsNode.set(entry.getKey(), entry.getValue().toJsonObject());
+    if (!_childFieldSpecs.isEmpty()) {
+      ObjectNode childFieldSpecsNode = JsonUtils.newObjectNode();
+      for (Map.Entry<String, FieldSpec> entry : _childFieldSpecs.entrySet()) {
+        childFieldSpecsNode.put(entry.getKey(), entry.getValue().toJsonObject());
+      }
+      jsonObject.put("childFieldSpecs", childFieldSpecsNode);
     }
-    jsonObject.set("childFieldSpecs", childFieldSpecsNode);
+    if (_keyTypes != null && !_keyTypes.isEmpty()) {
+      ObjectNode keyTypesNode = JsonUtils.newObjectNode();
+      for (Map.Entry<String, DataType> entry : _keyTypes.entrySet()) {
+        keyTypesNode.put(entry.getKey(), entry.getValue().name());
+      }
+      jsonObject.set("keyTypes", keyTypesNode);
+    }
+    if (_defaultValueType != null) {
+      jsonObject.put("defaultValueType", _defaultValueType.name());
+    }
     return jsonObject;
   }
 }

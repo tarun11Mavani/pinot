@@ -530,6 +530,23 @@ public class SegmentGeneratorConfig implements Serializable {
     return getQualifyingFields(FieldType.COMPLEX, true);
   }
 
+  /// Returns the names of columns that have COLUMNAR_MAP index enabled in the table config.
+  public List<String> getColumnarMapColumnNames() {
+    List<String> result = new ArrayList<>();
+    if (_tableConfig != null) {
+      List<FieldConfig> fieldConfigs = _tableConfig.getFieldConfigList();
+      if (fieldConfigs != null) {
+        for (FieldConfig fieldConfig : fieldConfigs) {
+          List<FieldConfig.IndexType> indexTypes = fieldConfig.getIndexTypes();
+          if (indexTypes != null && indexTypes.contains(FieldConfig.IndexType.COLUMNAR_MAP)) {
+            result.add(fieldConfig.getName());
+          }
+        }
+      }
+    }
+    return result;
+  }
+
   public void setSegmentPartitionConfig(SegmentPartitionConfig segmentPartitionConfig) {
     _segmentPartitionConfig = segmentPartitionConfig;
   }

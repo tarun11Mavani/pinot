@@ -795,4 +795,22 @@ public class SchemaTest {
     assertThat(withoutVirtual.getDescription()).isEqualTo("my description");
     assertThat(withoutVirtual.getTags()).isEqualTo(List.of("tag1"));
   }
+
+  @Test(expectedExceptions = RuntimeException.class)
+  public void testRejectsVirtualColumnSeparatorInColumnName() {
+    Schema schema = new Schema.SchemaBuilder()
+        .addSingleValueDimension("metrics$__tenancy", FieldSpec.DataType.STRING)
+        .build();
+    schema.validate();
+  }
+
+  @Test
+  public void testAcceptsNormalColumnNames() {
+    Schema schema = new Schema.SchemaBuilder()
+        .addSingleValueDimension("metrics__tenancy", FieldSpec.DataType.STRING)
+        .addSingleValueDimension("metrics$$tenancy", FieldSpec.DataType.STRING)
+        .addSingleValueDimension("metrics_dollar_sign", FieldSpec.DataType.STRING)
+        .build();
+    schema.validate();
+  }
 }
