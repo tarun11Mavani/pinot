@@ -33,6 +33,15 @@ public interface MapDataSource extends DataSource {
   /// Returns the DataSource for the given map key's values.
   DataSource getDataSource(String key);
 
+  /// Returns whether this segment MAY contain the given key. Implementations are allowed to return
+  /// `true` conservatively (i.e., when it is not possible to determine key presence without a
+  /// full scan). Callers must handle the case where the key is absent even when this returns
+  /// `true` — [#getDataSource(String)] will return a DataSource for an absent key
+  /// (forward-index reads return the column default value; null-value bitmap marks all rows as null).
+  default boolean containsKey(String key) {
+    return getDataSources().containsKey(key);
+  }
+
   /// Returns DataSources for all keys present in this segment.
   Map<String, DataSource> getDataSources();
 
