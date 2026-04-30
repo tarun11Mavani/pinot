@@ -796,12 +796,14 @@ public class SchemaTest {
     assertThat(withoutVirtual.getTags()).isEqualTo(List.of("tag1"));
   }
 
-  @Test(expectedExceptions = RuntimeException.class)
-  public void testRejectsVirtualColumnSeparatorInColumnName() {
+  @Test
+  public void testAcceptsVirtualColumnSeparatorInSchemaWithoutColumnarMap() {
+    // $__ is reserved by COLUMNAR_MAP virtual columns, but Schema.validate() no longer rejects it globally.
+    // The rejection happens in TableConfigUtils.validate() only when COLUMNAR_MAP is enabled for a table.
     Schema schema = new Schema.SchemaBuilder()
         .addSingleValueDimension("metrics$__tenancy", FieldSpec.DataType.STRING)
         .build();
-    schema.validate();
+    schema.validate(); // should not throw
   }
 
   @Test

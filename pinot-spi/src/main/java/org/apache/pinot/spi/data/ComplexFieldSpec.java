@@ -191,9 +191,18 @@ public final class ComplexFieldSpec extends FieldSpec {
 
   public ObjectNode toJsonObject() {
     ObjectNode jsonObject = super.toJsonObject();
-    if (!_childFieldSpecs.isEmpty()) {
+    // Always emit childFieldSpecs for MAP to preserve wire compatibility with older brokers/servers
+    // that deserialize MAP columns via ComplexFieldSpec.toMapFieldSpec() and expect key/value children.
+    // For MAP columns without explicit children, emit the legacy STRING defaults.
+    Map<String, FieldSpec> childSpecs = _childFieldSpecs;
+    if (childSpecs.isEmpty() && _dataType == DataType.MAP) {
+      childSpecs = Map.of(
+          KEY_FIELD, new DimensionFieldSpec(KEY_FIELD, DataType.STRING, true),
+          VALUE_FIELD, new DimensionFieldSpec(VALUE_FIELD, DataType.STRING, true));
+    }
+    if (!childSpecs.isEmpty()) {
       ObjectNode childFieldSpecsNode = JsonUtils.newObjectNode();
-      for (Map.Entry<String, FieldSpec> entry : _childFieldSpecs.entrySet()) {
+      for (Map.Entry<String, FieldSpec> entry : childSpecs.entrySet()) {
         childFieldSpecsNode.put(entry.getKey(), entry.getValue().toJsonObject());
       }
       jsonObject.put("childFieldSpecs", childFieldSpecsNode);

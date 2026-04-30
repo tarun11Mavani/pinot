@@ -619,9 +619,6 @@ public final class Schema implements Serializable {
       FieldType fieldType = fieldSpec.getFieldType();
       DataType dataType = fieldSpec.getDataType();
       String fieldName = fieldSpec.getName();
-      Preconditions.checkState(!ColumnarMapNaming.isColumnarMapVirtualColumn(fieldName),
-          "Column name '%s' contains reserved separator '%s' used by COLUMNAR_MAP virtual columns",
-          fieldName, ColumnarMapNaming.SEPARATOR);
       try {
         validate(fieldType, dataType);
       } catch (IllegalStateException e) {
