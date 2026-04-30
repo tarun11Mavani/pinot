@@ -29,9 +29,10 @@ import javax.annotation.Nullable;
 /**
  * Configuration for the COLUMNAR_MAP index on a MAP column.
  *
- * <p>Dense keys (above {@code denseKeyMinFillRate} or in {@code denseKeys}) are stored as
- * independent virtual columns with standard forward index, dictionary, and optional inverted
- * index. Sparse keys go into a synthetic JSON column.
+ * <p>Dense keys (above {@code denseKeyMinFillRate} or explicitly listed in {@code denseKeys}) are
+ * stored as independent virtual columns with a standard forward index, dictionary, and optional
+ * inverted index. At most {@code maxDenseKeys} keys are materialised as dense virtual columns;
+ * remaining keys fall back to a synthetic JSON sparse column.
  */
 public class ColumnarMapIndexConfig extends IndexConfig {
   public static final ColumnarMapIndexConfig DISABLED = new ColumnarMapIndexConfig(false);
@@ -42,7 +43,7 @@ public class ColumnarMapIndexConfig extends IndexConfig {
   private final boolean _enableInvertedIndexForDense;
   private final Set<String> _invertedIndexKeys;
   private final Set<String> _noDictionaryKeys;
-  private final int _maxKeys;
+  private final int _maxDenseKeys;
   private final Set<String> _denseKeys;
   private final double _denseKeyMinFillRate;
 
@@ -50,8 +51,8 @@ public class ColumnarMapIndexConfig extends IndexConfig {
     if (properties == null || properties.isEmpty()) {
       return DEFAULT;
     }
-    int maxKeys = Integer.parseInt(
-        properties.getOrDefault(FieldConfig.COLUMNAR_MAP_INDEX_MAX_KEYS, "1000"));
+    int maxDenseKeys = Integer.parseInt(
+        properties.getOrDefault(FieldConfig.COLUMNAR_MAP_INDEX_MAX_DENSE_KEYS, "1000"));
     Set<String> invertedIndexKeys = parseCommaSeparated(
         properties.get(FieldConfig.COLUMNAR_MAP_INDEX_INVERTED_INDEX_KEYS));
     Set<String> noDictionaryKeys = parseCommaSeparated(
@@ -63,7 +64,7 @@ public class ColumnarMapIndexConfig extends IndexConfig {
     double denseKeyMinFillRate = Double.parseDouble(
         properties.getOrDefault(FieldConfig.COLUMNAR_MAP_INDEX_DENSE_KEY_MIN_FILL_RATE,
             String.valueOf(DEFAULT_DENSE_KEY_MIN_FILL_RATE)));
-    return new ColumnarMapIndexConfig(true, enableInvertedForDense, invertedIndexKeys, noDictionaryKeys, maxKeys,
+    return new ColumnarMapIndexConfig(true, enableInvertedForDense, invertedIndexKeys, noDictionaryKeys, maxDenseKeys,
         denseKeys, denseKeyMinFillRate);
   }
 
@@ -92,14 +93,14 @@ public class ColumnarMapIndexConfig extends IndexConfig {
       @JsonProperty("enableInvertedIndexForDense") boolean enableInvertedIndexForDense,
       @JsonProperty("invertedIndexKeys") @Nullable Set<String> invertedIndexKeys,
       @JsonProperty("noDictionaryKeys") @Nullable Set<String> noDictionaryKeys,
-      @JsonProperty("maxKeys") int maxKeys,
+      @JsonProperty("maxDenseKeys") int maxDenseKeys,
       @JsonProperty("denseKeys") @Nullable Set<String> denseKeys,
       @JsonProperty("denseKeyMinFillRate") double denseKeyMinFillRate) {
     super(!enabled);
     _enableInvertedIndexForDense = enableInvertedIndexForDense;
     _invertedIndexKeys = invertedIndexKeys;
     _noDictionaryKeys = noDictionaryKeys;
-    _maxKeys = maxKeys > 0 ? maxKeys : 1000;
+    _maxDenseKeys = maxDenseKeys > 0 ? maxDenseKeys : 1000;
     _denseKeys = denseKeys;
     _denseKeyMinFillRate = denseKeyMinFillRate >= 0 ? denseKeyMinFillRate : DEFAULT_DENSE_KEY_MIN_FILL_RATE;
   }
@@ -127,8 +128,9 @@ public class ColumnarMapIndexConfig extends IndexConfig {
     return _noDictionaryKeys == null || !_noDictionaryKeys.contains(key);
   }
 
-  public int getMaxKeys() {
-    return _maxKeys;
+  /** Maximum number of MAP keys to materialise as dense virtual columns. Default: 1000. */
+  public int getMaxDenseKeys() {
+    return _maxDenseKeys;
   }
 
   public Set<String> getDenseKeys() {

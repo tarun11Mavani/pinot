@@ -72,7 +72,7 @@ public class FieldConfig extends BaseJsonConfig {
       "luceneNRTCachingDirectoryMaxBufferSizeMB";
 
   // COLUMNAR_MAP index properties
-  public static final String COLUMNAR_MAP_INDEX_MAX_KEYS = "maxKeys";
+  public static final String COLUMNAR_MAP_INDEX_MAX_DENSE_KEYS = "maxDenseKeys";
   public static final String COLUMNAR_MAP_INDEX_DENSE_KEYS = "denseKeys";
   public static final String COLUMNAR_MAP_INDEX_DENSE_KEY_MIN_FILL_RATE = "denseKeyMinFillRate";
   public static final String COLUMNAR_MAP_INDEX_INVERTED_INDEX_KEYS = "invertedIndexKeys";

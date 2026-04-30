@@ -34,7 +34,7 @@ public class ColumnarMapIndexConfigTest {
   public void testDefaultConfig() {
     ColumnarMapIndexConfig config = ColumnarMapIndexConfig.DEFAULT;
     assertTrue(config.isEnabled());
-    assertEquals(config.getMaxKeys(), 1000);
+    assertEquals(config.getMaxDenseKeys(), 1000);
     assertEquals(config.getDenseKeyMinFillRate(), 0.5);
     assertTrue(config.getDenseKeys().isEmpty());
     assertNull(config.getInvertedIndexKeys());
@@ -45,7 +45,7 @@ public class ColumnarMapIndexConfigTest {
   @Test
   public void testFromProperties() {
     Map<String, String> props = Map.of(
-        FieldConfig.COLUMNAR_MAP_INDEX_MAX_KEYS, "500",
+        FieldConfig.COLUMNAR_MAP_INDEX_MAX_DENSE_KEYS, "500",
         FieldConfig.COLUMNAR_MAP_INDEX_DENSE_KEYS, "country,tenancy",
         FieldConfig.COLUMNAR_MAP_INDEX_DENSE_KEY_MIN_FILL_RATE, "0.3",
         FieldConfig.COLUMNAR_MAP_INDEX_INVERTED_INDEX_KEYS, "country",
@@ -53,7 +53,7 @@ public class ColumnarMapIndexConfigTest {
     );
     ColumnarMapIndexConfig config = ColumnarMapIndexConfig.fromProperties(props);
     assertTrue(config.isEnabled());
-    assertEquals(config.getMaxKeys(), 500);
+    assertEquals(config.getMaxDenseKeys(), 500);
     assertEquals(config.getDenseKeyMinFillRate(), 0.3);
     assertEquals(config.getDenseKeys(), Set.of("country", "tenancy"));
     assertTrue(config.isDenseKey("country"));
@@ -89,7 +89,7 @@ public class ColumnarMapIndexConfigTest {
   public void testFromPropertiesDefaults() {
     ColumnarMapIndexConfig config = ColumnarMapIndexConfig.fromProperties(null);
     assertTrue(config.isEnabled());
-    assertEquals(config.getMaxKeys(), 1000);
+    assertEquals(config.getMaxDenseKeys(), 1000);
     assertEquals(config.getDenseKeyMinFillRate(), 0.5);
   }
 
