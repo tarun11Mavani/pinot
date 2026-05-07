@@ -71,13 +71,22 @@ public class FieldConfig extends BaseJsonConfig {
   public static final String TEXT_INDEX_LUCENE_NRT_CACHING_DIRECTORY_BUFFER_SIZE =
       "luceneNRTCachingDirectoryMaxBufferSizeMB";
 
-  // COLUMNAR_MAP index properties
+  /// COLUMNAR_MAP index property keys, passed via `FieldConfig.properties`.
+  /// See `ColumnarMapIndexConfig` for semantics.
+
+  /// Maximum number of MAP keys to materialise as dense columns (default 1000).
   public static final String COLUMNAR_MAP_INDEX_MAX_DENSE_KEYS = "maxDenseKeys";
+  /// Comma-separated explicit list of dense key names (always materialised regardless of fill rate).
   public static final String COLUMNAR_MAP_INDEX_DENSE_KEYS = "denseKeys";
+  /// Minimum fill rate [0.0, 1.0] for a key to be auto-promoted to dense (default 0.5).
   public static final String COLUMNAR_MAP_INDEX_DENSE_KEY_MIN_FILL_RATE = "denseKeyMinFillRate";
+  /// Comma-separated keys that get a per-key inverted index (union with enableInvertedIndexForDense).
   public static final String COLUMNAR_MAP_INDEX_INVERTED_INDEX_KEYS = "invertedIndexKeys";
+  /// Comma-separated keys that are always stored raw (no dictionary), overriding global settings.
   public static final String COLUMNAR_MAP_INDEX_NO_DICTIONARY_KEYS = "noDictionaryKeys";
+  /// When true, every dense key gets an inverted index regardless of invertedIndexKeys.
   public static final String COLUMNAR_MAP_INDEX_ENABLE_INVERTED_FOR_DENSE = "enableInvertedIndexForDense";
+  /// Separator character used when parsing comma-separated key lists above.
   public static final String COLUMNAR_MAP_INDEX_KEY_SEPARATOR = ",";
 
   private final String _name;
@@ -137,7 +146,28 @@ public class FieldConfig extends BaseJsonConfig {
   // If null, there won't be any index
   // NOTE: TIMESTAMP is ignored. In order to create TIMESTAMP index, configure 'timestampConfig' instead.
   public enum IndexType {
-    INVERTED, SORTED, TEXT, FST, IFST, H3, JSON, TIMESTAMP, VECTOR, RANGE, COLUMNAR_MAP
+    /** Standard inverted index mapping value → docId bitmap. */
+    INVERTED,
+    /** Sorted forward index on a physically sorted column. */
+    SORTED,
+    /** Lucene-based full-text index. */
+    TEXT,
+    /** Finite State Transducer index for prefix/regex string queries. */
+    FST,
+    /** In-memory Finite State Transducer index. */
+    IFST,
+    /** Geospatial H3 index for geo-filtering. */
+    H3,
+    /** JSON index for semi-structured columns. */
+    JSON,
+    /** Timestamp index decomposing epoch values into bucketed granularity columns. */
+    TIMESTAMP,
+    /** Approximate nearest-neighbor vector index. */
+    VECTOR,
+    /** Range index for efficient inequality predicates on numeric/string columns. */
+    RANGE,
+    /** Columnar MAP index storing MAP entries as per-key materialized columns. */
+    COLUMNAR_MAP
   }
 
   public enum CompressionCodec {

@@ -95,11 +95,11 @@ public class ColumnMetadataImplTest {
     props.setProperty("column." + column + ".cardinality", "47");
     props.setProperty("column." + column + ".hasDictionary", "true");
     props.setProperty("column." + column + ".bitsPerElement", "6");
-    props.setProperty("column." + column + ".mapVirtualColumn", "true");
+    props.setProperty("column." + column + ".mapMaterializedColumn", "true");
     props.setProperty("column." + column + ".parentMapColumn", "metrics");
 
     ColumnMetadataImpl metadata = ColumnMetadataImpl.fromPropertiesConfiguration(props, 5000000, column);
-    assertTrue(metadata.isMapVirtualColumn());
+    assertTrue(metadata.isMaterializedMapColumn());
     assertEquals(metadata.getParentMapColumn(), "metrics");
     assertEquals(metadata.getCardinality(), 47);
     assertEquals(metadata.getTotalDocs(), 5000000);
@@ -115,7 +115,7 @@ public class ColumnMetadataImplTest {
     props.setProperty("column." + column + ".cardinality", "10");
 
     ColumnMetadataImpl metadata = ColumnMetadataImpl.fromPropertiesConfiguration(props, 1000, column);
-    assertFalse(metadata.isMapVirtualColumn());
+    assertFalse(metadata.isMaterializedMapColumn());
     assertNull(metadata.getParentMapColumn());
   }
 
@@ -125,11 +125,10 @@ public class ColumnMetadataImplTest {
         .setFieldSpec(new DimensionFieldSpec("metrics$__tenancy", FieldSpec.DataType.STRING, true))
         .setTotalDocs(100)
         .setCardinality(5)
-        .setMapVirtualColumn(true)
         .setParentMapColumn("metrics")
         .build();
 
-    assertTrue(metadata.isMapVirtualColumn());
+    assertTrue(metadata.isMaterializedMapColumn());
     assertEquals(metadata.getParentMapColumn(), "metrics");
   }
 
@@ -139,7 +138,6 @@ public class ColumnMetadataImplTest {
         .setFieldSpec(new DimensionFieldSpec("col", FieldSpec.DataType.STRING, true))
         .setTotalDocs(100)
         .setCardinality(5)
-        .setMapVirtualColumn(true)
         .setParentMapColumn("parent")
         .build();
 
@@ -147,7 +145,6 @@ public class ColumnMetadataImplTest {
         .setFieldSpec(new DimensionFieldSpec("col", FieldSpec.DataType.STRING, true))
         .setTotalDocs(100)
         .setCardinality(5)
-        .setMapVirtualColumn(false)
         .build();
 
     assertNotEquals(m1, m2);
@@ -156,7 +153,6 @@ public class ColumnMetadataImplTest {
         .setFieldSpec(new DimensionFieldSpec("col", FieldSpec.DataType.STRING, true))
         .setTotalDocs(100)
         .setCardinality(5)
-        .setMapVirtualColumn(true)
         .setParentMapColumn("parent")
         .build();
 

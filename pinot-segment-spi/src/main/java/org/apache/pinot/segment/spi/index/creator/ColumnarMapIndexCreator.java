@@ -19,48 +19,33 @@
 package org.apache.pinot.segment.spi.index.creator;
 
 import java.io.IOException;
-import java.util.Collections;
 import java.util.Map;
-import javax.annotation.Nullable;
 import org.apache.commons.configuration2.PropertiesConfiguration;
 import org.apache.pinot.segment.spi.index.IndexCreator;
 
 
-/**
- * Creator for the COLUMNAR_MAP index. Accepts one map per document during segment creation
- * and decomposes it into per-key columnar storage on seal().
- *
- * <p>Implementations are not thread-safe; callers must serialize {@link #add} calls per
- * creator instance.
- *
- * <p>The inherited {@code add(Object, int)} method from {@link IndexCreator} treats the
- * first argument as the map and the second as the docId, matching the column-major creator
- * path. Callers may use either entry point.
- */
+/// Creator for the COLUMNAR_MAP index. Accepts one map per document during segment creation and
+/// decomposes it into per-key columnar storage on `seal()`.
+///
+/// Implementations are not thread-safe; callers must serialize `add` calls per creator instance.
+///
+/// The inherited `add(Object, int)` method from `IndexCreator` treats the first argument as the
+/// map and the second as the docId, matching the column-major creator path.
 public interface ColumnarMapIndexCreator extends IndexCreator {
 
-  /**
-   * Adds one document's map. Keys present in the map's entry set are routed to per-key
-   * columnar storage; keys with declared types are coerced to those types, others fall
-   * back to the configured default value type. A null or empty map is valid and means the
-   * document has no key/value pairs.
-   *
-   * @param mapValue the document's map (may be null or empty)
-   * @param docId the document id, must be monotonically non-decreasing across calls
-   */
-  void add(@Nullable Map<String, Object> mapValue, int docId)
+  /// Adds one document's map. Keys are routed to per-key columnar storage; declared-type keys are
+  /// coerced to those types, others use the configured default value type. An empty map is valid.
+  /// Callers must pass an empty map rather than `null`.
+  ///
+  /// @param mapValue the document's map (non-null, may be empty)
+  /// @param docId    document id, must be monotonically non-decreasing across calls
+  void add(Map<String, Object> mapValue, int docId)
       throws IOException;
 
-  /**
-   * Returns metadata properties for any virtual columns this creator materialized during
-   * {@code seal()}. The framework merges the returned properties into the segment metadata.
-   * Implementations that do not produce virtual columns return an empty map.
-   *
-   * <p>Call after {@code seal()}.
-   *
-   * @return a map from virtual-column name to its {@link PropertiesConfiguration}; never null
-   */
-  default Map<String, PropertiesConfiguration> getVirtualColumnMetadata() {
-    return Collections.emptyMap();
+  /// Returns metadata properties for the materialized columns this creator produced during `seal()`.
+  /// The framework merges the returned properties into the segment metadata.
+  /// Returns an empty map for creators that produce no materialized columns. Call after `seal()`.
+  default Map<String, PropertiesConfiguration> getMaterializedColumnMetadata() {
+    return Map.of();
   }
 }

@@ -26,14 +26,15 @@ import java.util.Set;
 import javax.annotation.Nullable;
 
 
-/**
- * Configuration for the COLUMNAR_MAP index on a MAP column.
- *
- * <p>Dense keys (above {@code denseKeyMinFillRate} or explicitly listed in {@code denseKeys}) are
- * stored as independent virtual columns with a standard forward index, dictionary, and optional
- * inverted index. At most {@code maxDenseKeys} keys are materialised as dense virtual columns;
- * remaining keys fall back to a synthetic JSON sparse column.
- */
+/// Configuration for the COLUMNAR_MAP index on a MAP column.
+///
+/// **Dense vs sparse:** a key is materialized as its own column if (a) it appears in the explicit
+/// `denseKeys` set, or (b) its fill rate (fraction of documents containing the key) is ≥
+/// `denseKeyMinFillRate`. Keys not satisfying either criterion go into a sparse MAP column.
+///
+/// **maxDenseKeys cutoff:** when more keys qualify as dense than `maxDenseKeys` allows, the top
+/// `maxDenseKeys` keys ranked by fill rate are materialized; the rest fall back to the sparse
+/// column. Use `denseKeys` to pin specific keys regardless of fill rate ranking.
 public class ColumnarMapIndexConfig extends IndexConfig {
   public static final ColumnarMapIndexConfig DISABLED = new ColumnarMapIndexConfig(false);
   public static final ColumnarMapIndexConfig DEFAULT = new ColumnarMapIndexConfig(true);
@@ -128,7 +129,9 @@ public class ColumnarMapIndexConfig extends IndexConfig {
     return _noDictionaryKeys == null || !_noDictionaryKeys.contains(key);
   }
 
-  /** Maximum number of MAP keys to materialise as dense virtual columns. Default: 1000. */
+  /// Maximum number of MAP keys to materialise as dense columns. Default: 1000.
+  /// When more keys qualify as dense, the top `maxDenseKeys` by fill rate are materialized;
+  /// the rest fall back to the sparse MAP column.
   public int getMaxDenseKeys() {
     return _maxDenseKeys;
   }
