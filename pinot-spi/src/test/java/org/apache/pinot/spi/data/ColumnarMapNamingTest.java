@@ -28,8 +28,8 @@ import static org.testng.Assert.assertTrue;
 public class ColumnarMapNamingTest {
 
   @Test
-  public void testVirtualColumnName() {
-    assertEquals(ColumnarMapNaming.virtualColumnName("metrics", "tenancy"), "metrics$__tenancy");
+  public void testMaterializedColumnName() {
+    assertEquals(ColumnarMapNaming.materializedColumnName("metrics", "tenancy"), "metrics$__tenancy");
   }
 
   @Test
@@ -38,12 +38,12 @@ public class ColumnarMapNamingTest {
   }
 
   @Test
-  public void testIsVirtualColumn() {
-    assertTrue(ColumnarMapNaming.isColumnarMapVirtualColumn("metrics$__tenancy"));
-    assertTrue(ColumnarMapNaming.isColumnarMapVirtualColumn("metrics$____sparse__"));
-    assertFalse(ColumnarMapNaming.isColumnarMapVirtualColumn("metrics"));
-    assertFalse(ColumnarMapNaming.isColumnarMapVirtualColumn("normal_column"));
-    assertFalse(ColumnarMapNaming.isColumnarMapVirtualColumn("metrics$$tenancy"));
+  public void testIsMaterializedMapColumn() {
+    assertTrue(ColumnarMapNaming.isMaterializedMapColumn("metrics$__tenancy"));
+    assertTrue(ColumnarMapNaming.isMaterializedMapColumn("metrics$____sparse__"));
+    assertFalse(ColumnarMapNaming.isMaterializedMapColumn("metrics"));
+    assertFalse(ColumnarMapNaming.isMaterializedMapColumn("normal_column"));
+    assertFalse(ColumnarMapNaming.isMaterializedMapColumn("metrics$$tenancy"));
   }
 
   @Test
@@ -68,10 +68,10 @@ public class ColumnarMapNamingTest {
   public void testRoundTrip() {
     String mapCol = "event_props";
     String key = "country_iso2";
-    String virtual = ColumnarMapNaming.virtualColumnName(mapCol, key);
-    assertEquals(ColumnarMapNaming.parseMapColumn(virtual), mapCol);
-    assertEquals(ColumnarMapNaming.parseKey(virtual), key);
-    assertTrue(ColumnarMapNaming.isColumnarMapVirtualColumn(virtual));
-    assertFalse(ColumnarMapNaming.isSparseColumn(virtual));
+    String materialized = ColumnarMapNaming.materializedColumnName(mapCol, key);
+    assertEquals(ColumnarMapNaming.parseMapColumn(materialized), mapCol);
+    assertEquals(ColumnarMapNaming.parseKey(materialized), key);
+    assertTrue(ColumnarMapNaming.isMaterializedMapColumn(materialized));
+    assertFalse(ColumnarMapNaming.isSparseColumn(materialized));
   }
 }

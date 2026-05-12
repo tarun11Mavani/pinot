@@ -29,7 +29,7 @@ public final class ColumnarMapNaming {
   private ColumnarMapNaming() {
   }
 
-  public static String virtualColumnName(String mapColumn, String key) {
+  public static String materializedColumnName(String mapColumn, String key) {
     return mapColumn + SEPARATOR + key;
   }
 
@@ -37,7 +37,7 @@ public final class ColumnarMapNaming {
     return mapColumn + SEPARATOR + SPARSE_SUFFIX;
   }
 
-  public static boolean isColumnarMapVirtualColumn(String columnName) {
+  public static boolean isMaterializedMapColumn(String columnName) {
     return columnName.contains(SEPARATOR);
   }
 
@@ -45,13 +45,13 @@ public final class ColumnarMapNaming {
     return columnName.endsWith(SEPARATOR + SPARSE_SUFFIX);
   }
 
-  public static String parseMapColumn(String virtualColumnName) {
-    int idx = virtualColumnName.indexOf(SEPARATOR);
-    return idx >= 0 ? virtualColumnName.substring(0, idx) : virtualColumnName;
+  public static String parseMapColumn(String materializedColumnName) {
+    int idx = materializedColumnName.indexOf(SEPARATOR);
+    return idx >= 0 ? materializedColumnName.substring(0, idx) : materializedColumnName;
   }
 
-  public static String parseKey(String virtualColumnName) {
-    int idx = virtualColumnName.indexOf(SEPARATOR);
-    return idx >= 0 ? virtualColumnName.substring(idx + SEPARATOR.length()) : virtualColumnName;
+  public static String parseKey(String materializedColumnName) {
+    int idx = materializedColumnName.indexOf(SEPARATOR);
+    return idx >= 0 ? materializedColumnName.substring(idx + SEPARATOR.length()) : materializedColumnName;
   }
 }
