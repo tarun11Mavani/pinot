@@ -150,7 +150,7 @@ public class StandardIndexes {
   /// Returns the MAP index type, which materializes MAP column keys as virtual columns.
   @SuppressWarnings("unchecked")
   public static IndexType<MapIndexConfig, ColumnarMapIndexReader, ColumnarMapIndexCreator>
-      columnarMap() {
+      map() {
     return (IndexType<MapIndexConfig, ColumnarMapIndexReader, ColumnarMapIndexCreator>)
         IndexService.getInstance().get(MAP_ID);
   }

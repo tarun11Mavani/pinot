@@ -65,7 +65,7 @@ public class MapIndexConfig extends IndexConfig {
     double denseKeyMinFillRate = Double.parseDouble(
         properties.getOrDefault(FieldConfig.MAP_INDEX_DENSE_KEY_MIN_FILL_RATE,
             String.valueOf(DEFAULT_DENSE_KEY_MIN_FILL_RATE)));
-    return new MapIndexConfig(true, enableInvertedForDense, invertedIndexKeys, noDictionaryKeys, maxDenseKeys,
+    return new MapIndexConfig(false, enableInvertedForDense, invertedIndexKeys, noDictionaryKeys, maxDenseKeys,
         denseKeys, denseKeyMinFillRate);
   }
 
@@ -85,19 +85,19 @@ public class MapIndexConfig extends IndexConfig {
   }
 
   public MapIndexConfig(boolean enabled) {
-    this(enabled, false, null, null, 1000, null, DEFAULT_DENSE_KEY_MIN_FILL_RATE);
+    this(!enabled, false, null, null, 1000, null, DEFAULT_DENSE_KEY_MIN_FILL_RATE);
   }
 
   @JsonCreator
   public MapIndexConfig(
-      @JsonProperty("enabled") boolean enabled,
+      @JsonProperty("disabled") Boolean disabled,
       @JsonProperty("enableInvertedIndexForDense") boolean enableInvertedIndexForDense,
       @JsonProperty("invertedIndexKeys") @Nullable Set<String> invertedIndexKeys,
       @JsonProperty("noDictionaryKeys") @Nullable Set<String> noDictionaryKeys,
       @JsonProperty("maxDenseKeys") int maxDenseKeys,
       @JsonProperty("denseKeys") @Nullable Set<String> denseKeys,
       @JsonProperty("denseKeyMinFillRate") double denseKeyMinFillRate) {
-    super(!enabled);
+    super(disabled);
     _enableInvertedIndexForDense = enableInvertedIndexForDense;
     _invertedIndexKeys = invertedIndexKeys;
     _noDictionaryKeys = noDictionaryKeys;

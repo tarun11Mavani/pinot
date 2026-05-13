@@ -38,7 +38,7 @@ public interface MapDataSource extends DataSource {
   /// full scan). Callers must handle the case where the key is absent even when this returns
   /// `true` — [#getDataSource(String)] will return a DataSource for an absent key
   /// (forward-index reads return the column default value; null-value bitmap marks all rows as null).
-  default boolean containsKey(String key) {
+  default boolean mayContainKey(String key) {
     return getDataSources().containsKey(key);
   }
 
