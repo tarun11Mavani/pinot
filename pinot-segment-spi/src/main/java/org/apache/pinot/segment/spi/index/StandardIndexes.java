@@ -82,7 +82,7 @@ public class StandardIndexes {
   public static final String TEXT_ID = "text_index";
   public static final String H3_ID = "h3_index";
   public static final String VECTOR_ID = "vector_index";
-  public static final String MAP_ID = "map";
+  public static final String MAP_ID = "map_index";
 
   private StandardIndexes() {
   }
