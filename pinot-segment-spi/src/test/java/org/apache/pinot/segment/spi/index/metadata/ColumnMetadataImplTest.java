@@ -34,12 +34,26 @@ import static org.testng.Assert.assertNull;
 import static org.testng.Assert.assertTrue;
 
 
+/**
+ * Unit tests for {@link ColumnMetadataImpl#fromPropertiesConfiguration} focused on the
+ * {@code FORWARD_INDEX_ENCODING} property's rolling-upgrade behavior.
+ *
+ * <p>{@code FORWARD_INDEX_ENCODING} was added in this release. Old segments built before this release won't have
+ * the key in {@code metadata.properties}, so {@link ColumnMetadataImpl#fromPropertiesConfiguration} falls back to
+ * deriving the encoding from {@code HAS_DICTIONARY}: dict means {@code DICTIONARY}-encoded forward, no dict means
+ * {@code RAW}. The new "shared dictionary on RAW forward" segment shape is only representable when the key is
+ * explicitly written by the new segment creator.
+ */
 public class ColumnMetadataImplTest {
 
+  /**
+   * Old-segment fallback path: no FORWARD_INDEX_ENCODING in metadata, dict present → encoding inferred as DICTIONARY.
+   */
   @Test
   public void fallsBackToDictionaryEncodingWhenKeyAbsentAndHasDictionary() {
     PropertiesConfiguration config = baseConfig("col");
     config.setProperty(Column.getKeyFor("col", Column.HAS_DICTIONARY), true);
+    // FORWARD_INDEX_ENCODING intentionally NOT set, simulating an old segment.
 
     ColumnMetadataImpl metadata = ColumnMetadataImpl.fromPropertiesConfiguration(config, 1, "col");
 
@@ -48,10 +62,14 @@ public class ColumnMetadataImplTest {
         "Old segments without FORWARD_INDEX_ENCODING and HAS_DICTIONARY=true must infer DICTIONARY encoding");
   }
 
+  /**
+   * Old-segment fallback path: no FORWARD_INDEX_ENCODING in metadata, no dict → encoding inferred as RAW.
+   */
   @Test
   public void fallsBackToRawEncodingWhenKeyAbsentAndNoDictionary() {
     PropertiesConfiguration config = baseConfig("col");
     config.setProperty(Column.getKeyFor("col", Column.HAS_DICTIONARY), false);
+    // FORWARD_INDEX_ENCODING intentionally NOT set, simulating an old raw-forward segment.
 
     ColumnMetadataImpl metadata = ColumnMetadataImpl.fromPropertiesConfiguration(config, 1, "col");
 
@@ -60,6 +78,10 @@ public class ColumnMetadataImplTest {
         "Old segments without FORWARD_INDEX_ENCODING and HAS_DICTIONARY=false must infer RAW encoding");
   }
 
+  /**
+   * New shared-dict shape: FORWARD_INDEX_ENCODING=RAW + HAS_DICTIONARY=true. The new segment creator writes both
+   * keys; the metadata loader must honor the explicit FORWARD_INDEX_ENCODING and not fall back to inference.
+   */
   @Test
   public void honorsExplicitRawEncodingEvenWhenHasDictionary() {
     PropertiesConfiguration config = baseConfig("col");
@@ -73,6 +95,9 @@ public class ColumnMetadataImplTest {
         "Explicit FORWARD_INDEX_ENCODING=RAW must override inference even when HAS_DICTIONARY=true (shared-dict)");
   }
 
+  /**
+   * New segment with explicit FORWARD_INDEX_ENCODING=DICTIONARY; verify it round-trips.
+   */
   @Test
   public void honorsExplicitDictionaryEncoding() {
     PropertiesConfiguration config = baseConfig("col");

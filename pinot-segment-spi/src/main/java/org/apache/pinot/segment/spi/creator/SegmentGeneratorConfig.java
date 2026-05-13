@@ -531,7 +531,7 @@ public class SegmentGeneratorConfig implements Serializable {
   }
 
   /// Returns the names of columns that have MAP index enabled in the table config.
-  public List<String> getColumnarMapColumnNames() {
+  public List<String> getMapIndexColumnNames() {
     List<String> result = new ArrayList<>();
     if (_tableConfig != null) {
       List<FieldConfig> fieldConfigs = _tableConfig.getFieldConfigList();
