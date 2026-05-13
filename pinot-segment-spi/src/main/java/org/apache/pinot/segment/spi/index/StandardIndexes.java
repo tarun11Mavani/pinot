@@ -43,7 +43,7 @@ import org.apache.pinot.segment.spi.index.reader.RangeIndexReader;
 import org.apache.pinot.segment.spi.index.reader.TextIndexReader;
 import org.apache.pinot.segment.spi.index.reader.VectorIndexReader;
 import org.apache.pinot.spi.config.table.BloomFilterConfig;
-import org.apache.pinot.spi.config.table.ColumnarMapIndexConfig;
+import org.apache.pinot.spi.config.table.MapIndexConfig;
 import org.apache.pinot.spi.config.table.IndexConfig;
 import org.apache.pinot.spi.config.table.JsonIndexConfig;
 
@@ -82,7 +82,7 @@ public class StandardIndexes {
   public static final String TEXT_ID = "text_index";
   public static final String H3_ID = "h3_index";
   public static final String VECTOR_ID = "vector_index";
-  public static final String COLUMNAR_MAP_ID = "columnar_map";
+  public static final String MAP_ID = "map";
 
   private StandardIndexes() {
   }
@@ -147,11 +147,11 @@ public class StandardIndexes {
         IndexService.getInstance().get(VECTOR_ID);
   }
 
-  /// Returns the COLUMNAR_MAP index type, which materializes MAP column keys as virtual columns.
+  /// Returns the MAP index type, which materializes MAP column keys as virtual columns.
   @SuppressWarnings("unchecked")
-  public static IndexType<ColumnarMapIndexConfig, ColumnarMapIndexReader, ColumnarMapIndexCreator>
+  public static IndexType<MapIndexConfig, ColumnarMapIndexReader, ColumnarMapIndexCreator>
       columnarMap() {
-    return (IndexType<ColumnarMapIndexConfig, ColumnarMapIndexReader, ColumnarMapIndexCreator>)
-        IndexService.getInstance().get(COLUMNAR_MAP_ID);
+    return (IndexType<MapIndexConfig, ColumnarMapIndexReader, ColumnarMapIndexCreator>)
+        IndexService.getInstance().get(MAP_ID);
   }
 }

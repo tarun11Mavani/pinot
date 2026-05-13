@@ -26,7 +26,7 @@ import java.util.Set;
 import javax.annotation.Nullable;
 
 
-/// Configuration for the COLUMNAR_MAP index on a MAP column.
+/// Configuration for the MAP index on a MAP column.
 ///
 /// **Dense vs sparse:** a key is materialized as its own column if (a) it appears in the explicit
 /// `denseKeys` set, or (b) its fill rate (fraction of documents containing the key) is ≥
@@ -35,9 +35,9 @@ import javax.annotation.Nullable;
 /// **maxDenseKeys cutoff:** when more keys qualify as dense than `maxDenseKeys` allows, the top
 /// `maxDenseKeys` keys ranked by fill rate are materialized; the rest fall back to the sparse
 /// column. Use `denseKeys` to pin specific keys regardless of fill rate ranking.
-public class ColumnarMapIndexConfig extends IndexConfig {
-  public static final ColumnarMapIndexConfig DISABLED = new ColumnarMapIndexConfig(false);
-  public static final ColumnarMapIndexConfig DEFAULT = new ColumnarMapIndexConfig(true);
+public class MapIndexConfig extends IndexConfig {
+  public static final MapIndexConfig DISABLED = new MapIndexConfig(false);
+  public static final MapIndexConfig DEFAULT = new MapIndexConfig(true);
 
   public static final double DEFAULT_DENSE_KEY_MIN_FILL_RATE = 0.5;
 
@@ -48,24 +48,24 @@ public class ColumnarMapIndexConfig extends IndexConfig {
   private final Set<String> _denseKeys;
   private final double _denseKeyMinFillRate;
 
-  public static ColumnarMapIndexConfig fromProperties(@Nullable Map<String, String> properties) {
+  public static MapIndexConfig fromProperties(@Nullable Map<String, String> properties) {
     if (properties == null || properties.isEmpty()) {
       return DEFAULT;
     }
     int maxDenseKeys = Integer.parseInt(
-        properties.getOrDefault(FieldConfig.COLUMNAR_MAP_INDEX_MAX_DENSE_KEYS, "1000"));
+        properties.getOrDefault(FieldConfig.MAP_INDEX_MAX_DENSE_KEYS, "1000"));
     Set<String> invertedIndexKeys = parseCommaSeparated(
-        properties.get(FieldConfig.COLUMNAR_MAP_INDEX_INVERTED_INDEX_KEYS));
+        properties.get(FieldConfig.MAP_INDEX_INVERTED_INDEX_KEYS));
     Set<String> noDictionaryKeys = parseCommaSeparated(
-        properties.get(FieldConfig.COLUMNAR_MAP_INDEX_NO_DICTIONARY_KEYS));
+        properties.get(FieldConfig.MAP_INDEX_NO_DICTIONARY_KEYS));
     boolean enableInvertedForDense = Boolean.parseBoolean(
-        properties.getOrDefault(FieldConfig.COLUMNAR_MAP_INDEX_ENABLE_INVERTED_FOR_DENSE, "false"));
+        properties.getOrDefault(FieldConfig.MAP_INDEX_ENABLE_INVERTED_FOR_DENSE, "false"));
     Set<String> denseKeys = parseCommaSeparated(
-        properties.get(FieldConfig.COLUMNAR_MAP_INDEX_DENSE_KEYS));
+        properties.get(FieldConfig.MAP_INDEX_DENSE_KEYS));
     double denseKeyMinFillRate = Double.parseDouble(
-        properties.getOrDefault(FieldConfig.COLUMNAR_MAP_INDEX_DENSE_KEY_MIN_FILL_RATE,
+        properties.getOrDefault(FieldConfig.MAP_INDEX_DENSE_KEY_MIN_FILL_RATE,
             String.valueOf(DEFAULT_DENSE_KEY_MIN_FILL_RATE)));
-    return new ColumnarMapIndexConfig(true, enableInvertedForDense, invertedIndexKeys, noDictionaryKeys, maxDenseKeys,
+    return new MapIndexConfig(true, enableInvertedForDense, invertedIndexKeys, noDictionaryKeys, maxDenseKeys,
         denseKeys, denseKeyMinFillRate);
   }
 
@@ -75,7 +75,7 @@ public class ColumnarMapIndexConfig extends IndexConfig {
       return null;
     }
     Set<String> result = new HashSet<>();
-    for (String part : value.split(FieldConfig.COLUMNAR_MAP_INDEX_KEY_SEPARATOR)) {
+    for (String part : value.split(FieldConfig.MAP_INDEX_KEY_SEPARATOR)) {
       String trimmed = part.trim();
       if (!trimmed.isEmpty()) {
         result.add(trimmed);
@@ -84,12 +84,12 @@ public class ColumnarMapIndexConfig extends IndexConfig {
     return result.isEmpty() ? null : result;
   }
 
-  public ColumnarMapIndexConfig(boolean enabled) {
+  public MapIndexConfig(boolean enabled) {
     this(enabled, false, null, null, 1000, null, DEFAULT_DENSE_KEY_MIN_FILL_RATE);
   }
 
   @JsonCreator
-  public ColumnarMapIndexConfig(
+  public MapIndexConfig(
       @JsonProperty("enabled") boolean enabled,
       @JsonProperty("enableInvertedIndexForDense") boolean enableInvertedIndexForDense,
       @JsonProperty("invertedIndexKeys") @Nullable Set<String> invertedIndexKeys,

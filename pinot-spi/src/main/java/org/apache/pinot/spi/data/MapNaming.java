@@ -19,14 +19,14 @@
 package org.apache.pinot.spi.data;
 
 
-/// Naming convention for COLUMNAR_MAP materialized columns. Each dense MAP key is stored as
+/// Naming convention for MAP materialized columns. Each dense MAP key is stored as
 /// a column named `<mapColumn>$__<key>`. Sparse keys share a single synthetic JSON column
 /// named `<mapColumn>$____sparse__`.
-public final class ColumnarMapNaming {
+public final class MapNaming {
   public static final String SEPARATOR = "$__";
   public static final String SPARSE_SUFFIX = "__sparse__";
 
-  private ColumnarMapNaming() {
+  private MapNaming() {
   }
 
   public static String materializedColumnName(String mapColumn, String key) {

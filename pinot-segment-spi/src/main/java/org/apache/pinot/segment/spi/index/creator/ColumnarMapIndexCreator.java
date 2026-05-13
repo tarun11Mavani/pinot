@@ -24,7 +24,7 @@ import org.apache.commons.configuration2.PropertiesConfiguration;
 import org.apache.pinot.segment.spi.index.IndexCreator;
 
 
-/// Creator for the COLUMNAR_MAP index. Accepts one map per document during segment creation and
+/// Creator for the MAP index. Accepts one map per document during segment creation and
 /// decomposes it into per-key columnar storage on `seal()`.
 ///
 /// Implementations are not thread-safe; callers must serialize `add` calls per creator instance.

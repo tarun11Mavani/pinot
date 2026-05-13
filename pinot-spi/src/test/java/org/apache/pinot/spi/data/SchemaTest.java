@@ -798,8 +798,8 @@ public class SchemaTest {
 
   @Test
   public void testAcceptsVirtualColumnSeparatorInSchemaWithoutColumnarMap() {
-    // $__ is reserved by COLUMNAR_MAP virtual columns, but Schema.validate() no longer rejects it globally.
-    // The rejection happens in TableConfigUtils.validate() only when COLUMNAR_MAP is enabled for a table.
+    // $__ is reserved by MAP virtual columns, but Schema.validate() no longer rejects it globally.
+    // The rejection happens in TableConfigUtils.validate() only when MAP is enabled for a table.
     Schema schema = new Schema.SchemaBuilder()
         .addSingleValueDimension("metrics$__tenancy", FieldSpec.DataType.STRING)
         .build();

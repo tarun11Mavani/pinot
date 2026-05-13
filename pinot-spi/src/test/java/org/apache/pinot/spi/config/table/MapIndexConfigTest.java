@@ -28,11 +28,11 @@ import static org.testng.Assert.assertNull;
 import static org.testng.Assert.assertTrue;
 
 
-public class ColumnarMapIndexConfigTest {
+public class MapIndexConfigTest {
 
   @Test
   public void testDefaultConfig() {
-    ColumnarMapIndexConfig config = ColumnarMapIndexConfig.DEFAULT;
+    MapIndexConfig config = MapIndexConfig.DEFAULT;
     assertTrue(config.isEnabled());
     assertEquals(config.getMaxDenseKeys(), 1000);
     assertEquals(config.getDenseKeyMinFillRate(), 0.5);
@@ -45,13 +45,13 @@ public class ColumnarMapIndexConfigTest {
   @Test
   public void testFromProperties() {
     Map<String, String> props = Map.of(
-        FieldConfig.COLUMNAR_MAP_INDEX_MAX_DENSE_KEYS, "500",
-        FieldConfig.COLUMNAR_MAP_INDEX_DENSE_KEYS, "country,tenancy",
-        FieldConfig.COLUMNAR_MAP_INDEX_DENSE_KEY_MIN_FILL_RATE, "0.3",
-        FieldConfig.COLUMNAR_MAP_INDEX_INVERTED_INDEX_KEYS, "country",
-        FieldConfig.COLUMNAR_MAP_INDEX_ENABLE_INVERTED_FOR_DENSE, "false"
+        FieldConfig.MAP_INDEX_MAX_DENSE_KEYS, "500",
+        FieldConfig.MAP_INDEX_DENSE_KEYS, "country,tenancy",
+        FieldConfig.MAP_INDEX_DENSE_KEY_MIN_FILL_RATE, "0.3",
+        FieldConfig.MAP_INDEX_INVERTED_INDEX_KEYS, "country",
+        FieldConfig.MAP_INDEX_ENABLE_INVERTED_FOR_DENSE, "false"
     );
-    ColumnarMapIndexConfig config = ColumnarMapIndexConfig.fromProperties(props);
+    MapIndexConfig config = MapIndexConfig.fromProperties(props);
     assertTrue(config.isEnabled());
     assertEquals(config.getMaxDenseKeys(), 500);
     assertEquals(config.getDenseKeyMinFillRate(), 0.3);
@@ -64,22 +64,22 @@ public class ColumnarMapIndexConfigTest {
   @Test
   public void testFromPropertiesEnableInvertedForDense() {
     Map<String, String> props = Map.of(
-        FieldConfig.COLUMNAR_MAP_INDEX_ENABLE_INVERTED_FOR_DENSE, "true"
+        FieldConfig.MAP_INDEX_ENABLE_INVERTED_FOR_DENSE, "true"
     );
-    ColumnarMapIndexConfig config = ColumnarMapIndexConfig.fromProperties(props);
+    MapIndexConfig config = MapIndexConfig.fromProperties(props);
     assertTrue(config.isEnableInvertedIndexForDense());
     assertTrue(config.shouldEnableInvertedIndexForKey("anyKey"));
   }
 
   @Test
   public void testDisabledConfig() {
-    ColumnarMapIndexConfig config = ColumnarMapIndexConfig.DISABLED;
+    MapIndexConfig config = MapIndexConfig.DISABLED;
     assertFalse(config.isEnabled());
   }
 
   @Test
   public void testNoDictionaryKeys() {
-    ColumnarMapIndexConfig config = new ColumnarMapIndexConfig(true, false, null,
+    MapIndexConfig config = new MapIndexConfig(true, false, null,
         Set.of("raw_payload"), 1000, null, 0.5);
     assertFalse(config.shouldUseDictionaryForKey("raw_payload"));
     assertTrue(config.shouldUseDictionaryForKey("other_key"));
@@ -87,7 +87,7 @@ public class ColumnarMapIndexConfigTest {
 
   @Test
   public void testFromPropertiesDefaults() {
-    ColumnarMapIndexConfig config = ColumnarMapIndexConfig.fromProperties(null);
+    MapIndexConfig config = MapIndexConfig.fromProperties(null);
     assertTrue(config.isEnabled());
     assertEquals(config.getMaxDenseKeys(), 1000);
     assertEquals(config.getDenseKeyMinFillRate(), 0.5);
@@ -95,19 +95,19 @@ public class ColumnarMapIndexConfigTest {
 
   @Test
   public void testShouldEnableInvertedIndexForKeyGlobalFlag() {
-    ColumnarMapIndexConfig config = ColumnarMapIndexConfig.fromProperties(
+    MapIndexConfig config = MapIndexConfig.fromProperties(
         Map.of(
-            FieldConfig.COLUMNAR_MAP_INDEX_ENABLE_INVERTED_FOR_DENSE, "true"
+            FieldConfig.MAP_INDEX_ENABLE_INVERTED_FOR_DENSE, "true"
         ));
     assertTrue(config.shouldEnableInvertedIndexForKey("any_key"));
   }
 
   @Test
   public void testShouldEnableInvertedIndexForKeyPerKeyOnly() {
-    ColumnarMapIndexConfig config = ColumnarMapIndexConfig.fromProperties(
+    MapIndexConfig config = MapIndexConfig.fromProperties(
         Map.of(
-            FieldConfig.COLUMNAR_MAP_INDEX_ENABLE_INVERTED_FOR_DENSE, "false",
-            FieldConfig.COLUMNAR_MAP_INDEX_INVERTED_INDEX_KEYS, "country,clicks"
+            FieldConfig.MAP_INDEX_ENABLE_INVERTED_FOR_DENSE, "false",
+            FieldConfig.MAP_INDEX_INVERTED_INDEX_KEYS, "country,clicks"
         ));
     assertTrue(config.shouldEnableInvertedIndexForKey("country"));
     assertTrue(config.shouldEnableInvertedIndexForKey("clicks"));
@@ -116,10 +116,10 @@ public class ColumnarMapIndexConfigTest {
 
   @Test
   public void testShouldEnableInvertedIndexForKeyUnion() {
-    ColumnarMapIndexConfig config = ColumnarMapIndexConfig.fromProperties(
+    MapIndexConfig config = MapIndexConfig.fromProperties(
         Map.of(
-            FieldConfig.COLUMNAR_MAP_INDEX_ENABLE_INVERTED_FOR_DENSE, "true",
-            FieldConfig.COLUMNAR_MAP_INDEX_INVERTED_INDEX_KEYS, "country"
+            FieldConfig.MAP_INDEX_ENABLE_INVERTED_FOR_DENSE, "true",
+            FieldConfig.MAP_INDEX_INVERTED_INDEX_KEYS, "country"
         ));
     assertTrue(config.shouldEnableInvertedIndexForKey("country"));
     assertTrue(config.shouldEnableInvertedIndexForKey("other"));
@@ -127,9 +127,9 @@ public class ColumnarMapIndexConfigTest {
 
   @Test
   public void testShouldUseDictionaryForKeyHardOverride() {
-    ColumnarMapIndexConfig config = ColumnarMapIndexConfig.fromProperties(
+    MapIndexConfig config = MapIndexConfig.fromProperties(
         Map.of(
-            FieldConfig.COLUMNAR_MAP_INDEX_NO_DICTIONARY_KEYS, "blob,raw_payload"
+            FieldConfig.MAP_INDEX_NO_DICTIONARY_KEYS, "blob,raw_payload"
         ));
     assertFalse(config.shouldUseDictionaryForKey("blob"));
     assertFalse(config.shouldUseDictionaryForKey("raw_payload"));

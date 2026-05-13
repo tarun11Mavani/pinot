@@ -26,7 +26,7 @@ import org.apache.pinot.spi.data.FieldSpec.DataType;
 import org.roaringbitmap.buffer.ImmutableRoaringBitmap;
 
 
-/// Reader for the COLUMNAR_MAP index. Each indexed key is materialized as its own per-key
+/// Reader for the MAP index. Each indexed key is materialized as its own per-key
 /// forward index plus a presence bitmap.
 ///
 /// Implementations must be safe for concurrent reads. Mutable implementations may impose
