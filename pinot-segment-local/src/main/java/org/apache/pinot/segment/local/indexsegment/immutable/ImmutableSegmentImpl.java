@@ -24,6 +24,8 @@ import java.io.File;
 import java.io.FileOutputStream;
 import java.io.IOException;
 import java.nio.ByteBuffer;
+import java.util.Collections;
+import java.util.HashSet;
 import java.util.List;
 import java.util.Map;
 import java.util.Set;
@@ -58,6 +60,7 @@ import org.apache.pinot.segment.spi.index.startree.StarTreeV2;
 import org.apache.pinot.segment.spi.store.SegmentDirectory;
 import org.apache.pinot.segment.spi.store.SegmentDirectoryPaths;
 import org.apache.pinot.spi.data.FieldSpec;
+import org.apache.pinot.spi.data.MapNaming;
 import org.apache.pinot.spi.data.Schema;
 import org.apache.pinot.spi.data.readers.GenericRow;
 import org.roaringbitmap.buffer.ImmutableRoaringBitmap;
@@ -97,13 +100,44 @@ public class ImmutableSegmentImpl implements ImmutableSegment {
     _dataSources =
         new Object2ObjectOpenHashMap<>(segmentMetadata.getColumnMetadataMap().size());
 
+    // First pass: build DataSources for all columns and collect materialized column parents
+    Map<String, Map<String, DataSource>> materializedColumnsByParent = new java.util.HashMap<>();
+    Map<String, DataSource> sparseByParent = new java.util.HashMap<>();
+
     for (Map.Entry<String, ColumnMetadata> entry : segmentMetadata.getColumnMetadataMap().entrySet()) {
       String colName = entry.getKey();
       ColumnMetadata columnMetadata = entry.getValue();
-      if (columnMetadata.getFieldSpec().getDataType() == FieldSpec.DataType.MAP) {
+
+      if (MapNaming.isMaterializedMapColumn(colName)) {
+        DataSource ds = new ImmutableDataSource(columnMetadata, _indexContainerMap.get(colName));
+        _dataSources.put(colName, ds);
+
+        String parentCol = MapNaming.parseMapColumn(colName);
+        if (MapNaming.isSparseColumn(colName)) {
+          sparseByParent.put(parentCol, ds);
+        } else {
+          String key = MapNaming.parseKey(colName);
+          materializedColumnsByParent.computeIfAbsent(parentCol, k -> new java.util.HashMap<>()).put(key, ds);
+        }
+      } else if (columnMetadata.getFieldSpec().getDataType() == FieldSpec.DataType.MAP) {
+        // Defer MAP columns — will be wrapped in second pass if they have materialized children
         _dataSources.put(colName, new ImmutableMapDataSource(entry.getValue(), _indexContainerMap.get(colName)));
       } else {
         _dataSources.put(colName, new ImmutableDataSource(entry.getValue(), _indexContainerMap.get(colName)));
+      }
+    }
+
+    // Second pass: upgrade blob-only MAP DataSources with materialized column refs if they exist
+    Set<String> mapsToWrap = new HashSet<>(materializedColumnsByParent.keySet());
+    mapsToWrap.addAll(sparseByParent.keySet());
+    for (String mapCol : mapsToWrap) {
+      ColumnMetadata mapMeta = segmentMetadata.getColumnMetadataMap().get(mapCol);
+      if (mapMeta != null) {
+        Map<String, DataSource> materializedCols =
+            materializedColumnsByParent.getOrDefault(mapCol, Collections.emptyMap());
+        DataSource sparse = sparseByParent.get(mapCol);
+        _dataSources.put(mapCol, new ImmutableMapDataSource(mapMeta, _indexContainerMap.get(mapCol),
+            materializedCols, sparse));
       }
     }
 

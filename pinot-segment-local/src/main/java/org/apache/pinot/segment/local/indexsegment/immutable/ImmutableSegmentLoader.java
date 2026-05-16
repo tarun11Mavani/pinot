@@ -49,6 +49,7 @@ import org.apache.pinot.segment.spi.loader.SegmentDirectoryLoaderRegistry;
 import org.apache.pinot.segment.spi.store.SegmentDirectory;
 import org.apache.pinot.segment.spi.store.SegmentDirectoryPaths;
 import org.apache.pinot.spi.data.FieldSpec;
+import org.apache.pinot.spi.data.MapNaming;
 import org.apache.pinot.spi.data.Schema;
 import org.apache.pinot.spi.env.PinotConfiguration;
 import org.apache.pinot.spi.utils.ReadMode;
@@ -216,6 +217,14 @@ public class ImmutableSegmentLoader {
     if (schema != null) {
       Set<String> columnsInMetadata = new HashSet<>(columnMetadataMap.keySet());
       columnsInMetadata.removeIf(schema::hasColumn);
+      columnsInMetadata.removeIf(col -> {
+        if (!MapNaming.isMaterializedMapColumn(col)) {
+          return false;
+        }
+        String parent = MapNaming.parseMapColumn(col);
+        return parent != null && schema.hasColumn(parent)
+            && schema.getFieldSpecFor(parent).getDataType() == FieldSpec.DataType.MAP;
+      });
       if (!columnsInMetadata.isEmpty()) {
         LOGGER.info("Skip loading columns only exist in metadata but not in schema: {}", columnsInMetadata);
         for (String column : columnsInMetadata) {

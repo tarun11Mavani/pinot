@@ -19,9 +19,12 @@
 
 package org.apache.pinot.segment.local.segment.index.map;
 
+import java.util.HashMap;
+import java.util.Map;
 import java.util.Set;
 import javax.annotation.Nullable;
 import org.apache.pinot.segment.spi.ColumnMetadata;
+import org.apache.pinot.segment.spi.datasource.DataSource;
 import org.apache.pinot.segment.spi.datasource.DataSourceMetadata;
 import org.apache.pinot.segment.spi.index.column.ColumnIndexContainer;
 import org.apache.pinot.segment.spi.index.reader.ForwardIndexReader;
@@ -31,12 +34,34 @@ import org.apache.pinot.segment.spi.partition.PartitionFunction;
 import org.apache.pinot.spi.data.FieldSpec;
 
 
+/// DataSource for immutable MAP columns. Supports two storage backends:
+///
+/// - **Blob (default):** all keys are read from a single forward index via `MapIndexReader`.
+///   Created with the single-arg constructor.
+/// - **Columnar (MAP index):** dense keys are materialized as independent virtual columns;
+///   sparse keys go into a catch-all JSON column. Created with the overloaded constructor
+///   that accepts materialized column DataSources.
+///
+/// The query layer interacts only with the `MapDataSource` interface and does not need to
+/// know which backend is in use.
 @SuppressWarnings("rawtypes")
 public class ImmutableMapDataSource extends BaseMapDataSource {
   private final MapIndexReader _mapIndexReader;
+  private final Map<String, DataSource> _materializedColumnDataSources;
+  private final DataSource _sparseDataSource;
 
+  /// Blob-only constructor — no materialized columns.
   public ImmutableMapDataSource(ColumnMetadata columnMetadata, ColumnIndexContainer columnIndexContainer) {
-    super(new ImmutableMapDataSourceMetadata(columnMetadata), columnIndexContainer);
+    this(columnMetadata, columnIndexContainer, null, null);
+  }
+
+  /// Columnar constructor — with materialized dense-key DataSources and optional sparse column.
+  public ImmutableMapDataSource(ColumnMetadata columnMetadata, ColumnIndexContainer indexContainer,
+      @Nullable Map<String, DataSource> materializedColumnDataSources, @Nullable DataSource sparseDataSource) {
+    super(new ImmutableMapDataSourceMetadata(columnMetadata), indexContainer);
+    _materializedColumnDataSources = materializedColumnDataSources;
+    _sparseDataSource = sparseDataSource;
+
     MapIndexReader mapIndexReader;
     ForwardIndexReader<?> forwardIndex = getForwardIndex();
     if (forwardIndex instanceof MapIndexReader) {
@@ -45,6 +70,10 @@ public class ImmutableMapDataSource extends BaseMapDataSource {
       mapIndexReader = new MapIndexReaderWrapper(forwardIndex, getFieldSpec(), columnMetadata.getTotalDocs());
     }
     _mapIndexReader = mapIndexReader;
+
+    if (materializedColumnDataSources != null) {
+      _keyDataSources.putAll(materializedColumnDataSources);
+    }
   }
 
   @Override
@@ -53,7 +82,32 @@ public class ImmutableMapDataSource extends BaseMapDataSource {
   }
 
   @Override
+  public boolean containsKey(String key) {
+    if (_materializedColumnDataSources != null) {
+      if (_materializedColumnDataSources.containsKey(key)) {
+        return true;
+      }
+      return _sparseDataSource != null;
+    }
+    return true;
+  }
+
+  @Override
+  public Map<String, DataSource> getDataSources() {
+    if (_materializedColumnDataSources != null) {
+      return new HashMap<>(_materializedColumnDataSources);
+    }
+    return super.getDataSources();
+  }
+
+  @Override
   public DataSourceMetadata getDataSourceMetadata(String key) {
+    if (_materializedColumnDataSources != null) {
+      DataSource ds = _materializedColumnDataSources.get(key);
+      if (ds != null) {
+        return ds.getDataSourceMetadata();
+      }
+    }
     return null;
   }
 
@@ -62,7 +116,7 @@ public class ImmutableMapDataSource extends BaseMapDataSource {
     return null;
   }
 
-  private static class ImmutableMapDataSourceMetadata implements DataSourceMetadata {
+  static class ImmutableMapDataSourceMetadata implements DataSourceMetadata {
     final FieldSpec _fieldSpec;
     final int _numDocs;
     final int _numValues;

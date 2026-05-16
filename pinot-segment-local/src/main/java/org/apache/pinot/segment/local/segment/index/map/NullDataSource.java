@@ -45,8 +45,8 @@ import org.apache.pinot.spi.data.FieldSpec;
 
 
 /**
- * If a key does not exist in a Map Column, then the Map Data Source will return this NulLDataSource.
- * The NullDataSource represents an INT column where every document has the Default Null Value.  Semantically,
+ * Returned by BaseMapDataSource.getDataSource() for absent keys.
+ * The NullDataSource represents an INT column where every document has the Default Null Value. Semantically,
  * this means that if a key is not in a Map column, then the value will always resolve to "Null".
  */
 public class NullDataSource implements DataSource {
@@ -144,8 +144,8 @@ public class NullDataSource implements DataSource {
     return getIndex(StandardIndexes.vector());
   }
 
-  public static class NullDataSourceMetadata implements DataSourceMetadata {
-    String _name;
+  static class NullDataSourceMetadata implements DataSourceMetadata {
+    private final String _name;
 
     NullDataSourceMetadata(String name) {
       _name = name;
@@ -206,7 +206,7 @@ public class NullDataSource implements DataSource {
     }
   }
 
-  public class NullForwardIndex implements ForwardIndexReader<ForwardIndexReaderContext> {
+  private static class NullForwardIndex implements ForwardIndexReader<ForwardIndexReaderContext> {
     NullForwardIndex() {
     }
 

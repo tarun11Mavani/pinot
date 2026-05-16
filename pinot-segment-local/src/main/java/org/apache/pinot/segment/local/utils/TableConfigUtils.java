@@ -95,6 +95,7 @@ import org.apache.pinot.spi.config.table.ingestion.TransformConfig;
 import org.apache.pinot.spi.data.DateTimeFieldSpec;
 import org.apache.pinot.spi.data.FieldSpec;
 import org.apache.pinot.spi.data.FieldSpec.DataType;
+import org.apache.pinot.spi.data.MapNaming;
 import org.apache.pinot.spi.data.Schema;
 import org.apache.pinot.spi.function.FunctionEvaluator;
 import org.apache.pinot.spi.ingestion.batch.BatchConfig;
@@ -1521,6 +1522,22 @@ public final class TableConfigUtils {
       FieldIndexConfigs indexConfigs = entry.getValue();
       for (IndexType<?, ?, ?> indexType : allIndexes) {
         indexType.validate(indexConfigs, fieldSpec, tableConfig);
+      }
+    }
+
+    // If any MAP column has MAP enabled, no user-declared column may contain the virtual-column
+    // separator '$'. Virtual columns (e.g. metrics$country) are synthesised at segment creation time;
+    // a pre-existing user column with that separator would collide with them. The check runs here (with
+    // full schema access) rather than in ColumnarMapIndexType.validate(), which only sees one field at a time.
+    // It also fires automatically on schema updates because SchemaUtils.validateCompatibilityWithTableConfig
+    // calls this method for every table that uses the schema.
+    boolean anyColumnarMapEnabled = indexConfigsMap.values().stream()
+        .anyMatch(c -> c.getConfig(StandardIndexes.map()).isEnabled());
+    if (anyColumnarMapEnabled) {
+      for (FieldSpec fieldSpec : schema.getAllFieldSpecs()) {
+        Preconditions.checkState(!MapNaming.isMaterializedMapColumn(fieldSpec.getName()),
+            "Cannot enable MAP: schema column '%s' contains reserved separator '%s'",
+            fieldSpec.getName(), MapNaming.SEPARATOR);
       }
     }
 

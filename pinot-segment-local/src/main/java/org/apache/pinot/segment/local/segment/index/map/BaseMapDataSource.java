@@ -22,6 +22,7 @@ package org.apache.pinot.segment.local.segment.index.map;
 import java.util.HashMap;
 import java.util.Map;
 import java.util.Set;
+import java.util.concurrent.ConcurrentHashMap;
 import javax.annotation.Nullable;
 import org.apache.pinot.segment.local.segment.index.datasource.BaseDataSource;
 import org.apache.pinot.segment.local.segment.index.datasource.ImmutableDataSource;
@@ -46,7 +47,7 @@ public abstract class BaseMapDataSource extends BaseDataSource implements MapDat
 
   public BaseMapDataSource(DataSourceMetadata dataSourceMetadata, ColumnIndexContainer indexContainer) {
     super(dataSourceMetadata, indexContainer);
-    _keyDataSources = new HashMap<>();
+    _keyDataSources = new ConcurrentHashMap<>();
   }
 
   /**
@@ -93,7 +94,7 @@ public abstract class BaseMapDataSource extends BaseDataSource implements MapDat
   public abstract MapIndexReader getMapIndexReader();
 
   public Map<String, DataSource> getDataSources() {
-    MapIndexReader mapIndexReader = (MapIndexReader) getForwardIndex();
+    MapIndexReader mapIndexReader = getMapIndexReader();
     assert mapIndexReader != null;
     Map<String, DataSource> keyDataSources = new HashMap<>();
     Set<String> allKeys = mapIndexReader.getKeys();
