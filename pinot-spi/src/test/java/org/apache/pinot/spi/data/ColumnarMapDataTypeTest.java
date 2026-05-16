@@ -26,59 +26,66 @@ import org.testng.annotations.Test;
 import static org.testng.Assert.assertEquals;
 import static org.testng.Assert.assertNotNull;
 import static org.testng.Assert.assertNull;
+import static org.testng.Assert.assertTrue;
 
 
 public class ColumnarMapDataTypeTest {
 
   @Test
-  public void testKeyTypesOnComplexFieldSpec() {
-    Map<String, DataType> keyTypes = Map.of("clicks", DataType.LONG, "country", DataType.STRING);
+  public void testValueFieldSpecsOnComplexFieldSpec() {
+    Map<String, FieldSpec> valueFieldSpecs = Map.of(
+        "clicks", new MetricFieldSpec("clicks", DataType.LONG),
+        "country", new DimensionFieldSpec("country", DataType.STRING, true));
     ComplexFieldSpec spec = new ComplexFieldSpec("metrics", DataType.MAP, true);
-    spec.setKeyTypes(keyTypes);
-    spec.setDefaultValueType(DataType.STRING);
+    spec.setValueFieldSpecs(valueFieldSpecs);
+    spec.setDefaultValueFieldSpec(new DimensionFieldSpec("default", DataType.STRING, true));
 
-    assertEquals(spec.getKeyTypes(), keyTypes);
-    assertEquals(spec.getDefaultValueType(), DataType.STRING);
+    assertEquals(spec.getValueFieldSpecs().get("clicks").getDataType(), DataType.LONG);
+    assertEquals(spec.getValueFieldSpecs().get("country").getDataType(), DataType.STRING);
+    assertEquals(spec.getDefaultValueFieldSpec().getDataType(), DataType.STRING);
   }
 
   @Test
-  public void testDefaultValueTypeDefaultsToNull() {
+  public void testDefaultValueFieldSpecDefaultsToNull() {
     ComplexFieldSpec spec = new ComplexFieldSpec("metrics", DataType.MAP, true);
-    assertNull(spec.getKeyTypes());
-    assertNull(spec.getDefaultValueType());
+    assertNull(spec.getValueFieldSpecs());
+    assertNull(spec.getDefaultValueFieldSpec());
   }
 
   @Test
-  public void testJsonRoundTripWithKeyTypes()
+  public void testJsonRoundTripWithValueFieldSpecs()
       throws Exception {
-    Map<String, DataType> keyTypes = Map.of("clicks", DataType.LONG, "country", DataType.STRING);
+    Map<String, FieldSpec> valueFieldSpecs = Map.of(
+        "clicks", new MetricFieldSpec("clicks", DataType.LONG),
+        "country", new DimensionFieldSpec("country", DataType.STRING, true));
 
     ComplexFieldSpec original = new ComplexFieldSpec("metrics", DataType.MAP, true);
-    original.setKeyTypes(keyTypes);
-    original.setDefaultValueType(DataType.STRING);
+    original.setValueFieldSpecs(valueFieldSpecs);
+    original.setDefaultValueFieldSpec(new DimensionFieldSpec("default", DataType.STRING, true));
 
     String json = original.toJsonObject().toString();
     ComplexFieldSpec deserialized = JsonUtils.stringToObject(json, ComplexFieldSpec.class);
 
-    assertNotNull(deserialized.getKeyTypes());
-    assertEquals(deserialized.getKeyTypes().get("clicks"), DataType.LONG);
-    assertEquals(deserialized.getKeyTypes().get("country"), DataType.STRING);
-    assertEquals(deserialized.getDefaultValueType(), DataType.STRING);
+    assertNotNull(deserialized.getValueFieldSpecs());
+    assertEquals(deserialized.getValueFieldSpecs().get("clicks").getDataType(), DataType.LONG);
+    assertEquals(deserialized.getValueFieldSpecs().get("country").getDataType(), DataType.STRING);
+    assertTrue(deserialized.getValueFieldSpecs().get("country").isSingleValueField());
+    assertEquals(deserialized.getDefaultValueFieldSpec().getDataType(), DataType.STRING);
   }
 
   @Test
-  public void testJsonRoundTripWithoutKeyTypes()
+  public void testJsonRoundTripWithoutValueFieldSpecs()
       throws Exception {
     ComplexFieldSpec original = new ComplexFieldSpec("metrics", DataType.MAP, true);
     String json = original.toJsonObject().toString();
     ComplexFieldSpec deserialized = JsonUtils.stringToObject(json, ComplexFieldSpec.class);
 
-    assertNull(deserialized.getKeyTypes());
-    assertNull(deserialized.getDefaultValueType());
+    assertNull(deserialized.getValueFieldSpecs());
+    assertNull(deserialized.getDefaultValueFieldSpec());
   }
 
   @Test
-  public void testSchemaWithKeyTypesRoundTrip()
+  public void testSchemaWithValueFieldSpecsRoundTrip()
       throws Exception {
     String schemaJson = "{\n"
         + "  \"schemaName\": \"testSchema\",\n"
@@ -86,8 +93,11 @@ public class ColumnarMapDataTypeTest {
         + "    {\n"
         + "      \"name\": \"metrics\",\n"
         + "      \"dataType\": \"MAP\",\n"
-        + "      \"keyTypes\": {\"clicks\": \"LONG\", \"country\": \"STRING\"},\n"
-        + "      \"defaultValueType\": \"STRING\"\n"
+        + "      \"valueFieldSpecs\": {\n"
+        + "        \"clicks\": {\"fieldType\": \"METRIC\", \"name\": \"clicks\", \"dataType\": \"LONG\"},\n"
+        + "        \"country\": {\"name\": \"country\", \"dataType\": \"STRING\"}\n"
+        + "      },\n"
+        + "      \"defaultValueFieldSpec\": {\"name\": \"default\", \"dataType\": \"STRING\"}\n"
         + "    }\n"
         + "  ]\n"
         + "}";
@@ -98,16 +108,18 @@ public class ColumnarMapDataTypeTest {
     assertEquals(fieldSpec.getDataType(), DataType.MAP);
 
     ComplexFieldSpec complexSpec = (ComplexFieldSpec) fieldSpec;
-    assertNotNull(complexSpec.getKeyTypes());
-    assertEquals(complexSpec.getKeyTypes().get("clicks"), DataType.LONG);
-    assertEquals(complexSpec.getKeyTypes().get("country"), DataType.STRING);
-    assertEquals(complexSpec.getDefaultValueType(), DataType.STRING);
+    assertNotNull(complexSpec.getValueFieldSpecs());
+    assertEquals(complexSpec.getValueFieldSpecs().get("clicks").getDataType(), DataType.LONG);
+    assertEquals(complexSpec.getValueFieldSpecs().get("clicks").getFieldType(), FieldSpec.FieldType.METRIC);
+    assertEquals(complexSpec.getValueFieldSpecs().get("country").getDataType(), DataType.STRING);
+    assertEquals(complexSpec.getValueFieldSpecs().get("country").getFieldType(), FieldSpec.FieldType.DIMENSION);
+    assertEquals(complexSpec.getDefaultValueFieldSpec().getDataType(), DataType.STRING);
 
     // Re-serialize and verify round-trip
     String reJson = schema.toJsonObject().toString();
     Schema reSchema = JsonUtils.stringToObject(reJson, Schema.class);
     ComplexFieldSpec reSpec = (ComplexFieldSpec) reSchema.getFieldSpecFor("metrics");
-    assertEquals(reSpec.getKeyTypes().get("clicks"), DataType.LONG);
-    assertEquals(reSpec.getDefaultValueType(), DataType.STRING);
+    assertEquals(reSpec.getValueFieldSpecs().get("clicks").getDataType(), DataType.LONG);
+    assertEquals(reSpec.getDefaultValueFieldSpec().getDataType(), DataType.STRING);
   }
 }

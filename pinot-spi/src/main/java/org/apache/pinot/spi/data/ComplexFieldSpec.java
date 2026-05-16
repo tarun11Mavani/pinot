@@ -60,11 +60,11 @@ public final class ComplexFieldSpec extends FieldSpec {
 
   private final Map<String, FieldSpec> _childFieldSpecs;
 
-  @JsonProperty("keyTypes")
-  private Map<String, DataType> _keyTypes;
+  @JsonProperty("valueFieldSpecs")
+  private Map<String, FieldSpec> _valueFieldSpecs;
 
-  @JsonProperty("defaultValueType")
-  private DataType _defaultValueType;
+  @JsonProperty("defaultValueFieldSpec")
+  private FieldSpec _defaultValueFieldSpec;
 
   // Default constructor required by JSON de-serializer
   public ComplexFieldSpec() {
@@ -98,21 +98,21 @@ public final class ComplexFieldSpec extends FieldSpec {
   }
 
   @Nullable
-  public Map<String, DataType> getKeyTypes() {
-    return _keyTypes;
+  public Map<String, FieldSpec> getValueFieldSpecs() {
+    return _valueFieldSpecs;
   }
 
-  public void setKeyTypes(@Nullable Map<String, DataType> keyTypes) {
-    _keyTypes = keyTypes;
+  public void setValueFieldSpecs(@Nullable Map<String, FieldSpec> valueFieldSpecs) {
+    _valueFieldSpecs = valueFieldSpecs;
   }
 
   @Nullable
-  public DataType getDefaultValueType() {
-    return _defaultValueType;
+  public FieldSpec getDefaultValueFieldSpec() {
+    return _defaultValueFieldSpec;
   }
 
-  public void setDefaultValueType(@Nullable DataType defaultValueType) {
-    _defaultValueType = defaultValueType;
+  public void setDefaultValueFieldSpec(@Nullable FieldSpec defaultValueFieldSpec) {
+    _defaultValueFieldSpec = defaultValueFieldSpec;
   }
 
   @JsonIgnore
@@ -131,8 +131,8 @@ public final class ComplexFieldSpec extends FieldSpec {
     private final String _fieldName;
     private final FieldSpec _keyFieldSpec;
     private final FieldSpec _valueFieldSpec;
-    private final Map<String, DataType> _keyTypes;
-    private final DataType _defaultValueType;
+    private final Map<String, FieldSpec> _valueFieldSpecs;
+    private final FieldSpec _defaultValueFieldSpec;
 
     private MapFieldSpec(ComplexFieldSpec complexFieldSpec) {
       _fieldName = complexFieldSpec.getName();
@@ -144,8 +144,8 @@ public final class ComplexFieldSpec extends FieldSpec {
         _keyFieldSpec = new DimensionFieldSpec(KEY_FIELD, DataType.STRING, true);
         _valueFieldSpec = new DimensionFieldSpec(VALUE_FIELD, DataType.STRING, true);
       }
-      _keyTypes = complexFieldSpec.getKeyTypes();
-      _defaultValueType = complexFieldSpec.getDefaultValueType();
+      _valueFieldSpecs = complexFieldSpec.getValueFieldSpecs();
+      _defaultValueFieldSpec = complexFieldSpec.getDefaultValueFieldSpec();
     }
 
     public String getFieldName() {
@@ -161,13 +161,13 @@ public final class ComplexFieldSpec extends FieldSpec {
     }
 
     @Nullable
-    public Map<String, DataType> getKeyTypes() {
-      return _keyTypes;
+    public Map<String, FieldSpec> getValueFieldSpecs() {
+      return _valueFieldSpecs;
     }
 
     @Nullable
-    public DataType getDefaultValueType() {
-      return _defaultValueType;
+    public FieldSpec getDefaultValueFieldSpec() {
+      return _defaultValueFieldSpec;
     }
   }
 
@@ -207,15 +207,15 @@ public final class ComplexFieldSpec extends FieldSpec {
       }
       jsonObject.put("childFieldSpecs", childFieldSpecsNode);
     }
-    if (_keyTypes != null && !_keyTypes.isEmpty()) {
-      ObjectNode keyTypesNode = JsonUtils.newObjectNode();
-      for (Map.Entry<String, DataType> entry : _keyTypes.entrySet()) {
-        keyTypesNode.put(entry.getKey(), entry.getValue().name());
+    if (_valueFieldSpecs != null && !_valueFieldSpecs.isEmpty()) {
+      ObjectNode valueFieldSpecsNode = JsonUtils.newObjectNode();
+      for (Map.Entry<String, FieldSpec> entry : _valueFieldSpecs.entrySet()) {
+        valueFieldSpecsNode.set(entry.getKey(), entry.getValue().toJsonObject());
       }
-      jsonObject.set("keyTypes", keyTypesNode);
+      jsonObject.set("valueFieldSpecs", valueFieldSpecsNode);
     }
-    if (_defaultValueType != null) {
-      jsonObject.put("defaultValueType", _defaultValueType.name());
+    if (_defaultValueFieldSpec != null) {
+      jsonObject.set("defaultValueFieldSpec", _defaultValueFieldSpec.toJsonObject());
     }
     return jsonObject;
   }
