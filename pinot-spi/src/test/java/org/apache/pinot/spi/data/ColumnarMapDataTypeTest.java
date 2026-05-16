@@ -97,7 +97,8 @@ public class ColumnarMapDataTypeTest {
         + "        \"clicks\": {\"fieldType\": \"METRIC\", \"name\": \"clicks\", \"dataType\": \"LONG\"},\n"
         + "        \"country\": {\"fieldType\": \"DIMENSION\", \"name\": \"country\", \"dataType\": \"STRING\"}\n"
         + "      },\n"
-        + "      \"defaultValueFieldSpec\": {\"fieldType\": \"DIMENSION\", \"name\": \"default\", \"dataType\": \"STRING\"}\n"
+        + "      \"defaultValueFieldSpec\": "
+        + "{\"fieldType\": \"DIMENSION\", \"name\": \"default\", \"dataType\": \"STRING\"}\n"
         + "    }\n"
         + "  ]\n"
         + "}";
