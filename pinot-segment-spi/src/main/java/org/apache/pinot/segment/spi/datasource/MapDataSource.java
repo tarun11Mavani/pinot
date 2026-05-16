@@ -33,13 +33,17 @@ public interface MapDataSource extends DataSource {
   /// Returns the DataSource for the given map key's values.
   DataSource getDataSource(String key);
 
-  /// Returns whether this segment MAY contain the given key. Implementations are allowed to return
-  /// `true` conservatively (i.e., when it is not possible to determine key presence without a
-  /// full scan). Callers must handle the case where the key is absent even when this returns
-  /// `true` — [#getDataSource(String)] will return a DataSource for an absent key
-  /// (forward-index reads return the column default value; null-value bitmap marks all rows as null).
-  default boolean mayContainKey(String key) {
-    return getDataSources().containsKey(key);
+  /// Returns whether this segment has per-key index data for the given key. Columnar segments
+  /// return an exact answer (O(1) lookup into the materialized key set). Blob-only segments
+  /// return {@code true} conservatively because determining key presence requires deserialization.
+  ///
+  /// <p>Query operators use this to choose between fast-path (per-key inverted/dictionary index)
+  /// and fallback (expression scan). When this returns {@code false}, callers can short-circuit:
+  /// e.g. {@code MapFilterOperator} returns {@code EmptyFilterOperator} for value predicates and
+  /// {@code MatchAllFilterOperator} for IS_NULL. When this returns {@code true}, callers should
+  /// still handle absent-key DataSources gracefully (null-value bitmap marks all rows as null).
+  default boolean containsKey(String key) {
+    return true;
   }
 
   /// Returns DataSources for all keys present in this segment.
