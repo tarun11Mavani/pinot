@@ -113,14 +113,13 @@ public class ColumnMetadataImplTest {
   @Test
   public void testVirtualColumnMetadataFromProperties() {
     PropertiesConfiguration props = new PropertiesConfiguration();
-    String column = "metrics$__tenancy";
+    String column = "metrics$tenancy";
     props.setProperty("column." + column + ".dataType", "STRING");
     props.setProperty("column." + column + ".columnType", "DIMENSION");
     props.setProperty("column." + column + ".isSingleValues", "true");
     props.setProperty("column." + column + ".cardinality", "47");
     props.setProperty("column." + column + ".hasDictionary", "true");
     props.setProperty("column." + column + ".bitsPerElement", "6");
-    props.setProperty("column." + column + ".mapMaterializedColumn", "true");
     props.setProperty("column." + column + ".parentMapColumn", "metrics");
 
     ColumnMetadataImpl metadata = ColumnMetadataImpl.fromPropertiesConfiguration(props, 5000000, column);
@@ -147,7 +146,7 @@ public class ColumnMetadataImplTest {
   @Test
   public void testVirtualColumnViaBuilder() {
     ColumnMetadataImpl metadata = ColumnMetadataImpl.builder()
-        .setFieldSpec(new DimensionFieldSpec("metrics$__tenancy", FieldSpec.DataType.STRING, true))
+        .setFieldSpec(new DimensionFieldSpec("metrics$tenancy", FieldSpec.DataType.STRING, true))
         .setTotalDocs(100)
         .setCardinality(5)
         .setParentMapColumn("metrics")

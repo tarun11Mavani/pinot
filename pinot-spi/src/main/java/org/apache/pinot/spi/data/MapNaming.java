@@ -20,10 +20,10 @@ package org.apache.pinot.spi.data;
 
 
 /// Naming convention for MAP materialized columns. Each dense MAP key is stored as
-/// a column named `<mapColumn>$__<key>`. Sparse keys share a single synthetic JSON column
-/// named `<mapColumn>$____sparse__`.
+/// a column named `<mapColumn>$<key>`. Sparse keys share a single synthetic JSON column
+/// named `<mapColumn>$__sparse__`.
 public final class MapNaming {
-  public static final String SEPARATOR = "$__";
+  public static final String SEPARATOR = "$";
   public static final String SPARSE_SUFFIX = "__sparse__";
 
   private MapNaming() {

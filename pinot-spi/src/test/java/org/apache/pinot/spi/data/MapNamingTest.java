@@ -29,39 +29,38 @@ public class MapNamingTest {
 
   @Test
   public void testMaterializedColumnName() {
-    assertEquals(MapNaming.materializedColumnName("metrics", "tenancy"), "metrics$__tenancy");
+    assertEquals(MapNaming.materializedColumnName("metrics", "tenancy"), "metrics$tenancy");
   }
 
   @Test
   public void testSparseColumnName() {
-    assertEquals(MapNaming.sparseColumnName("metrics"), "metrics$____sparse__");
+    assertEquals(MapNaming.sparseColumnName("metrics"), "metrics$__sparse__");
   }
 
   @Test
   public void testIsMaterializedMapColumn() {
-    assertTrue(MapNaming.isMaterializedMapColumn("metrics$__tenancy"));
-    assertTrue(MapNaming.isMaterializedMapColumn("metrics$____sparse__"));
+    assertTrue(MapNaming.isMaterializedMapColumn("metrics$tenancy"));
+    assertTrue(MapNaming.isMaterializedMapColumn("metrics$__sparse__"));
     assertFalse(MapNaming.isMaterializedMapColumn("metrics"));
     assertFalse(MapNaming.isMaterializedMapColumn("normal_column"));
-    assertFalse(MapNaming.isMaterializedMapColumn("metrics$$tenancy"));
   }
 
   @Test
   public void testParseMapColumn() {
-    assertEquals(MapNaming.parseMapColumn("metrics$__tenancy"), "metrics");
-    assertEquals(MapNaming.parseMapColumn("m__data$__key$__nested"), "m__data");
+    assertEquals(MapNaming.parseMapColumn("metrics$tenancy"), "metrics");
+    assertEquals(MapNaming.parseMapColumn("m__data$key$nested"), "m__data");
   }
 
   @Test
   public void testParseKey() {
-    assertEquals(MapNaming.parseKey("metrics$__tenancy"), "tenancy");
-    assertEquals(MapNaming.parseKey("metrics$____sparse__"), "__sparse__");
+    assertEquals(MapNaming.parseKey("metrics$tenancy"), "tenancy");
+    assertEquals(MapNaming.parseKey("metrics$__sparse__"), "__sparse__");
   }
 
   @Test
   public void testIsSparseColumn() {
-    assertTrue(MapNaming.isSparseColumn("metrics$____sparse__"));
-    assertFalse(MapNaming.isSparseColumn("metrics$__tenancy"));
+    assertTrue(MapNaming.isSparseColumn("metrics$__sparse__"));
+    assertFalse(MapNaming.isSparseColumn("metrics$tenancy"));
   }
 
   @Test
