@@ -71,24 +71,6 @@ public class FieldConfig extends BaseJsonConfig {
   public static final String TEXT_INDEX_LUCENE_NRT_CACHING_DIRECTORY_BUFFER_SIZE =
       "luceneNRTCachingDirectoryMaxBufferSizeMB";
 
-  /// MAP index property keys, passed via `FieldConfig.properties`.
-  /// See `MapIndexConfig` for semantics.
-
-  /// Maximum number of MAP keys to materialise as dense columns (default 1000).
-  public static final String MAP_INDEX_MAX_DENSE_KEYS = "maxDenseKeys";
-  /// Comma-separated explicit list of dense key names (always materialised regardless of fill rate).
-  public static final String MAP_INDEX_DENSE_KEYS = "denseKeys";
-  /// Minimum fill rate [0.0, 1.0] for a key to be auto-promoted to dense (default 0.5).
-  public static final String MAP_INDEX_DENSE_KEY_MIN_FILL_RATE = "denseKeyMinFillRate";
-  /// Comma-separated keys that get a per-key inverted index (union with enableInvertedIndexForDense).
-  public static final String MAP_INDEX_INVERTED_INDEX_KEYS = "invertedIndexKeys";
-  /// Comma-separated keys that are always stored raw (no dictionary), overriding global settings.
-  public static final String MAP_INDEX_NO_DICTIONARY_KEYS = "noDictionaryKeys";
-  /// When true, every dense key gets an inverted index regardless of invertedIndexKeys.
-  public static final String MAP_INDEX_ENABLE_INVERTED_FOR_DENSE = "enableInvertedIndexForDense";
-  /// Separator character used when parsing comma-separated key lists above.
-  public static final String MAP_INDEX_KEY_SEPARATOR = ",";
-
   private final String _name;
   private final EncodingType _encodingType;
   private final List<IndexType> _indexTypes;

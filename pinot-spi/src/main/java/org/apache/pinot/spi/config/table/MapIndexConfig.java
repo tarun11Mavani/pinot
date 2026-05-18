@@ -20,7 +20,9 @@ package org.apache.pinot.spi.config.table;
 
 import com.fasterxml.jackson.annotation.JsonCreator;
 import com.fasterxml.jackson.annotation.JsonProperty;
-import java.util.HashSet;
+import com.fasterxml.jackson.databind.JsonNode;
+import java.util.HashMap;
+import java.util.List;
 import java.util.Map;
 import java.util.Set;
 import javax.annotation.Nullable;
@@ -35,98 +37,59 @@ import javax.annotation.Nullable;
 /// **maxDenseKeys cutoff:** when more keys qualify as dense than `maxDenseKeys` allows, the top
 /// `maxDenseKeys` keys ranked by fill rate are materialized; the rest fall back to the sparse
 /// column. Use `denseKeys` to pin specific keys regardless of fill rate ranking.
+///
+/// **Per-key index settings** are specified via `valueFieldConfigs` — each entry is a standard
+/// [FieldConfig] (modern `indexes` format) for one materialized MAP key. Keys without an entry
+/// use defaults: DICTIONARY encoding and no per-key inverted index unless
+/// `enableInvertedIndexForDense` is `true`.
 public class MapIndexConfig extends IndexConfig {
   public static final MapIndexConfig DISABLED = new MapIndexConfig(false);
   public static final MapIndexConfig DEFAULT = new MapIndexConfig(true);
 
   public static final double DEFAULT_DENSE_KEY_MIN_FILL_RATE = 0.5;
+  public static final int DEFAULT_MAX_DENSE_KEYS = 1000;
+  private static final String INVERTED_INDEX_KEY = "inverted";
 
   private final boolean _enableInvertedIndexForDense;
-  private final Set<String> _invertedIndexKeys;
-  private final Set<String> _noDictionaryKeys;
   private final int _maxDenseKeys;
   private final Set<String> _denseKeys;
   private final double _denseKeyMinFillRate;
-
-  public static MapIndexConfig fromProperties(@Nullable Map<String, String> properties) {
-    if (properties == null || properties.isEmpty()) {
-      return DEFAULT;
-    }
-    int maxDenseKeys = Integer.parseInt(
-        properties.getOrDefault(FieldConfig.MAP_INDEX_MAX_DENSE_KEYS, "1000"));
-    Set<String> invertedIndexKeys = parseCommaSeparated(
-        properties.get(FieldConfig.MAP_INDEX_INVERTED_INDEX_KEYS));
-    Set<String> noDictionaryKeys = parseCommaSeparated(
-        properties.get(FieldConfig.MAP_INDEX_NO_DICTIONARY_KEYS));
-    boolean enableInvertedForDense = Boolean.parseBoolean(
-        properties.getOrDefault(FieldConfig.MAP_INDEX_ENABLE_INVERTED_FOR_DENSE, "false"));
-    Set<String> denseKeys = parseCommaSeparated(
-        properties.get(FieldConfig.MAP_INDEX_DENSE_KEYS));
-    double denseKeyMinFillRate = Double.parseDouble(
-        properties.getOrDefault(FieldConfig.MAP_INDEX_DENSE_KEY_MIN_FILL_RATE,
-            String.valueOf(DEFAULT_DENSE_KEY_MIN_FILL_RATE)));
-    return new MapIndexConfig(false, enableInvertedForDense, invertedIndexKeys, noDictionaryKeys, maxDenseKeys,
-        denseKeys, denseKeyMinFillRate);
-  }
-
-  @Nullable
-  private static Set<String> parseCommaSeparated(@Nullable String value) {
-    if (value == null || value.trim().isEmpty()) {
-      return null;
-    }
-    Set<String> result = new HashSet<>();
-    for (String part : value.split(FieldConfig.MAP_INDEX_KEY_SEPARATOR)) {
-      String trimmed = part.trim();
-      if (!trimmed.isEmpty()) {
-        result.add(trimmed);
-      }
-    }
-    return result.isEmpty() ? null : result;
-  }
+  private final List<FieldConfig> _valueFieldConfigs;
+  // Eager lookup from key name → FieldConfig for O(1) per-key access. Built in constructor
+  // so the config is fully immutable and safe to share across threads.
+  private final Map<String, FieldConfig> _valueFieldConfigIndex;
 
   public MapIndexConfig(boolean enabled) {
-    this(!enabled, false, null, null, 1000, null, DEFAULT_DENSE_KEY_MIN_FILL_RATE);
+    this(!enabled, false, DEFAULT_MAX_DENSE_KEYS, null, DEFAULT_DENSE_KEY_MIN_FILL_RATE, null);
   }
 
   @JsonCreator
   public MapIndexConfig(
       @JsonProperty("disabled") Boolean disabled,
       @JsonProperty("enableInvertedIndexForDense") boolean enableInvertedIndexForDense,
-      @JsonProperty("invertedIndexKeys") @Nullable Set<String> invertedIndexKeys,
-      @JsonProperty("noDictionaryKeys") @Nullable Set<String> noDictionaryKeys,
       @JsonProperty("maxDenseKeys") int maxDenseKeys,
       @JsonProperty("denseKeys") @Nullable Set<String> denseKeys,
-      @JsonProperty("denseKeyMinFillRate") double denseKeyMinFillRate) {
+      @JsonProperty("denseKeyMinFillRate") double denseKeyMinFillRate,
+      @JsonProperty("valueFieldConfigs") @Nullable List<FieldConfig> valueFieldConfigs) {
     super(disabled);
     _enableInvertedIndexForDense = enableInvertedIndexForDense;
-    _invertedIndexKeys = invertedIndexKeys;
-    _noDictionaryKeys = noDictionaryKeys;
-    _maxDenseKeys = maxDenseKeys > 0 ? maxDenseKeys : 1000;
+    _maxDenseKeys = maxDenseKeys > 0 ? maxDenseKeys : DEFAULT_MAX_DENSE_KEYS;
     _denseKeys = denseKeys;
     _denseKeyMinFillRate = denseKeyMinFillRate >= 0 ? denseKeyMinFillRate : DEFAULT_DENSE_KEY_MIN_FILL_RATE;
+    _valueFieldConfigs = valueFieldConfigs;
+    if (valueFieldConfigs == null || valueFieldConfigs.isEmpty()) {
+      _valueFieldConfigIndex = Map.of();
+    } else {
+      Map<String, FieldConfig> index = new HashMap<>(valueFieldConfigs.size());
+      for (FieldConfig fc : valueFieldConfigs) {
+        index.put(fc.getName(), fc);
+      }
+      _valueFieldConfigIndex = index;
+    }
   }
 
   public boolean isEnableInvertedIndexForDense() {
     return _enableInvertedIndexForDense;
-  }
-
-  @Nullable
-  public Set<String> getInvertedIndexKeys() {
-    return _invertedIndexKeys;
-  }
-
-  public boolean shouldEnableInvertedIndexForKey(String key) {
-    return _enableInvertedIndexForDense
-        || (_invertedIndexKeys != null && _invertedIndexKeys.contains(key));
-  }
-
-  @Nullable
-  public Set<String> getNoDictionaryKeys() {
-    return _noDictionaryKeys;
-  }
-
-  public boolean shouldUseDictionaryForKey(String key) {
-    return _noDictionaryKeys == null || !_noDictionaryKeys.contains(key);
   }
 
   /// Maximum number of MAP keys to materialise as dense columns. Default: 1000.
@@ -146,5 +109,44 @@ public class MapIndexConfig extends IndexConfig {
 
   public boolean isDenseKey(String key) {
     return _denseKeys != null && _denseKeys.contains(key);
+  }
+
+  /// Per-key index settings. Each entry is a standard [FieldConfig] whose `name` matches a MAP
+  /// key name. Keys without an entry use defaults (DICTIONARY encoding, no per-key inverted
+  /// index unless `enableInvertedIndexForDense` is `true`).
+  @Nullable
+  public List<FieldConfig> getValueFieldConfigs() {
+    return _valueFieldConfigs;
+  }
+
+  /// Returns the [FieldConfig] for the given key, or null if none was configured.
+  @Nullable
+  public FieldConfig getValueFieldConfig(String key) {
+    return _valueFieldConfigIndex.get(key);
+  }
+
+  /// `true` if the given key should be built with an inverted index. The global
+  /// `enableInvertedIndexForDense` flag wins if set; otherwise the per-key [FieldConfig]'s
+  /// `indexes.inverted` decides.
+  public boolean shouldEnableInvertedIndexForKey(String key) {
+    if (_enableInvertedIndexForDense) {
+      return true;
+    }
+    FieldConfig keyConfig = getValueFieldConfig(key);
+    if (keyConfig == null) {
+      return false;
+    }
+    JsonNode indexes = keyConfig.getIndexes();
+    return indexes != null && indexes.isObject() && indexes.has(INVERTED_INDEX_KEY);
+  }
+
+  /// `true` if the given key should be dictionary-encoded. Defaults to `true` (dictionary) when
+  /// no per-key [FieldConfig] is set or when its `encodingType` is null/DICTIONARY.
+  public boolean shouldUseDictionaryForKey(String key) {
+    FieldConfig keyConfig = getValueFieldConfig(key);
+    if (keyConfig == null) {
+      return true;
+    }
+    return keyConfig.getEncodingType() != FieldConfig.EncodingType.RAW;
   }
 }
