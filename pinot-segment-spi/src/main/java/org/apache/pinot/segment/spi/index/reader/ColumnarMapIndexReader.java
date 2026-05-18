@@ -62,8 +62,9 @@ public interface ColumnarMapIndexReader extends IndexReader {
     return false;
   }
 
-  /// Returns sorted distinct values for the key from the inverted index, or null if no
-  /// inverted index is available (or the key is not indexed).
+  /// Returns sorted distinct values for the key, or null if not available. Implementations may
+  /// source this from the dictionary (when the key has one) or any equivalent structure. Used by
+  /// callers that need to enumerate the value domain (e.g., immutable segment dictionary build).
   @Nullable
   default String[] getDistinctValuesForKey(String key) {
     return null;
