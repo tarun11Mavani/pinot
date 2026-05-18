@@ -35,12 +35,12 @@ public interface MapDataSource extends DataSource {
 
   /// Returns whether this segment has per-key index data for the given key. Columnar segments
   /// return an exact answer (O(1) lookup into the materialized key set). Blob-only segments
-  /// return {@code true} conservatively because determining key presence requires deserialization.
+  /// return `true` conservatively because determining key presence requires deserialization.
   ///
-  /// <p>Query operators use this to choose between fast-path (per-key inverted/dictionary index)
-  /// and fallback (expression scan). When this returns {@code false}, callers can short-circuit:
-  /// e.g. {@code MapFilterOperator} returns {@code EmptyFilterOperator} for value predicates and
-  /// {@code MatchAllFilterOperator} for IS_NULL. When this returns {@code true}, callers should
+  /// Query operators use this to choose between fast-path (per-key inverted/dictionary index)
+  /// and fallback (expression scan). When this returns `false`, callers can short-circuit:
+  /// e.g. `MapFilterOperator` returns `EmptyFilterOperator` for value predicates and
+  /// `MatchAllFilterOperator` for IS_NULL. When this returns `true`, callers should
   /// still handle absent-key DataSources gracefully (null-value bitmap marks all rows as null).
   default boolean containsKey(String key) {
     return true;
