@@ -22,6 +22,14 @@ package org.apache.pinot.spi.data;
 /// Naming convention for MAP materialized columns. Each dense MAP key is stored as
 /// a column named `<mapColumn>$<key>`. Sparse keys share a single synthetic JSON column
 /// named `<mapColumn>$__sparse__`.
+///
+/// **Caller contract:** all parsing and classification helpers (`isMaterializedMapColumn`,
+/// `parseMapColumn`, `parseKey`, `isSparseColumn`) assume the column name comes from a
+/// schema where the MAP index has been validated. `TableConfigUtils.validate()` rejects
+/// `$` in user-defined column names when the MAP index is enabled, which guarantees that
+/// the first `$` in a column name is the map/key separator. Calling these helpers on
+/// arbitrary column names — including from MAP-disabled tables — may misclassify or
+/// mis-parse names that legally contain `$`.
 public final class MapNaming {
   public static final String SEPARATOR = "$";
   public static final String SPARSE_SUFFIX = "__sparse__";
@@ -37,6 +45,9 @@ public final class MapNaming {
     return mapColumn + SEPARATOR + SPARSE_SUFFIX;
   }
 
+  /// Returns `true` if the column name follows the materialized-MAP shape `<mapColumn>$<key>`.
+  /// **Only meaningful when called on columns from a MAP-validated schema** — see the class-level
+  /// caller contract.
   public static boolean isMaterializedMapColumn(String columnName) {
     return columnName.contains(SEPARATOR);
   }
@@ -45,11 +56,17 @@ public final class MapNaming {
     return columnName.endsWith(SEPARATOR + SPARSE_SUFFIX);
   }
 
+  /// Returns the parent MAP column name from a materialized column. Result is the original
+  /// string when no `$` is present. **Caller must verify `isMaterializedMapColumn(name)` first**
+  /// when operating on arbitrary column names; see the class-level caller contract.
   public static String parseMapColumn(String materializedColumnName) {
     int idx = materializedColumnName.indexOf(SEPARATOR);
     return idx >= 0 ? materializedColumnName.substring(0, idx) : materializedColumnName;
   }
 
+  /// Returns the MAP key from a materialized column. Result is the original string when no
+  /// `$` is present. **Caller must verify `isMaterializedMapColumn(name)` first** when operating
+  /// on arbitrary column names; see the class-level caller contract.
   public static String parseKey(String materializedColumnName) {
     int idx = materializedColumnName.indexOf(SEPARATOR);
     return idx >= 0 ? materializedColumnName.substring(idx + SEPARATOR.length()) : materializedColumnName;
