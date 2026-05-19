@@ -89,6 +89,18 @@ public class MapIndexConfigTest {
   }
 
   @Test
+  public void testShouldEnableInvertedIndexForKeyHonorsDisabledFlag()
+      throws Exception {
+    FieldConfig country = JsonUtils.stringToObject(
+        "{\"name\":\"country\",\"indexes\":{\"inverted\":{\"disabled\":true}}}", FieldConfig.class);
+    FieldConfig clicks = JsonUtils.stringToObject(
+        "{\"name\":\"clicks\",\"indexes\":{\"inverted\":{\"disabled\":false}}}", FieldConfig.class);
+    MapIndexConfig config = new MapIndexConfig(false, false, 1000, null, 0.5, List.of(country, clicks));
+    assertFalse(config.shouldEnableInvertedIndexForKey("country"));
+    assertTrue(config.shouldEnableInvertedIndexForKey("clicks"));
+  }
+
+  @Test
   public void testShouldUseDictionaryForKeyHardOverride() {
     FieldConfig blob =
         new FieldConfig("blob", FieldConfig.EncodingType.RAW, (List<FieldConfig.IndexType>) null, null, null);

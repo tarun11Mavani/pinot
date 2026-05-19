@@ -21,11 +21,14 @@ package org.apache.pinot.spi.config.table;
 import com.fasterxml.jackson.annotation.JsonCreator;
 import com.fasterxml.jackson.annotation.JsonProperty;
 import com.fasterxml.jackson.databind.JsonNode;
+import java.io.IOException;
+import java.io.UncheckedIOException;
 import java.util.HashMap;
 import java.util.List;
 import java.util.Map;
 import java.util.Set;
 import javax.annotation.Nullable;
+import org.apache.pinot.spi.utils.JsonUtils;
 
 
 /// Configuration for the MAP index on a MAP column.
@@ -127,7 +130,7 @@ public class MapIndexConfig extends IndexConfig {
 
   /// `true` if the given key should be built with an inverted index. The global
   /// `enableInvertedIndexForDense` flag wins if set; otherwise the per-key [FieldConfig]'s
-  /// `indexes.inverted` decides.
+  /// `indexes.inverted` decides, respecting its `disabled` flag.
   public boolean shouldEnableInvertedIndexForKey(String key) {
     if (_enableInvertedIndexForDense) {
       return true;
@@ -137,7 +140,19 @@ public class MapIndexConfig extends IndexConfig {
       return false;
     }
     JsonNode indexes = keyConfig.getIndexes();
-    return indexes != null && indexes.isObject() && indexes.has(INVERTED_INDEX_KEY);
+    if (indexes == null || !indexes.isObject()) {
+      return false;
+    }
+    JsonNode inverted = indexes.get(INVERTED_INDEX_KEY);
+    if (inverted == null) {
+      return false;
+    }
+    try {
+      return JsonUtils.jsonNodeToObject(inverted, IndexConfig.class).isEnabled();
+    } catch (IOException e) {
+      throw new UncheckedIOException(
+          "Failed to parse inverted index config for MAP key '" + key + "'", e);
+    }
   }
 
   /// `true` if the given key should be dictionary-encoded. Defaults to `true` (dictionary) when
