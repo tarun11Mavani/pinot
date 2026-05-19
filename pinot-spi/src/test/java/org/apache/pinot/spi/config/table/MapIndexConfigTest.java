@@ -178,4 +178,24 @@ public class MapIndexConfigTest {
     MapIndexConfig config = JsonUtils.stringToObject(json, MapIndexConfig.class);
     assertFalse(config.isEnabled());
   }
+
+  @Test
+  public void testEmptyJsonDefaults()
+      throws Exception {
+    MapIndexConfig config = JsonUtils.stringToObject("{}", MapIndexConfig.class);
+    assertTrue(config.isEnabled());
+    assertEquals(config.getMaxDenseKeys(), MapIndexConfig.DEFAULT_MAX_DENSE_KEYS);
+    assertEquals(config.getDenseKeyMinFillRate(), MapIndexConfig.DEFAULT_DENSE_KEY_MIN_FILL_RATE);
+    assertTrue(config.getDenseKeys().isEmpty());
+    assertNull(config.getValueFieldConfigs());
+    assertFalse(config.isEnableInvertedIndexForDense());
+  }
+
+  @Test
+  public void testPartialJsonRetainsDefaultFillRate()
+      throws Exception {
+    MapIndexConfig config = JsonUtils.stringToObject("{\"maxDenseKeys\": 500}", MapIndexConfig.class);
+    assertEquals(config.getMaxDenseKeys(), 500);
+    assertEquals(config.getDenseKeyMinFillRate(), MapIndexConfig.DEFAULT_DENSE_KEY_MIN_FILL_RATE);
+  }
 }

@@ -69,13 +69,13 @@ public class MapIndexConfig extends IndexConfig {
       @JsonProperty("enableInvertedIndexForDense") boolean enableInvertedIndexForDense,
       @JsonProperty("maxDenseKeys") int maxDenseKeys,
       @JsonProperty("denseKeys") @Nullable Set<String> denseKeys,
-      @JsonProperty("denseKeyMinFillRate") double denseKeyMinFillRate,
+      @JsonProperty("denseKeyMinFillRate") @Nullable Double denseKeyMinFillRate,
       @JsonProperty("valueFieldConfigs") @Nullable List<FieldConfig> valueFieldConfigs) {
     super(disabled);
     _enableInvertedIndexForDense = enableInvertedIndexForDense;
     _maxDenseKeys = maxDenseKeys > 0 ? maxDenseKeys : DEFAULT_MAX_DENSE_KEYS;
     _denseKeys = denseKeys;
-    _denseKeyMinFillRate = denseKeyMinFillRate >= 0 ? denseKeyMinFillRate : DEFAULT_DENSE_KEY_MIN_FILL_RATE;
+    _denseKeyMinFillRate = denseKeyMinFillRate != null ? denseKeyMinFillRate : DEFAULT_DENSE_KEY_MIN_FILL_RATE;
     _valueFieldConfigs = valueFieldConfigs;
     if (valueFieldConfigs == null || valueFieldConfigs.isEmpty()) {
       _valueFieldConfigIndex = Map.of();
