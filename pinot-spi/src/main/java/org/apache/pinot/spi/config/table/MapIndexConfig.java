@@ -51,8 +51,7 @@ public class MapIndexConfig extends IndexConfig {
   public static final MapIndexConfig DEFAULT = new MapIndexConfig(true);
 
   public static final double DEFAULT_DENSE_KEY_MIN_FILL_RATE = 0.5;
-  /// Default `maxDenseKeys`. `0` means unlimited (Pinot convention: non-positive = no limit,
-  /// matching `JsonIndexConfig.maxLevels`).
+  /// Default `maxDenseKeys`. `0` means unlimited.
   public static final int DEFAULT_MAX_DENSE_KEYS = 0;
   private static final String INVERTED_INDEX_KEY = "inverted";
 
