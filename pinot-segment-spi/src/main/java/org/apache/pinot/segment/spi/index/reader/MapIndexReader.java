@@ -25,21 +25,11 @@ import org.apache.pinot.segment.spi.index.IndexReader;
 import org.apache.pinot.segment.spi.index.IndexType;
 
 
-/// Reader SPI for a MAP column. A single implementation handles blob-backed MAP storage
-/// (via `MapIndexReaderWrapper`) and columnar MAP storage (per-key materialized columns
-/// + optional sparse JSON tier), including the mixed-tier case where some keys are
-/// materialized and others remain in the sparse blob.
-///
-/// Callers should not need to know how a given key is stored: `getKeys()` returns the
-/// union of all keys, and `getDataSource(key)` on the surrounding `MapDataSource`
-/// resolves the right backing storage. This interface is the only reader SPI for MAP
-/// columns; columnar implementations expose any extra per-key primitives (e.g. presence
-/// bitmaps, distinct values) as concrete-class methods, not SPI.
-///
-/// Implementations must be safe for concurrent reads. Mutable implementations may impose
-/// a single-writer constraint; refer to the concrete implementation's Javadoc for details.
-///
-/// @param <T> Type of the ReaderContext
+/**
+ * Interface for reading from the Mutable Map Index.
+ *
+ * @param <T> Type of the ReaderContext
+ */
 @SuppressWarnings("rawtypes")
 public interface MapIndexReader<T extends ForwardIndexReaderContext> extends ForwardIndexReader<T> {
 
