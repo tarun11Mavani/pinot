@@ -39,7 +39,8 @@ import org.apache.pinot.spi.utils.JsonUtils;
 ///
 /// **maxDenseKeys cutoff:** when more keys qualify as dense than `maxDenseKeys` allows, the top
 /// `maxDenseKeys` keys ranked by fill rate are materialized; the rest fall back to the sparse
-/// column. Use `denseKeys` to pin specific keys regardless of fill rate ranking.
+/// column. A non-positive value (default `0`) means unlimited — every qualifying key is
+/// materialized. Use `denseKeys` to pin specific keys regardless of fill rate ranking.
 ///
 /// **Per-key index settings** are specified via `valueFieldConfigs` — each entry is a standard
 /// [FieldConfig] (modern `indexes` format) for one materialized MAP key. Keys without an entry
@@ -50,7 +51,9 @@ public class MapIndexConfig extends IndexConfig {
   public static final MapIndexConfig DEFAULT = new MapIndexConfig(true);
 
   public static final double DEFAULT_DENSE_KEY_MIN_FILL_RATE = 0.5;
-  public static final int DEFAULT_MAX_DENSE_KEYS = 1000;
+  /// Default `maxDenseKeys`. `0` means unlimited (Pinot convention: non-positive = no limit,
+  /// matching `JsonIndexConfig.maxLevels`).
+  public static final int DEFAULT_MAX_DENSE_KEYS = 0;
   private static final String INVERTED_INDEX_KEY = "inverted";
 
   private final boolean _enableInvertedIndexForDense;
@@ -76,7 +79,7 @@ public class MapIndexConfig extends IndexConfig {
       @JsonProperty("valueFieldConfigs") @Nullable List<FieldConfig> valueFieldConfigs) {
     super(disabled);
     _enableInvertedIndexForDense = enableInvertedIndexForDense;
-    _maxDenseKeys = maxDenseKeys > 0 ? maxDenseKeys : DEFAULT_MAX_DENSE_KEYS;
+    _maxDenseKeys = maxDenseKeys;
     _denseKeys = denseKeys;
     _denseKeyMinFillRate = denseKeyMinFillRate != null ? denseKeyMinFillRate : DEFAULT_DENSE_KEY_MIN_FILL_RATE;
     _valueFieldConfigs = valueFieldConfigs;
@@ -95,9 +98,10 @@ public class MapIndexConfig extends IndexConfig {
     return _enableInvertedIndexForDense;
   }
 
-  /// Maximum number of MAP keys to materialise as dense columns. Default: 1000.
-  /// When more keys qualify as dense, the top `maxDenseKeys` by fill rate are materialized;
-  /// the rest fall back to the sparse MAP column.
+  /// Maximum number of MAP keys to materialise as dense columns. Non-positive (default `0`)
+  /// means unlimited — every key qualifying as dense is materialized. When positive and more
+  /// keys qualify, the top `maxDenseKeys` by fill rate are materialized; the rest fall back to
+  /// the sparse MAP column.
   public int getMaxDenseKeys() {
     return _maxDenseKeys;
   }

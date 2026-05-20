@@ -36,7 +36,7 @@ public class MapIndexConfigTest {
   public void testDefaultConfig() {
     MapIndexConfig config = MapIndexConfig.DEFAULT;
     assertTrue(config.isEnabled());
-    assertEquals(config.getMaxDenseKeys(), 1000);
+    assertEquals(config.getMaxDenseKeys(), 0);
     assertEquals(config.getDenseKeyMinFillRate(), 0.5);
     assertTrue(config.getDenseKeys().isEmpty());
     assertNull(config.getValueFieldConfigs());
