@@ -33,9 +33,16 @@ public interface MapDataSource extends DataSource {
   /// Returns the DataSource for the given map key's values.
   DataSource getDataSource(String key);
 
-  /// Returns whether this segment has per-key index data for the given key. Columnar segments
-  /// return an exact answer (O(1) lookup into the materialized key set). Blob-only segments
-  /// return `true` conservatively because determining key presence requires deserialization.
+  /// Returns whether this segment has per-key index data for the given key.
+  ///
+  /// - **All-dense columnar segments:** exact (O(1) lookup into the materialized key set).
+  /// - **Mixed-tier columnar segments (dense + sparse):** exact for materialized keys; for any
+  ///   non-materialized key, returns `true` whenever a sparse blob exists (conservative — the
+  ///   sparse key set is not persisted today). Cost of the conservative answer is bounded:
+  ///   queries on truly-absent keys pay one wasted `getDataSource(key)` lookup, then fall
+  ///   through to expression-filter (which returns no matches via a full scan).
+  /// - **Blob-only segments:** `true` conservatively because determining key presence requires
+  ///   per-doc deserialization.
   ///
   /// Query operators use this to choose between fast-path (per-key inverted/dictionary index)
   /// and fallback (expression scan). When this returns `false`, callers can short-circuit:
