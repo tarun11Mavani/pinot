@@ -32,12 +32,12 @@ import org.apache.pinot.segment.spi.index.creator.TextIndexCreator;
 import org.apache.pinot.segment.spi.index.creator.VectorIndexConfig;
 import org.apache.pinot.segment.spi.index.creator.VectorIndexCreator;
 import org.apache.pinot.segment.spi.index.reader.BloomFilterReader;
-import org.apache.pinot.segment.spi.index.reader.ColumnarMapIndexReader;
 import org.apache.pinot.segment.spi.index.reader.Dictionary;
 import org.apache.pinot.segment.spi.index.reader.ForwardIndexReader;
 import org.apache.pinot.segment.spi.index.reader.H3IndexReader;
 import org.apache.pinot.segment.spi.index.reader.InvertedIndexReader;
 import org.apache.pinot.segment.spi.index.reader.JsonIndexReader;
+import org.apache.pinot.segment.spi.index.reader.MapIndexReader;
 import org.apache.pinot.segment.spi.index.reader.NullValueVectorReader;
 import org.apache.pinot.segment.spi.index.reader.RangeIndexReader;
 import org.apache.pinot.segment.spi.index.reader.TextIndexReader;
@@ -147,10 +147,14 @@ public class StandardIndexes {
         IndexService.getInstance().get(VECTOR_ID);
   }
 
-  /// Returns the MAP index type, which materializes MAP column keys as virtual columns.
-  @SuppressWarnings("unchecked")
-  public static IndexType<MapIndexConfig, ColumnarMapIndexReader, ColumnarMapIndexCreator> map() {
-    return (IndexType<MapIndexConfig, ColumnarMapIndexReader, ColumnarMapIndexCreator>)
+  /// Returns the MAP index type. A single `MapIndexReader` implementation handles all
+  /// access patterns for a MAP column (dense materialized keys, sparse blob tier, or a mix).
+  /// The plugin registration that makes this helper resolve lives in pinot-segment-local
+  /// (`ColumnarMapIndexPlugin`); calling this from a build that does not include
+  /// pinot-segment-local will throw `IllegalArgumentException: Unknown index id: map_index`.
+  @SuppressWarnings({"unchecked", "rawtypes"})
+  public static IndexType<MapIndexConfig, MapIndexReader, ColumnarMapIndexCreator> map() {
+    return (IndexType<MapIndexConfig, MapIndexReader, ColumnarMapIndexCreator>)
         IndexService.getInstance().get(MAP_ID);
   }
 }
