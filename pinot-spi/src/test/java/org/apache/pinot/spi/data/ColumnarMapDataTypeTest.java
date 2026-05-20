@@ -36,9 +36,8 @@ public class ColumnarMapDataTypeTest {
     Map<String, FieldSpec> valueFieldSpecs = Map.of(
         "clicks", new MetricFieldSpec("clicks", DataType.LONG),
         "country", new DimensionFieldSpec("country", DataType.STRING, true));
-    ComplexFieldSpec spec = new ComplexFieldSpec("metrics", DataType.MAP, true);
-    spec.setValueFieldSpecs(valueFieldSpecs);
-    spec.setDefaultValueFieldSpec(new DimensionFieldSpec("default", DataType.STRING, true));
+    ComplexFieldSpec spec = new ComplexFieldSpec("metrics", DataType.MAP, true, Map.of(),
+        valueFieldSpecs, new DimensionFieldSpec("default", DataType.STRING, true));
 
     assertEquals(spec.getValueFieldSpecs().get("clicks").getDataType(), DataType.LONG);
     assertEquals(spec.getValueFieldSpecs().get("country").getDataType(), DataType.STRING);
@@ -59,9 +58,8 @@ public class ColumnarMapDataTypeTest {
         "clicks", new MetricFieldSpec("clicks", DataType.LONG),
         "country", new DimensionFieldSpec("country", DataType.STRING, true));
 
-    ComplexFieldSpec original = new ComplexFieldSpec("metrics", DataType.MAP, true);
-    original.setValueFieldSpecs(valueFieldSpecs);
-    original.setDefaultValueFieldSpec(new DimensionFieldSpec("default", DataType.STRING, true));
+    ComplexFieldSpec original = new ComplexFieldSpec("metrics", DataType.MAP, true, Map.of(),
+        valueFieldSpecs, new DimensionFieldSpec("default", DataType.STRING, true));
 
     String json = original.toJsonObject().toString();
     ComplexFieldSpec deserialized = JsonUtils.stringToObject(json, ComplexFieldSpec.class);

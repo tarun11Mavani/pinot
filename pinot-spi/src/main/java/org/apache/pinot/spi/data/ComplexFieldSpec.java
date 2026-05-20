@@ -18,6 +18,7 @@
  */
 package org.apache.pinot.spi.data;
 
+import com.fasterxml.jackson.annotation.JsonCreator;
 import com.fasterxml.jackson.annotation.JsonIgnore;
 import com.fasterxml.jackson.annotation.JsonIgnoreProperties;
 import com.fasterxml.jackson.annotation.JsonProperty;
@@ -60,29 +61,45 @@ public final class ComplexFieldSpec extends FieldSpec {
 
   private final Map<String, FieldSpec> _childFieldSpecs;
 
-  @JsonProperty("valueFieldSpecs")
-  private Map<String, FieldSpec> _valueFieldSpecs;
+  @Nullable
+  private final Map<String, FieldSpec> _valueFieldSpecs;
 
-  @JsonProperty("defaultValueFieldSpec")
-  private FieldSpec _defaultValueFieldSpec;
+  @Nullable
+  private final FieldSpec _defaultValueFieldSpec;
 
-  // Default constructor required by JSON de-serializer
-  public ComplexFieldSpec() {
+  /// Constructor used by Jackson when deserializing JSON. Fields outside this constructor's
+  /// arg list (name, dataType, singleValueField, etc.) are populated via setters on
+  /// [FieldSpec] after construction.
+  @JsonCreator
+  ComplexFieldSpec(@JsonProperty("valueFieldSpecs") @Nullable Map<String, FieldSpec> valueFieldSpecs,
+      @JsonProperty("defaultValueFieldSpec") @Nullable FieldSpec defaultValueFieldSpec) {
     super();
     _childFieldSpecs = new HashMap<>();
+    _valueFieldSpecs = valueFieldSpecs;
+    _defaultValueFieldSpec = defaultValueFieldSpec;
+  }
+
+  public ComplexFieldSpec() {
+    this((Map<String, FieldSpec>) null, null);
   }
 
   public ComplexFieldSpec(String name, DataType dataType, boolean isSingleValueField) {
-    super(name, dataType, isSingleValueField);
-    Preconditions.checkArgument(dataType == DataType.STRUCT || dataType == DataType.MAP || dataType == DataType.LIST);
-    _childFieldSpecs = new HashMap<>();
+    this(name, dataType, isSingleValueField, Map.of(), null, null);
   }
 
   public ComplexFieldSpec(String name, DataType dataType, boolean isSingleValueField,
       Map<String, FieldSpec> childFieldSpecs) {
+    this(name, dataType, isSingleValueField, childFieldSpecs, null, null);
+  }
+
+  public ComplexFieldSpec(String name, DataType dataType, boolean isSingleValueField,
+      Map<String, FieldSpec> childFieldSpecs, @Nullable Map<String, FieldSpec> valueFieldSpecs,
+      @Nullable FieldSpec defaultValueFieldSpec) {
     super(name, dataType, isSingleValueField);
     Preconditions.checkArgument(dataType == DataType.STRUCT || dataType == DataType.MAP || dataType == DataType.LIST);
     _childFieldSpecs = new HashMap<>(childFieldSpecs);
+    _valueFieldSpecs = valueFieldSpecs;
+    _defaultValueFieldSpec = defaultValueFieldSpec;
   }
 
   public static String[] getColumnPath(String column) {
@@ -97,22 +114,16 @@ public final class ComplexFieldSpec extends FieldSpec {
     return _childFieldSpecs;
   }
 
+  @JsonProperty("valueFieldSpecs")
   @Nullable
   public Map<String, FieldSpec> getValueFieldSpecs() {
     return _valueFieldSpecs;
   }
 
-  public void setValueFieldSpecs(@Nullable Map<String, FieldSpec> valueFieldSpecs) {
-    _valueFieldSpecs = valueFieldSpecs;
-  }
-
+  @JsonProperty("defaultValueFieldSpec")
   @Nullable
   public FieldSpec getDefaultValueFieldSpec() {
     return _defaultValueFieldSpec;
-  }
-
-  public void setDefaultValueFieldSpec(@Nullable FieldSpec defaultValueFieldSpec) {
-    _defaultValueFieldSpec = defaultValueFieldSpec;
   }
 
   @JsonIgnore
