@@ -74,7 +74,12 @@ public class RealtimeSegmentStatsContainer implements SegmentPreIndexStatsContai
       return new EmptyColumnStatistics(dataSourceMetadata.getFieldSpec(), dataSourceMetadata.getPartitionFunction(),
           dataSourceMetadata.getPartitions());
     }
-    // TODO: Add compaction support to MAP
+    // MAP columns: per-key stats are handled by ColumnarMapColumnSplitter during
+    // seal(). The stats container only needs blob-level stats from the forward index.
+    if (dataSource instanceof MutableMapDataSource
+        && ((MutableMapDataSource) dataSource).hasColumnarMapIndex()) {
+      return new MutableNoDictColumnStatistics(dataSource, sortedDocIds, isSortedColumn);
+    }
     if (dataSource instanceof MutableMapDataSource) {
       return createMapColumnStatistics(dataSource, validDocIds, statsCollectorConfig);
     }

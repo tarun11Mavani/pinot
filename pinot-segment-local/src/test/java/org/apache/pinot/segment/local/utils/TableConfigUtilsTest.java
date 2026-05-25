@@ -65,6 +65,7 @@ import org.apache.pinot.spi.config.table.ingestion.FilterConfig;
 import org.apache.pinot.spi.config.table.ingestion.IngestionConfig;
 import org.apache.pinot.spi.config.table.ingestion.StreamIngestionConfig;
 import org.apache.pinot.spi.config.table.ingestion.TransformConfig;
+import org.apache.pinot.spi.data.ComplexFieldSpec;
 import org.apache.pinot.spi.data.DimensionFieldSpec;
 import org.apache.pinot.spi.data.FieldSpec;
 import org.apache.pinot.spi.data.MetricFieldSpec;
@@ -4205,5 +4206,44 @@ public class TableConfigUtilsTest {
     List<String> violations = TableConfigUtils.validateBackwardCompatibility(newConfig, existingConfig);
     assertTrue(violations.isEmpty(),
         "Expected no violations for partial-upsert strategy and default-strategy changes, but got: " + violations);
+  }
+
+  @Test
+  public void testColumnarMapRejectsSchemaColumnWithReservedSeparator() {
+    Schema schema = new Schema.SchemaBuilder()
+        .setSchemaName(TABLE_NAME)
+        .addSingleValueDimension("metrics$tenancy", FieldSpec.DataType.STRING)
+        .addField(new ComplexFieldSpec("props", FieldSpec.DataType.MAP, true))
+        .build();
+    FieldConfig columnarMapFieldConfig = new FieldConfig.Builder("props")
+        .withIndexTypes(List.of(FieldConfig.IndexType.MAP))
+        .build();
+    TableConfig tableConfig = new TableConfigBuilder(TableType.OFFLINE)
+        .setTableName(TABLE_NAME)
+        .setFieldConfigList(List.of(columnarMapFieldConfig))
+        .build();
+    try {
+      TableConfigUtils.validate(tableConfig, schema);
+      fail("Expected validation to reject MAP when schema has a '$' column");
+    } catch (IllegalStateException e) {
+      assertTrue(e.getMessage().contains("$"), "Error should mention the reserved separator");
+    }
+  }
+
+  @Test
+  public void testColumnarMapAcceptsSchemaWithNoReservedSeparator() {
+    Schema schema = new Schema.SchemaBuilder()
+        .setSchemaName(TABLE_NAME)
+        .addSingleValueDimension("country", FieldSpec.DataType.STRING)
+        .addField(new ComplexFieldSpec("props", FieldSpec.DataType.MAP, true))
+        .build();
+    FieldConfig columnarMapFieldConfig = new FieldConfig.Builder("props")
+        .withIndexTypes(List.of(FieldConfig.IndexType.MAP))
+        .build();
+    TableConfig tableConfig = new TableConfigBuilder(TableType.OFFLINE)
+        .setTableName(TABLE_NAME)
+        .setFieldConfigList(List.of(columnarMapFieldConfig))
+        .build();
+    TableConfigUtils.validate(tableConfig, schema);
   }
 }

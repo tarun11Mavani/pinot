@@ -65,6 +65,7 @@ import org.apache.pinot.segment.local.realtime.impl.invertedindex.MultiColumnRea
 import org.apache.pinot.segment.local.realtime.impl.nullvalue.MutableNullValueVector;
 import org.apache.pinot.segment.local.segment.index.datasource.MutableDataSource;
 import org.apache.pinot.segment.local.segment.index.dictionary.DictionaryIndexType;
+import org.apache.pinot.segment.local.segment.index.map.MutableColumnarMapIndex;
 import org.apache.pinot.segment.local.segment.index.map.MutableMapDataSource;
 import org.apache.pinot.segment.local.segment.readers.PinotSegmentColumnReader;
 import org.apache.pinot.segment.local.segment.readers.PinotSegmentRecordReader;
@@ -88,6 +89,7 @@ import org.apache.pinot.segment.spi.index.IndexService;
 import org.apache.pinot.segment.spi.index.IndexType;
 import org.apache.pinot.segment.spi.index.StandardIndexes;
 import org.apache.pinot.segment.spi.index.VectorIndexConfigProvider;
+import org.apache.pinot.segment.spi.index.column.ColumnIndexContainer;
 import org.apache.pinot.segment.spi.index.creator.VectorIndexConfig;
 import org.apache.pinot.segment.spi.index.metadata.SegmentMetadataImpl;
 import org.apache.pinot.segment.spi.index.multicolumntext.MultiColumnTextMetadata;
@@ -105,6 +107,7 @@ import org.apache.pinot.segment.spi.memory.PinotDataBufferMemoryManager;
 import org.apache.pinot.segment.spi.partition.PartitionFunction;
 import org.apache.pinot.spi.config.table.ColumnPartitionConfig;
 import org.apache.pinot.spi.config.table.IndexConfig;
+import org.apache.pinot.spi.config.table.MapIndexConfig;
 import org.apache.pinot.spi.config.table.MultiColumnTextIndexConfig;
 import org.apache.pinot.spi.config.table.SegmentPartitionConfig;
 import org.apache.pinot.spi.config.table.UpsertConfig;
@@ -301,7 +304,8 @@ public class MutableSegmentImpl implements MutableSegment {
 
     Set<IndexType> specialIndexes =
         Sets.newHashSet(StandardIndexes.dictionary(), // dictionary implements other contract
-            StandardIndexes.nullValueVector()); // null value vector implements other contract
+            StandardIndexes.nullValueVector(), // null value vector implements other contract
+            StandardIndexes.map()); // columnar map is constructed out-of-band below
 
     // Initialize for each column
     boolean hasColumnWithReuseMutableTextIndex = false;
@@ -427,9 +431,18 @@ public class MutableSegmentImpl implements MutableSegment {
         }
       }
 
+      MutableColumnarMapIndex columnarMapIndex = null;
+      if (fieldSpec.getDataType() == DataType.MAP && fieldSpec instanceof ComplexFieldSpec) {
+        IndexConfig columnarMapConfig = indexConfigs.getConfig(StandardIndexes.map());
+        if (columnarMapConfig instanceof MapIndexConfig && columnarMapConfig.isEnabled()) {
+          columnarMapIndex = new MutableColumnarMapIndex(column, (ComplexFieldSpec) fieldSpec,
+              (MapIndexConfig) columnarMapConfig, _memoryManager, _capacity);
+        }
+      }
+
       _indexContainerMap.put(column,
           new IndexContainer(fieldSpec, partitionFunction, partitions, new ValuesInfo(), mutableIndexes, dictionary,
-              nullValueVector, sourceColumn, valueAggregator));
+              nullValueVector, sourceColumn, valueAggregator, columnarMapIndex));
     }
     _hasColumnWithReuseMutableTextIndex = hasColumnWithReuseMutableTextIndex;
 
@@ -952,6 +965,10 @@ public class MutableSegmentImpl implements MutableSegment {
           }
         }
 
+        if (indexContainer._columnarMapIndex != null && dataType == MAP) {
+          indexContainer._columnarMapIndex.index(docId, value);
+        }
+
         if (dictId < 0) {
           // Update min/max value from raw value
           // NOTE: Skip updating min/max value for aggregated metrics because the value will change over time.
@@ -1286,6 +1303,12 @@ public class MutableSegmentImpl implements MutableSegment {
     if (_multiColumnTextIndex != null) {
       _multiColumnTextIndex.commit();
     }
+  }
+
+  @Nullable
+  public MutableColumnarMapIndex getColumnarMapIndex(String column) {
+    IndexContainer container = _indexContainerMap.get(column);
+    return container != null ? container._columnarMapIndex : null;
   }
 
   @Override
@@ -1654,6 +1677,8 @@ public class MutableSegmentImpl implements MutableSegment {
     final Map<IndexType, MutableIndex> _mutableIndexes;
     final String _sourceColumn;
     final ValueAggregator _valueAggregator;
+    @Nullable
+    final MutableColumnarMapIndex _columnarMapIndex;
 
     volatile Comparable _minValue;
     volatile Comparable _maxValue;
@@ -1672,7 +1697,8 @@ public class MutableSegmentImpl implements MutableSegment {
     IndexContainer(FieldSpec fieldSpec, @Nullable PartitionFunction partitionFunction,
         @Nullable Set<Integer> partitions, ValuesInfo valuesInfo, Map<IndexType, MutableIndex> mutableIndexes,
         @Nullable MutableDictionary dictionary, @Nullable MutableNullValueVector nullValueVector,
-        @Nullable String sourceColumn, @Nullable ValueAggregator valueAggregator) {
+        @Nullable String sourceColumn, @Nullable ValueAggregator valueAggregator,
+        @Nullable MutableColumnarMapIndex columnarMapIndex) {
       Preconditions.checkArgument(mutableIndexes.containsKey(StandardIndexes.forward()), "Forward index is required");
       _fieldSpec = fieldSpec;
       _mutableIndexes = mutableIndexes;
@@ -1683,10 +1709,19 @@ public class MutableSegmentImpl implements MutableSegment {
       _valuesInfo = valuesInfo;
       _sourceColumn = sourceColumn;
       _valueAggregator = valueAggregator;
+      _columnarMapIndex = columnarMapIndex;
     }
 
     DataSource toDataSource() {
       if (_fieldSpec.getDataType() == MAP) {
+        if (_columnarMapIndex != null) {
+          return new MutableMapDataSource(_fieldSpec, _numDocsIndexed, _valuesInfo._numValues,
+              _valuesInfo._maxNumValuesPerMVEntry, _dictionary == null ? -1 : _dictionary.length(),
+              _partitionFunction, _partitions, _minValue, _maxValue, _columnarMapIndex,
+              new ColumnIndexContainer.FromMap.Builder()
+                  .withAll(_mutableIndexes).build(),
+              _valuesInfo._varByteMVMaxRowLengthInBytes);
+        }
         return new MutableMapDataSource(_fieldSpec, _numDocsIndexed, _valuesInfo._numValues,
             _valuesInfo._maxNumValuesPerMVEntry, _dictionary == null ? -1 : _dictionary.length(), _partitionFunction,
             _partitions, _minValue, _maxValue, _mutableIndexes, _dictionary, _nullValueVector,
@@ -1723,6 +1758,14 @@ public class MutableSegmentImpl implements MutableSegment {
       _mutableIndexes.forEach(closer::accept);
       closer.accept(StandardIndexes.dictionary(), _dictionary);
       closer.accept(StandardIndexes.nullValueVector(), _nullValueVector);
+      if (_columnarMapIndex != null) {
+        try {
+          _columnarMapIndex.close();
+        } catch (Exception e) {
+          _logger.error("Caught exception while closing columnar map index for column: {}, continuing with error",
+              column, e);
+        }
+      }
     }
   }
 

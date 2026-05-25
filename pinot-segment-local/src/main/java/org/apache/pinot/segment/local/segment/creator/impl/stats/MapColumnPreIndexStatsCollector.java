@@ -289,7 +289,9 @@ public class MapColumnPreIndexStatsCollector extends AbstractColumnStatisticsCol
   }
 
   private AbstractColumnStatisticsCollector createKeyStatsCollector(String key, FieldSpec.DataType dataType) {
-    TableConfig tableConfig = new TableConfigBuilder(TableType.OFFLINE).setTableName(key).build();
+    // Table names cannot contain "__"; replace so keys like "device__os" produce a valid name.
+    String tableNameSafeKey = key.replace("__", "_");
+    TableConfig tableConfig = new TableConfigBuilder(TableType.OFFLINE).setTableName(tableNameSafeKey).build();
     Schema keySchema = new Schema.SchemaBuilder().setSchemaName(key)
         .addField(new DimensionFieldSpec(key, dataType, false)).build();
     StatsCollectorConfig config = new StatsCollectorConfig(tableConfig, keySchema, null);
