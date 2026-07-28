@@ -27,16 +27,16 @@ import org.roaringbitmap.buffer.MutableRoaringBitmap;
 /// {@link NullValueVectorReader} backed by an OPEN_STRUCT key's presence bitmap.
 ///
 /// A document is null for a key when the key was never set on that document, i.e. when the
-/// document is absent from the presence bitmap.
+/// document is absent from the presence bitmap. The null bitmap is computed on demand (not cached)
+/// because the presence bitmap is mutable during real-time consumption.
 ///
 /// Reads the live presence bitmap rather than a snapshot: the bitmap is a
 /// {@link ThreadSafeMutableRoaringBitmap} and ingestion only ever appends docIds >= the numDocs
 /// captured by the enclosing DataSource, so the [0, numDocs) range this vector reports on is
-/// already frozen. That also makes {@link #getNullBitmap()} cacheable — see there.
+/// already frozen.
 public class PresenceBasedNullValueVector implements NullValueVectorReader {
   private final ThreadSafeMutableRoaringBitmap _presenceBitmap;
   private final int _numDocs;
-  private volatile ImmutableRoaringBitmap _nullBitmap;
 
   public PresenceBasedNullValueVector(ThreadSafeMutableRoaringBitmap presenceBitmap, int numDocs) {
     _presenceBitmap = presenceBitmap;
@@ -48,25 +48,15 @@ public class PresenceBasedNullValueVector implements NullValueVectorReader {
     return !_presenceBitmap.contains(docId);
   }
 
-  /// Cached: callers re-derive this per block ({@link org.apache.pinot.core.operator.docvalsets.ProjectionBlockValSet}
-  /// memoises only within a single block), and each rebuild clones the presence bitmap under the ingestion thread's
-  /// monitor. Safe because [0, numDocs) is frozen — ingestion only appends docIds >= numDocs, and the only mutation
-  /// of a key's presence bitmap is the append in `MutableKeyColumn#setValue`. A benign race may compute it twice;
-  /// both results are equal and the field is volatile.
   @Override
   public ImmutableRoaringBitmap getNullBitmap() {
-    ImmutableRoaringBitmap nullBitmap = _nullBitmap;
-    if (nullBitmap == null) {
-      MutableRoaringBitmap bitmap = new MutableRoaringBitmap();
-      if (_numDocs > 0) {
-        bitmap.add(0L, _numDocs);
-      }
-      // getMutableRoaringBitmap() clones under the wrapper's monitor, so the andNot below iterates a
-      // private copy that the ingestion thread cannot mutate mid-walk.
-      bitmap.andNot(_presenceBitmap.getMutableRoaringBitmap());
-      nullBitmap = bitmap;
-      _nullBitmap = nullBitmap;
+    MutableRoaringBitmap nullBitmap = new MutableRoaringBitmap();
+    if (_numDocs > 0) {
+      nullBitmap.add(0L, _numDocs);
     }
+    // getMutableRoaringBitmap() clones under the wrapper's monitor, so the andNot below iterates a
+    // private copy that the ingestion thread cannot mutate mid-walk.
+    nullBitmap.andNot(_presenceBitmap.getMutableRoaringBitmap());
     return nullBitmap;
   }
 }
