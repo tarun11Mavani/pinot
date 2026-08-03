@@ -32,9 +32,7 @@ import org.testng.Assert;
 import org.testng.annotations.BeforeClass;
 import org.testng.annotations.Test;
 
-/**
- * Unit test for the static table cache functionality in PinotQueryResource.
- */
+/// Unit test for the static table cache functionality in PinotQueryResource.
 public class PinotQueryResourceStaticValidationTest {
 
   private ObjectMapper _objectMapper;
@@ -64,7 +62,7 @@ public class PinotQueryResourceStaticValidationTest {
     Assert.assertNotNull(provider.getTableConfig("testTable_OFFLINE"));
     Assert.assertNotNull(provider.getSchema("testTable"));
     Assert.assertNotNull(provider.getColumnNameMap("testTable"));
-    Assert.assertEquals(provider.getColumnNameMap("testTable").size(), 5); // 2 columns + 3 built-in virtual columns
+    Assert.assertEquals(provider.getColumnNameMap("testTable").size(), 6); // 2 columns + 4 built-in virtual columns
 
     Assert.assertTrue(provider.getTableNameMap().containsKey("testTable_OFFLINE"));
     Assert.assertTrue(provider.getTableNameMap().containsKey("testTable"));

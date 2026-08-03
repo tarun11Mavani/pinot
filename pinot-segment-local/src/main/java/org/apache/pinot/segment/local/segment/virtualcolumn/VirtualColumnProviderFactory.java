@@ -27,9 +27,7 @@ import org.apache.pinot.spi.utils.CommonConstants.Segment.BuiltInVirtualColumn;
 import org.apache.pinot.spi.utils.NetUtils;
 
 
-/**
- * Factory for virtual column providers.
- */
+/// Factory for virtual column providers.
 public class VirtualColumnProviderFactory {
   private VirtualColumnProviderFactory() {
   }
@@ -57,6 +55,11 @@ public class VirtualColumnProviderFactory {
     if (!schema.hasColumn(BuiltInVirtualColumn.SEGMENTNAME)) {
       schema.addField(new DimensionFieldSpec(BuiltInVirtualColumn.SEGMENTNAME, FieldSpec.DataType.STRING, true,
           DefaultNullValueVirtualColumnProvider.class, segmentName));
+    }
+
+    if (!schema.hasColumn(BuiltInVirtualColumn.PARTITIONID)) {
+      schema.addField(new DimensionFieldSpec(BuiltInVirtualColumn.PARTITIONID, FieldSpec.DataType.STRING, false,
+          PartitionIdVirtualColumnProvider.class));
     }
   }
 }

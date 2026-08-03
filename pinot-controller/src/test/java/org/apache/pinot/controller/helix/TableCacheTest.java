@@ -137,7 +137,7 @@ public class TableCacheTest {
     assertTrue(tableCache.registerSchemaChangeListener(schemaChangeListener));
     assertEquals(schemaChangeListener._schemaList.size(), 2);
     assertTrue(schemaChangeListener._schemaList.get(0).equals(expectedSchema)
-    || schemaChangeListener._schemaList.get(1).equals(expectedSchema));
+        || schemaChangeListener._schemaList.get(1).equals(expectedSchema));
 
     TestLogicalTableConfigChangeListener logicalTableConfigChangeListener = new TestLogicalTableConfigChangeListener();
     assertTrue(tableCache.registerLogicalTableConfigChangeListener(logicalTableConfigChangeListener));
@@ -218,8 +218,7 @@ public class TableCacheTest {
     logicalTableConfig = ControllerTest.getDummyLogicalTableConfig(LOGICAL_TABLE_NAME,
         List.of(OFFLINE_TABLE_NAME, ANOTHER_TABLE_OFFLINE), "DefaultTenant");
     logicalTableConfig.setQueryConfig(new QueryConfig(
-        1L, false, false, Map.of("DaysSinceEpoch * 24", "NewAddedDerivedHoursSinceEpoch"), 1L, 1L
-    ));
+        1L, false, false, Map.of("DaysSinceEpoch * 24", "NewAddedDerivedHoursSinceEpoch"), 1L, 1L));
     TEST_INSTANCE.getHelixResourceManager().updateLogicalTableConfig(logicalTableConfig);
     TestUtils.waitForCondition(
         aVoid -> Objects.requireNonNull(tableCache.getLogicalTableConfig(LOGICAL_TABLE_NAME))
@@ -303,6 +302,7 @@ public class TableCacheTest {
     expectedColumnMap.put(isCaseInsensitive ? "$docid" : "$docId", "$docId");
     expectedColumnMap.put(isCaseInsensitive ? "$hostname" : "$hostName", "$hostName");
     expectedColumnMap.put(isCaseInsensitive ? "$segmentname" : "$segmentName", "$segmentName");
+    expectedColumnMap.put(isCaseInsensitive ? "$partitionid" : "$partitionId", "$partitionId");
     return expectedColumnMap;
   }
 
@@ -310,7 +310,8 @@ public class TableCacheTest {
     return new Schema.SchemaBuilder().setSchemaName(tableName).addSingleValueDimension("testColumn", DataType.INT)
         .addSingleValueDimension(BuiltInVirtualColumn.DOCID, DataType.INT)
         .addSingleValueDimension(BuiltInVirtualColumn.HOSTNAME, DataType.STRING)
-        .addSingleValueDimension(BuiltInVirtualColumn.SEGMENTNAME, DataType.STRING).build();
+        .addSingleValueDimension(BuiltInVirtualColumn.SEGMENTNAME, DataType.STRING)
+        .addMultiValueDimension(BuiltInVirtualColumn.PARTITIONID, DataType.STRING).build();
   }
 
   @DataProvider(name = "testTableCacheDataProvider")
