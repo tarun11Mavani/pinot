@@ -24,6 +24,7 @@ import java.net.URL;
 import java.util.ArrayList;
 import java.util.List;
 import java.util.Map;
+import java.util.UUID;
 import java.util.concurrent.ExecutorService;
 import java.util.concurrent.Executors;
 import org.apache.commons.configuration2.PropertiesConfiguration;
@@ -42,6 +43,7 @@ import org.apache.pinot.segment.local.indexsegment.immutable.ImmutableSegmentLoa
 import org.apache.pinot.segment.local.segment.creator.SegmentTestUtils;
 import org.apache.pinot.segment.local.segment.creator.impl.SegmentIndexCreationDriverImpl;
 import org.apache.pinot.segment.local.utils.SegmentLocks;
+import org.apache.pinot.segment.local.utils.ServerReloadJobStatusCache;
 import org.apache.pinot.segment.spi.ImmutableSegment;
 import org.apache.pinot.segment.spi.IndexSegment;
 import org.apache.pinot.segment.spi.creator.SegmentGeneratorConfig;
@@ -55,6 +57,7 @@ import org.apache.pinot.spi.data.readers.FileFormat;
 import org.apache.pinot.spi.env.CommonsConfigurationUtils;
 import org.apache.pinot.spi.env.PinotConfiguration;
 import org.apache.pinot.spi.exception.QueryErrorCode;
+import org.apache.pinot.spi.query.QueryThreadContext;
 import org.apache.pinot.spi.utils.CommonConstants;
 import org.apache.pinot.spi.utils.ReadMode;
 import org.apache.pinot.spi.utils.builder.TableConfigBuilder;
@@ -76,12 +79,14 @@ public class QueryExecutorExceptionsTest {
   private static final String AVRO_DATA_PATH = "data/simpleData200001.avro";
   private static final String EMPTY_JSON_DATA_PATH = "data/test_empty_data.json";
   private static final String QUERY_EXECUTOR_CONFIG_PATH = "conf/query-executor.properties";
-  private static final File INDEX_DIR = new File(FileUtils.getTempDirectory(), "QueryExecutorTest");
+  private static final File INDEX_DIR =
+      new File(FileUtils.getTempDirectory(), "QueryExecutorTest-" + UUID.randomUUID());
   private static final String RAW_TABLE_NAME = "testTable";
   private static final String OFFLINE_TABLE_NAME = TableNameBuilder.OFFLINE.tableNameWithType(RAW_TABLE_NAME);
   private static final int NUM_SEGMENTS_TO_GENERATE = 2;
   private static final int NUM_EMPTY_SEGMENTS_TO_GENERATE = 2;
-  private static final ExecutorService QUERY_RUNNERS = Executors.newFixedThreadPool(20);
+  private static final ExecutorService QUERY_RUNNERS =
+      QueryThreadContext.contextAwareExecutorService(Executors.newFixedThreadPool(2));
 
   private final List<ImmutableSegment> _indexSegments = new ArrayList<>(NUM_SEGMENTS_TO_GENERATE);
   private final List<String> _segmentNames = new ArrayList<>(NUM_SEGMENTS_TO_GENERATE);
@@ -136,7 +141,8 @@ public class QueryExecutorExceptionsTest {
     InstanceDataManagerConfig instanceDataManagerConfig = mock(InstanceDataManagerConfig.class);
     when(instanceDataManagerConfig.getInstanceDataDir()).thenReturn(INDEX_DIR.getAbsolutePath());
     TableDataManagerProvider tableDataManagerProvider = new DefaultTableDataManagerProvider();
-    tableDataManagerProvider.init(instanceDataManagerConfig, mock(HelixManager.class), new SegmentLocks(), null);
+    tableDataManagerProvider.init(instanceDataManagerConfig, mock(HelixManager.class), new SegmentLocks(), null,
+        mock(ServerReloadJobStatusCache.class));
     TableDataManager tableDataManager = tableDataManagerProvider.getTableDataManager(tableConfig, schema);
     tableDataManager.start();
     //we don't add index segments to the data manager to simulate numSegmentsAcquired < numSegmentsQueried
@@ -146,23 +152,20 @@ public class QueryExecutorExceptionsTest {
     // Set up the query executor
     resourceUrl = getClass().getClassLoader().getResource(QUERY_EXECUTOR_CONFIG_PATH);
     assertNotNull(resourceUrl);
-    PropertiesConfiguration queryExecutorConfig =
-        CommonsConfigurationUtils.fromFile(new File(resourceUrl.getFile()));
+    PropertiesConfiguration queryExecutorConfig = CommonsConfigurationUtils.fromFile(new File(resourceUrl.getFile()));
     _queryExecutor = new ServerQueryExecutorV1Impl();
     _queryExecutor.init(new PinotConfiguration(queryExecutorConfig), instanceDataManager, ServerMetrics.get());
   }
 
-  /**
-   * Given some segments were missing, when a query is executed, then the correct error code is returned along with
-   * the list of missing segments.
-   */
+  /// Given some segments were missing, when a query is executed, then the correct error code is returned along with
+  /// the list of missing segments.
   @Test
   public void testServerSegmentMissingExceptionDetails() {
     String query = "SELECT COUNT(*) FROM " + OFFLINE_TABLE_NAME;
     InstanceRequest instanceRequest = new InstanceRequest(0L, CalciteSqlCompiler.compileToBrokerRequest(query));
     instanceRequest.setSearchSegments(_segmentNames);
-    InstanceResponseBlock instanceResponse = _queryExecutor.execute(getQueryRequest(instanceRequest), QUERY_RUNNERS);
-    Map<Integer, String> exceptions = instanceResponse.getExceptions();
+    InstanceResponseBlock response = execute(instanceRequest);
+    Map<Integer, String> exceptions = response.getExceptions();
     assertTrue(exceptions.containsKey(QueryErrorCode.SERVER_SEGMENT_MISSING.getId()));
 
     String errorMessage = exceptions.get(QueryErrorCode.SERVER_SEGMENT_MISSING.getId());
@@ -172,16 +175,15 @@ public class QueryExecutorExceptionsTest {
     assertEqualsNoOrder(actualMissingSegments, expectedMissingSegments);
   }
 
-  /**
-   * When ignoreMissingSegments is set in queryOptions, the server should not populate SERVER_SEGMENT_MISSING exception.
-   */
+  /// When ignoreMissingSegments is set in queryOptions, the server should not populate SERVER_SEGMENT_MISSING
+  /// exception.
   @Test
   public void testServerSegmentMissingExceptionIgnoredByOption() {
     String query = "SELECT COUNT(*) FROM " + OFFLINE_TABLE_NAME;
     // 1) Without the option -> we should see SERVER_SEGMENT_MISSING
     InstanceRequest instanceRequestNoOpt = new InstanceRequest(0L, CalciteSqlCompiler.compileToBrokerRequest(query));
     instanceRequestNoOpt.setSearchSegments(_segmentNames);
-    InstanceResponseBlock responseNoOpt = _queryExecutor.execute(getQueryRequest(instanceRequestNoOpt), QUERY_RUNNERS);
+    InstanceResponseBlock responseNoOpt = execute(instanceRequestNoOpt);
     Map<Integer, String> exceptionsNoOpt = responseNoOpt.getExceptions();
     assertTrue(exceptionsNoOpt.containsKey(QueryErrorCode.SERVER_SEGMENT_MISSING.getId()));
 
@@ -191,9 +193,17 @@ public class QueryExecutorExceptionsTest {
         .getPinotQuery()
         .putToQueryOptions(CommonConstants.Broker.Request.QueryOptionKey.IGNORE_MISSING_SEGMENTS, "true");
     instanceRequestOpt.setSearchSegments(_segmentNames);
-    InstanceResponseBlock responseOpt = _queryExecutor.execute(getQueryRequest(instanceRequestOpt), QUERY_RUNNERS);
+    InstanceResponseBlock responseOpt = execute(instanceRequestOpt);
     Map<Integer, String> exceptionsOpt = responseOpt.getExceptions();
     assertFalse(exceptionsOpt.containsKey(QueryErrorCode.SERVER_SEGMENT_MISSING.getId()));
+  }
+
+  private InstanceResponseBlock execute(InstanceRequest instanceRequest) {
+    ServerQueryRequest queryRequest =
+        new ServerQueryRequest(instanceRequest, ServerMetrics.get(), System.currentTimeMillis());
+    try (QueryThreadContext ignore = QueryThreadContext.openForSseTest()) {
+      return _queryExecutor.execute(queryRequest, QUERY_RUNNERS);
+    }
   }
 
   @AfterClass
@@ -202,9 +212,5 @@ public class QueryExecutorExceptionsTest {
       segment.destroy();
     }
     FileUtils.deleteQuietly(INDEX_DIR);
-  }
-
-  private ServerQueryRequest getQueryRequest(InstanceRequest instanceRequest) {
-    return new ServerQueryRequest(instanceRequest, ServerMetrics.get(), System.currentTimeMillis());
   }
 }

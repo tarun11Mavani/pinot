@@ -18,9 +18,10 @@
  */
 package org.apache.pinot.query.runtime.queries;
 
+import com.fasterxml.jackson.databind.JsonNode;
+import com.fasterxml.jackson.databind.node.ObjectNode;
 import java.util.ArrayList;
 import java.util.Arrays;
-import java.util.Collections;
 import java.util.HashMap;
 import java.util.Iterator;
 import java.util.List;
@@ -30,16 +31,20 @@ import org.apache.pinot.common.response.broker.ResultTable;
 import org.apache.pinot.query.QueryEnvironmentTestBase;
 import org.apache.pinot.query.QueryServerEnclosure;
 import org.apache.pinot.query.mailbox.MailboxService;
+import org.apache.pinot.query.planner.physical.DispatchablePlanFragment;
 import org.apache.pinot.query.routing.QueryServerInstance;
+import org.apache.pinot.query.runtime.MultiStageStatsTreeBuilder;
 import org.apache.pinot.query.service.dispatch.QueryDispatcher;
 import org.apache.pinot.query.testutils.MockInstanceDataManagerFactory;
 import org.apache.pinot.query.testutils.QueryTestUtils;
+import org.apache.pinot.spi.config.instance.InstanceType;
 import org.apache.pinot.spi.config.table.TableType;
 import org.apache.pinot.spi.data.FieldSpec;
 import org.apache.pinot.spi.data.Schema;
 import org.apache.pinot.spi.data.readers.GenericRow;
 import org.apache.pinot.spi.env.PinotConfiguration;
-import org.apache.pinot.spi.utils.CommonConstants;
+import org.apache.pinot.spi.utils.CommonConstants.Broker.Request.QueryOptionKey;
+import org.apache.pinot.spi.utils.CommonConstants.MultiStageQueryRunner;
 import org.apache.pinot.spi.utils.JsonUtils;
 import org.apache.pinot.spi.utils.builder.TableNameBuilder;
 import org.assertj.core.api.Assertions;
@@ -50,13 +55,9 @@ import org.testng.annotations.BeforeClass;
 import org.testng.annotations.DataProvider;
 import org.testng.annotations.Test;
 
-import static org.apache.pinot.spi.utils.CommonConstants.Broker.Request.QueryOptionKey.*;
 
-
-/**
- * all special tests that doesn't fit into {@link org.apache.pinot.query.runtime.queries.ResourceBasedQueriesTest}
- * pattern goes here.
- */
+/// all special tests that doesn't fit into [org.apache.pinot.query.runtime.queries.ResourceBasedQueriesTest]
+/// pattern goes here.
 public class QueryRunnerTest extends QueryRunnerTestBase {
   //@formatter:off
   public static final Object[][] ROWS = new Object[][]{
@@ -94,7 +95,7 @@ public class QueryRunnerTest extends QueryRunnerTestBase {
   }
 
   protected Map<String, Object> getConfiguration() {
-    return Collections.emptyMap();
+    return Map.of();
   }
 
   @BeforeClass
@@ -135,9 +136,10 @@ public class QueryRunnerTest extends QueryRunnerTestBase {
     _reducerHostname = "localhost";
     _reducerPort = QueryTestUtils.getAvailablePort();
     Map<String, Object> reducerConfig = new HashMap<>();
-    reducerConfig.put(CommonConstants.MultiStageQueryRunner.KEY_OF_QUERY_RUNNER_HOSTNAME, _reducerHostname);
-    reducerConfig.put(CommonConstants.MultiStageQueryRunner.KEY_OF_QUERY_RUNNER_PORT, _reducerPort);
-    _mailboxService = new MailboxService(_reducerHostname, _reducerPort, new PinotConfiguration(reducerConfig));
+    reducerConfig.put(MultiStageQueryRunner.KEY_OF_QUERY_RUNNER_HOSTNAME, _reducerHostname);
+    reducerConfig.put(MultiStageQueryRunner.KEY_OF_QUERY_RUNNER_PORT, _reducerPort);
+    _mailboxService =
+        new MailboxService(_reducerHostname, _reducerPort, InstanceType.BROKER, new PinotConfiguration(reducerConfig));
     _mailboxService.start();
 
     QueryServerEnclosure server1 = new QueryServerEnclosure(factory1, getConfiguration());
@@ -165,21 +167,53 @@ public class QueryRunnerTest extends QueryRunnerTestBase {
     _mailboxService.shutdown();
   }
 
-  /**
-   * Test compares with expected row count only.
-   */
+  /// The self stats of a node are the node's own value minus its children's. A mailbox send reports its stats from
+  /// inside the getNextBlock() call whose time it is still spending, so unless that call is accounted first it
+  /// reports less than the input whose call it contains and the subtraction goes negative. A query whose filter
+  /// matches nothing makes the end-of-stream block the only block a stage handles, which is when the whole of the
+  /// send's time would be missing.
+  @Test
+  public void testSelfStatsAreNotNegative() {
+    @Language("sql")
+    String sql = "SELECT col1, COUNT(*) FROM a WHERE col1 = 'no-such-value' GROUP BY col1";
+    QueryDispatcher.QueryResult queryResult = queryRunner(sql, true);
+    Map<Integer, DispatchablePlanFragment> planNodes = planQuery(sql).getQueryPlan().getQueryStageMap();
+    ObjectNode statsTree =
+        new MultiStageStatsTreeBuilder(planNodes, queryResult.getQueryStats()).jsonStatsByStage(1);
+
+    int checked = assertSelfStatsAreNotNegative(statsTree);
+    Assert.assertTrue(checked > 0, "expected some self stats to check, got: " + statsTree);
+  }
+
+  /// Asserts that no self stat in the tree is negative, and returns how many were checked.
+  private static int assertSelfStatsAreNotNegative(JsonNode node) {
+    int checked = 0;
+    for (String statName : List.of("selfExecutionTimeMs", "selfClockTimeMs", "selfAllocatedMB", "selfGcTimeMs")) {
+      JsonNode stat = node.get(statName);
+      if (stat != null) {
+        Assert.assertTrue(stat.asLong() >= 0,
+            statName + " is " + stat.asLong() + ", which means this node reported less than its children, for node "
+                + node);
+        checked++;
+      }
+    }
+    for (JsonNode child : node.path("children")) {
+      checked += assertSelfStatsAreNotNegative(child);
+    }
+    return checked;
+  }
+
+  /// Test compares with expected row count only.
   @Test(dataProvider = "testDataWithSqlToFinalRowCount")
   public void testSqlWithFinalRowCountChecker(String sql, int expectedRows) {
     ResultTable resultTable = queryRunner(sql, false).getResultTable();
     Assert.assertEquals(resultTable.getRows().size(), expectedRows);
   }
 
-  /**
-   * Test automatically compares against H2.
-   *
-   * @deprecated do not add to this test set. this class will be broken down and clean up.
-   *   add your test to the appropriate files in {@link org.apache.pinot.query.runtime.queries} instead.
-   */
+  /// Test automatically compares against H2.
+  ///
+  /// @deprecated do not add to this test set. this class will be broken down and clean up.
+  ///   add your test to the appropriate files in [org.apache.pinot.query.runtime.queries] instead.
   @Test(dataProvider = "testSql")
   public void testSqlWithH2Checker(String sql)
       throws Exception {
@@ -189,9 +223,7 @@ public class QueryRunnerTest extends QueryRunnerTestBase {
     compareRowEquals(resultTable, expectedRows);
   }
 
-  /**
-   * Test compares against its desired exceptions.
-   */
+  /// Test compares against its desired exceptions.
   @Test(dataProvider = "testDataWithSqlExecutionExceptions")
   public void testSqlWithExceptionMsgChecker(String sql, @Language("regexp") String expectedError) {
     try {
@@ -307,11 +339,12 @@ public class QueryRunnerTest extends QueryRunnerTestBase {
     });
 
     // Timeout exception should occur with this option:
-    // - If the query times out during submission, we get: "Error occurred during stage submission: Timeout"
-    // - If the query times out during execution, we get: "Timed out on stage 0 waiting for data sent by a child stage"
+    // - During submission: "Error occurred during stage submission: Timeout"
+    // - During execution on receiver side: "Timed out on stage 0 waiting for data from child stage 1"
+    // - During execution on sender side: "Received 1 error from stage 1 on serverId: Timing out on: HASH_JOIN"
     testCases.add(new Object[]{
         "SET timeoutMs = 1; SELECT * FROM a JOIN b ON a.col1 = b.col1 JOIN c ON a.col1 = c.col1",
-        "Time"
+        "Tim"
     });
 
     // Function with incorrect argument signature should throw runtime exception when casting string to numeric
@@ -321,11 +354,6 @@ public class QueryRunnerTest extends QueryRunnerTestBase {
     //   - predicate only functions:
     testCases.add(new Object[]{"SELECT * FROM a WHERE textMatch(col1, 'f')", "without text index"});
     testCases.add(new Object[]{"SELECT * FROM a WHERE text_match(col1, 'f')", "without text index"});
-    testCases.add(new Object[]{"SELECT * FROM a WHERE textContains(col1, 'f')", "supported only on native text index"});
-    testCases.add(new Object[]{
-        "SELECT * FROM a WHERE text_contains(col1, 'f')",
-        "supported only on native text index"}
-    );
 
     //  - transform only functions
     testCases.add(new Object[]{"SELECT jsonExtractKey(col1, 'path') FROM a", "was expecting (JSON String"});
@@ -335,6 +363,23 @@ public class QueryRunnerTest extends QueryRunnerTestBase {
     //    - checked "Illegal Json Path" as col1 is not actually a json string, but the call is correctly triggered.
     testCases.add(
         new Object[]{"SELECT CAST(jsonExtractScalar(col1, 'path', 'INT') AS INT) FROM a", "Cannot resolve JSON path"});
+    //    - a constant-foldable jsonPath must be folded by PinotEvaluateLiteralRule and then applied like a literal.
+    //      Reaching "Cannot resolve JSON path" (rather than ParserUtils' "single-quoted literal values") is what
+    //      proves the fold happened, so this pins the reason jsonPath does not require a literal in
+    //      TransformFunctionType#jsonExtractScalarOperandTypeChecker.
+    testCases.add(new Object[]{
+        "SELECT CAST(jsonExtractScalar(col1, CONCAT('pa', 'th'), 'INT') AS INT) FROM a", "Cannot resolve JSON path"});
+    //    - the flip side: a jsonPath that cannot fold to a literal is still rejected, on the leaf stage rather than
+    //      during validation. Covers all four variants, which share the operand type checker.
+    for (String jsonExtractScalar : new String[]{
+        "jsonExtractScalar", "jsonExtractScalarFast", "jsonExtractScalarFirstMatch", "jsonExtractScalarFory"
+    }) {
+      testCases.add(new Object[]{
+          "SELECT " + jsonExtractScalar + "(col1, col2, 'INT') FROM a",
+          "Expect the 2nd and 3rd arguments of transform function: " + jsonExtractScalar
+              + "(jsonFieldName, 'jsonPath', 'resultsType', ['defaultValue']) to be single-quoted literal values"
+      });
+    }
     //    - checked function cannot be found b/c there's no intermediate stage impl for json_extract_scalar
     testCases.add(new Object[]{
         "SELECT CAST(json_extract_scalar(a.col1, b.col2, 'INT') AS INT) FROM a JOIN b ON a.col1 = b.col1",
@@ -343,8 +388,11 @@ public class QueryRunnerTest extends QueryRunnerTestBase {
 
     // Positive int keys (only included ones that will be parsed for this query)
     for (String key : new String[]{
-        MAX_EXECUTION_THREADS, NUM_GROUPS_LIMIT, MAX_INITIAL_RESULT_HOLDER_CAPACITY, MAX_STREAMING_PENDING_BLOCKS,
-        MAX_ROWS_IN_JOIN
+        QueryOptionKey.MAX_EXECUTION_THREADS,
+        QueryOptionKey.NUM_GROUPS_LIMIT,
+        QueryOptionKey.MAX_INITIAL_RESULT_HOLDER_CAPACITY,
+        QueryOptionKey.MAX_STREAMING_PENDING_BLOCKS,
+        QueryOptionKey.MAX_ROWS_IN_JOIN
     }) {
       for (String value : new String[]{"-10000000000", "-2147483648", "-1", "0", "2147483648", "10000000000"}) {
         testCases.add(new Object[]{

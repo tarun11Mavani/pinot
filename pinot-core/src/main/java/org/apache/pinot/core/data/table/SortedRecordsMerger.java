@@ -23,9 +23,10 @@ import java.util.List;
 import java.util.function.BiFunction;
 import org.apache.pinot.core.operator.blocks.results.GroupByResultsBlock;
 import org.apache.pinot.core.query.aggregation.function.AggregationFunction;
+import org.apache.pinot.core.query.aggregation.function.AggregationFunctionUtils;
 import org.apache.pinot.core.query.request.context.QueryContext;
 import org.apache.pinot.core.util.GroupByUtils;
-import org.apache.pinot.spi.trace.Tracing;
+import org.apache.pinot.spi.query.QueryThreadContext;
 
 
 @SuppressWarnings({"unchecked", "rawtypes"})
@@ -42,7 +43,7 @@ public class SortedRecordsMerger {
 
   public SortedRecordsMerger(QueryContext queryContext, int resultSize, Comparator<Record> comparator) {
     assert queryContext.getGroupByExpressions() != null;
-    _numKeyColumns = queryContext.getGroupByExpressions().size();
+    _numKeyColumns = queryContext.getNumGroupByKeyColumns();
     _aggregationFunctions = queryContext.getAggregationFunctions();
     _resultSize = resultSize;
     _comparator = comparator;
@@ -58,6 +59,7 @@ public class SortedRecordsMerger {
     int j = 0;
 
     while (i < mi && j < mj) {
+      QueryThreadContext.checkTerminationAndSampleUsagePeriodically(newNextIdx, "SortedRecordsMerger");
       int cmp = _comparator.compare(records1[i], rightExtractor.apply(right, j));
       if (cmp < 0) {
         newRecords[newNextIdx++] = records1[i++];
@@ -71,25 +73,24 @@ public class SortedRecordsMerger {
         finalizeRecordMerge(left, newRecords, newNextIdx);
         return;
       }
-      Tracing.ThreadAccountantOps.sampleAndCheckInterruptionPeriodically(newNextIdx);
     }
 
     while (i < mi) {
+      QueryThreadContext.checkTerminationAndSampleUsagePeriodically(newNextIdx, "SortedRecordsMerger");
       newRecords[newNextIdx++] = records1[i++];
       if (newNextIdx == _resultSize) {
         finalizeRecordMerge(left, newRecords, newNextIdx);
         return;
       }
-      Tracing.ThreadAccountantOps.sampleAndCheckInterruptionPeriodically(newNextIdx);
     }
 
     while (j < mj) {
+      QueryThreadContext.checkTerminationAndSampleUsagePeriodically(newNextIdx, "SortedRecordsMerger");
       newRecords[newNextIdx++] = rightExtractor.apply(right, j++);
       if (newNextIdx == _resultSize) {
         finalizeRecordMerge(left, newRecords, newNextIdx);
         return;
       }
-      Tracing.ThreadAccountantOps.sampleAndCheckInterruptionPeriodically(newNextIdx);
     }
 
     finalizeRecordMerge(left, newRecords, newNextIdx);
@@ -131,7 +132,8 @@ public class SortedRecordsMerger {
     int numAggregations = _aggregationFunctions.length;
     int index = _numKeyColumns;
     for (int i = 0; i < numAggregations; i++, index++) {
-      existingValues[index] = _aggregationFunctions[i].merge(existingValues[index], newValues[index]);
+      existingValues[index] =
+          AggregationFunctionUtils.merge(_aggregationFunctions[i], existingValues[index], newValues[index]);
     }
     return existingRecord;
   }

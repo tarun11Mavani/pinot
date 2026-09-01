@@ -29,7 +29,7 @@ import java.time.Instant;
 import java.time.ZoneId;
 import java.time.format.DateTimeFormatter;
 import java.util.ArrayList;
-import java.util.Collections;
+import java.util.Arrays;
 import java.util.HashMap;
 import java.util.HashSet;
 import java.util.Iterator;
@@ -82,6 +82,7 @@ import static org.testng.Assert.assertFalse;
 import static org.testng.Assert.assertNotNull;
 import static org.testng.Assert.assertTrue;
 
+
 public class MultiStageEngineIntegrationTest extends BaseClusterIntegrationTestSet {
   private static final String SCHEMA_FILE_NAME = "On_Time_On_Time_Performance_2014_100k_subset_nonulls.schema";
   private static final String DEFAULT_DATABASE_NAME = CommonConstants.DEFAULT_DATABASE;
@@ -93,10 +94,21 @@ public class MultiStageEngineIntegrationTest extends BaseClusterIntegrationTestS
   private static final String DIM_TABLE_SCHEMA_PATH = "dimDayOfWeek_schema.json";
   private static final String DIM_TABLE_TABLE_CONFIG_PATH = "dimDayOfWeek_config.json";
   private static final Integer DIM_NUMBER_OF_RECORDS = 7;
+  private static final String DIM_TABLE = "daysOfWeek";
 
   @Override
   protected String getSchemaFileName() {
     return SCHEMA_FILE_NAME;
+  }
+
+  @Override
+  protected TableConfig createOfflineTableConfig() {
+    // Enable the TimeSegmentPruner so that useBrokerPruning can eliminate segments based on time
+    // filters. Without this, the broker has no pruner registered and cannot determine that
+    // DaysSinceEpoch < 0 matches zero segments — which is required for the short-circuit tests.
+    TableConfig tableConfig = super.createOfflineTableConfig();
+    tableConfig.setRoutingConfig(new RoutingConfig(null, List.of("time"), null, null));
+    return tableConfig;
   }
 
   @BeforeClass
@@ -143,6 +155,7 @@ public class MultiStageEngineIntegrationTest extends BaseClusterIntegrationTestS
     waitForAllDocsLoaded(600_000L);
 
     setupTableWithNonDefaultDatabase(avroFiles);
+    setupDimensionTable();
   }
 
   @Override
@@ -213,6 +226,177 @@ public class MultiStageEngineIntegrationTest extends BaseClusterIntegrationTestS
     jsonNode = postQuery(query);
     long expectedResult = jsonNode.get("resultTable").get("rows").get(0).get(0).asLong();
     assertEquals(joinResult, expectedResult);
+  }
+
+  @Test
+  public void testAllLeafStagesEmptyBrokerResponses()
+      throws Exception {
+    String table = "mytable";
+    assertAllLeafStagesEmptyRows("SELECT AirlineID, Carrier FROM " + table + " WHERE DaysSinceEpoch < 0",
+        List.of(), "LONG", "STRING");
+    assertAllLeafStagesEmptyRows("SELECT COUNT(*) FROM " + table + " WHERE DaysSinceEpoch < 0",
+        List.of(List.<Object>of(0)), "LONG");
+    assertAllLeafStagesEmptyRows("SELECT SUM(ActualElapsedTime) FROM " + table + " WHERE DaysSinceEpoch < 0",
+        List.of(Arrays.asList((Object) null)), "LONG");
+    assertAllLeafStagesEmptyRows("SELECT COUNT(*) + 1 FROM " + table + " WHERE DaysSinceEpoch < 0",
+        List.of(List.<Object>of(1)), "LONG");
+    assertAllLeafStagesEmptyRows(
+        "SELECT COALESCE(SUM(ActualElapsedTime), 0) FROM " + table + " WHERE DaysSinceEpoch < 0",
+        List.of(List.<Object>of(0)), "LONG");
+    assertAllLeafStagesEmptyRows("SELECT COUNT(*) FROM " + table + " WHERE DaysSinceEpoch < 0 HAVING COUNT(*) > 0",
+        List.of(), "LONG");
+    assertAllLeafStagesEmptyRows(
+        "SELECT AirlineID, COUNT(*) FROM " + table + " WHERE DaysSinceEpoch < 0 GROUP BY AirlineID",
+        List.of(), "LONG", "LONG");
+    // MIN/MAX return null on empty input (not +/-INFINITY)
+    assertAllLeafStagesEmptyRows("SELECT MIN(ActualElapsedTime) FROM " + table + " WHERE DaysSinceEpoch < 0",
+        List.of(Arrays.asList((Object) null)), "INT");
+    assertAllLeafStagesEmptyRows("SELECT MAX(ActualElapsedTime) FROM " + table + " WHERE DaysSinceEpoch < 0",
+        List.of(Arrays.asList((Object) null)), "INT");
+    // AVG returns null on empty input
+    assertAllLeafStagesEmptyRows("SELECT AVG(ActualElapsedTime) FROM " + table + " WHERE DaysSinceEpoch < 0",
+        List.of(Arrays.asList((Object) null)), "DOUBLE");
+    // Multi-aggregate row alignment
+    assertAllLeafStagesEmptyRows(
+        "SELECT MIN(ActualElapsedTime), MAX(ActualElapsedTime), AVG(ActualElapsedTime), COUNT(*)"
+            + " FROM " + table + " WHERE DaysSinceEpoch < 0",
+        List.of(Arrays.asList(null, null, null, 0L)), "INT", "INT", "DOUBLE", "LONG");
+    // HAVING with IS NULL
+    assertAllLeafStagesEmptyRows(
+        "SELECT SUM(ActualElapsedTime) FROM " + table
+            + " WHERE DaysSinceEpoch < 0 HAVING SUM(ActualElapsedTime) IS NULL",
+        List.of(Arrays.asList((Object) null)), "LONG");
+    // Window function over empty input
+    assertAllLeafStagesEmptyRows(
+        "SELECT SUM(ActualElapsedTime) OVER () FROM " + table + " WHERE DaysSinceEpoch < 0",
+        List.of(), "LONG");
+  }
+
+  @Test
+  public void testAllLeafStagesEmptyBrokerResponsesWithPhysicalOptimizer()
+      throws Exception {
+    // Same short-circuit behavior must hold under the multi-stage physical optimizer, which previously failed with
+    // "No routing entry for offline or realtime type" when a leaf stage had no routable segments.
+    String table = "mytable";
+    String prefix = "SET useBrokerPruning = 'true'; SET usePhysicalOptimizer = 'true'; ";
+    assertAllLeafStagesEmptyRows(prefix, "SELECT AirlineID, Carrier FROM " + table + " WHERE DaysSinceEpoch < 0",
+        List.of(), "LONG", "STRING");
+    assertAllLeafStagesEmptyRows(prefix, "SELECT COUNT(*) FROM " + table + " WHERE DaysSinceEpoch < 0",
+        List.of(List.<Object>of(0)), "LONG");
+    assertAllLeafStagesEmptyRows(prefix, "SELECT SUM(ActualElapsedTime) FROM " + table + " WHERE DaysSinceEpoch < 0",
+        List.of(Arrays.asList((Object) null)), "LONG");
+    assertAllLeafStagesEmptyRows(prefix, "SELECT COUNT(*) + 1 FROM " + table + " WHERE DaysSinceEpoch < 0",
+        List.of(List.<Object>of(1)), "LONG");
+    assertAllLeafStagesEmptyRows(prefix,
+        "SELECT AirlineID, COUNT(*) FROM " + table + " WHERE DaysSinceEpoch < 0 GROUP BY AirlineID",
+        List.of(), "LONG", "LONG");
+  }
+
+  @Test
+  public void testPartiallyEmptyWithPhysicalOptimizerFailsFast()
+      throws Exception {
+    // Combining an empty/fully-pruned table with a non-empty table is not yet supported by the physical optimizer.
+    // It must fail fast with a clear, actionable error rather than silently drop rows.
+    String table = "mytable";
+    String expectedError = "combine an empty or fully-pruned table with a non-empty table";
+    // The empty branch (all segments pruned) contributes zero rows, so the union counts only the non-empty branch.
+    String unionQuery = "SELECT COUNT(*) FROM (SELECT AirlineID FROM " + table + " WHERE DaysSinceEpoch < 0 "
+        + "UNION ALL SELECT AirlineID FROM " + table + ") u";
+
+    JsonNode overUnion = postQuery("SET useBrokerPruning = 'true'; SET usePhysicalOptimizer = 'true'; " + unionQuery);
+    assertFalse(overUnion.get("exceptions").isEmpty(), "Expected a partially-empty error: " + overUnion);
+    assertTrue(overUnion.get("exceptions").toString().contains(expectedError),
+        "Expected a clear partially-empty error, got: " + overUnion.get("exceptions"));
+
+    // The suggested fallback (legacy engine) must answer the same query correctly: the empty branch adds nothing, so
+    // the union count equals the total row count of the non-empty table.
+    long total = postQuery("SELECT COUNT(*) FROM " + table).get("resultTable").get("rows").get(0).get(0).asLong();
+    assertTrue(total > 0, "Sanity: mytable should be non-empty");
+    JsonNode fallback = postQuery("SET useBrokerPruning = 'true'; SET usePhysicalOptimizer = 'false'; " + unionQuery);
+    assertTrue(fallback.get("exceptions").isEmpty(), "Fallback should not error: " + fallback);
+    assertEquals(fallback.get("resultTable").get("rows").get(0).get(0).asLong(), total);
+  }
+
+  @Test
+  public void testReplicatedLeavesThatCanProduceRowsDoNotShortCircuit()
+      throws Exception {
+    assertDoesNotShortCircuitRows("SELECT d.dayId FROM " + DIM_TABLE
+            + " d LEFT JOIN (SELECT DayOfWeek FROM mytable WHERE DaysSinceEpoch < 0) f "
+            + "ON d.dayId = f.DayOfWeek ORDER BY d.dayId",
+        DIM_NUMBER_OF_RECORDS);
+    assertDoesNotShortCircuitRows("SELECT d.dayId FROM (SELECT DayOfWeek FROM mytable WHERE DaysSinceEpoch < 0) f "
+            + "RIGHT JOIN " + DIM_TABLE + " d ON f.DayOfWeek = d.dayId ORDER BY d.dayId",
+        DIM_NUMBER_OF_RECORDS);
+    assertDoesNotShortCircuitRows("SELECT d.dayId FROM (SELECT DayOfWeek FROM mytable WHERE DaysSinceEpoch < 0) f "
+            + "FULL JOIN " + DIM_TABLE + " d ON f.DayOfWeek = d.dayId ORDER BY d.dayId",
+        DIM_NUMBER_OF_RECORDS);
+    assertDoesNotShortCircuitSingleLong("SELECT COUNT(*) FROM "
+            + "(SELECT DayOfWeek FROM mytable WHERE DaysSinceEpoch < 0) f LEFT JOIN " + DIM_TABLE
+            + " d ON f.DayOfWeek = d.dayId",
+        0);
+    assertDoesNotShortCircuitSingleLong("SELECT COUNT(*) FROM (SELECT dayId FROM " + DIM_TABLE
+            + " UNION ALL SELECT DayOfWeek FROM mytable WHERE DaysSinceEpoch < 0) u",
+        DIM_NUMBER_OF_RECORDS);
+  }
+
+  private JsonNode assertAllLeafStagesEmptyRows(String query, List<List<Object>> expectedRows, String... expectedTypes)
+      throws Exception {
+    return assertAllLeafStagesEmptyRows("SET useBrokerPruning = 'true'; ", query, expectedRows, expectedTypes);
+  }
+
+  private JsonNode assertAllLeafStagesEmptyRows(String setPrefix, String query, List<List<Object>> expectedRows,
+      String... expectedTypes)
+      throws Exception {
+    JsonNode response = postQuery(setPrefix + query);
+    assertTrue(response.get("exceptions").isEmpty(), "Unexpected exceptions for query: " + query);
+    assertEquals(response.get("numServersQueried").asInt(), 0, "Query should not dispatch to servers: " + query);
+    assertEquals(response.get("numServersResponded").asInt(), 0, "Query should not dispatch to servers: " + query);
+
+    JsonNode resultTable = response.get("resultTable");
+    JsonNode rows = resultTable.get("rows");
+    assertEquals(rows.size(), expectedRows.size(), "Unexpected row count for query: " + query);
+    for (int rowId = 0; rowId < expectedRows.size(); rowId++) {
+      List<Object> expectedRow = expectedRows.get(rowId);
+      JsonNode actualRow = rows.get(rowId);
+      assertEquals(actualRow.size(), expectedRow.size(), "Unexpected column count for query: " + query);
+      for (int colId = 0; colId < expectedRow.size(); colId++) {
+        Object expectedValue = expectedRow.get(colId);
+        if (expectedValue == null) {
+          assertTrue(actualRow.get(colId).isNull(), "Expected null for query: " + query);
+        } else if (expectedValue instanceof Number) {
+          assertEquals(actualRow.get(colId).asLong(), ((Number) expectedValue).longValue(),
+              "Unexpected numeric value for query: " + query);
+        } else {
+          assertEquals(actualRow.get(colId).asText(), expectedValue, "Unexpected value for query: " + query);
+        }
+      }
+    }
+
+    JsonNode columnDataTypes = resultTable.get("dataSchema").get("columnDataTypes");
+    assertEquals(columnDataTypes.size(), expectedTypes.length, "Unexpected schema width for query: " + query);
+    for (int i = 0; i < expectedTypes.length; i++) {
+      assertEquals(columnDataTypes.get(i).asText(), expectedTypes[i], "Unexpected type for query: " + query);
+    }
+    return response;
+  }
+
+  private void assertDoesNotShortCircuitRows(String query, int expectedRowCount)
+      throws Exception {
+    JsonNode response = postQuery("SET useBrokerPruning = 'true'; " + query);
+    assertTrue(response.get("exceptions").isEmpty(), "Unexpected exceptions for query: " + query);
+    assertTrue(response.get("numServersQueried").asInt() > 0, "Query should dispatch to servers: " + query);
+    assertEquals(response.get("resultTable").get("rows").size(), expectedRowCount,
+        "Unexpected row count for query: " + query);
+  }
+
+  private void assertDoesNotShortCircuitSingleLong(String query, long expectedValue)
+      throws Exception {
+    JsonNode response = postQuery("SET useBrokerPruning = 'true'; " + query);
+    assertTrue(response.get("exceptions").isEmpty(), "Unexpected exceptions for query: " + query);
+    assertTrue(response.get("numServersQueried").asInt() > 0, "Query should dispatch to servers: " + query);
+    JsonNode rows = response.get("resultTable").get("rows");
+    assertEquals(rows.size(), 1, "Unexpected row count for query: " + query);
+    assertEquals(rows.get(0).get(0).asLong(), expectedValue, "Unexpected value for query: " + query);
   }
 
   @Test
@@ -356,10 +540,8 @@ public class MultiStageEngineIntegrationTest extends BaseClusterIntegrationTestS
     Assert.assertEquals(queryResponse.get("numRowsResultSet").asInt(), 1);
   }
 
-  /**
-   * This test is added because SSE engine supports it and is used in production.
-   * Make sure that the difference in support is well-documented.
-   */
+  /// This test is added because SSE engine supports it and is used in production.
+  /// Make sure that the difference in support is well-documented.
   @Test
   void testDualWithNotExistsTableMSE()
       throws Exception {
@@ -463,7 +645,7 @@ public class MultiStageEngineIntegrationTest extends BaseClusterIntegrationTestS
     result = response.get("resultTable").get("rows").get(0).get(0).asText();
     assertEquals(result, "hsomething, something, something and wise");
 
-    // Test occurence
+    // Test occurrence
     sqlQuery = "SELECT regexpReplace('healthy, wealthy, stealthy and wise','\\w+thy', 'something', 0, 2)";
     response = postQuery(sqlQuery);
     result = response.get("resultTable").get("rows").get(0).get(0).asText();
@@ -580,7 +762,7 @@ public class MultiStageEngineIntegrationTest extends BaseClusterIntegrationTestS
     result = response.get("resultTable").get("rows").get(0).get(0).asText();
     assertEquals(result, "hsomething, something, something and wise");
 
-    // Test occurence
+    // Test occurrence
     sqlQuery = "SELECT regexpReplaceVar('healthy, wealthy, stealthy and wise','\\w+thy', 'something', 0, 2)";
     response = postQuery(sqlQuery);
     result = response.get("resultTable").get("rows").get(0).get(0).asText();
@@ -870,9 +1052,9 @@ public class MultiStageEngineIntegrationTest extends BaseClusterIntegrationTestS
     JsonNode results = resultTable.get("rows").get(0);
     assertEquals(results.get(0).asInt(), 1);
     long nowResult = results.get(1).asLong();
-    // Timestamp granularity is seconds
-    assertTrue(nowResult >= ((queryStartTimeMs / 1000) * 1000));
-    assertTrue(nowResult <= ((queryEndTimeMs / 1000) * 1000));
+    // now() returns millisecond-precision epoch millis, consistent with the single-stage engine (issue #18881)
+    assertTrue(nowResult >= queryStartTimeMs);
+    assertTrue(nowResult <= queryEndTimeMs);
     long oneHourAgoResult = results.get(2).asLong();
     assertTrue(oneHourAgoResult >= queryStartTimeMs - TimeUnit.HOURS.toMillis(1));
     assertTrue(oneHourAgoResult <= queryEndTimeMs - TimeUnit.HOURS.toMillis(1));
@@ -884,8 +1066,8 @@ public class MultiStageEngineIntegrationTest extends BaseClusterIntegrationTestS
     String dateTimeResult = results.get(4).asText();
     assertTrue(dateTimeResult.equals(queryStartTimeDay) || dateTimeResult.equals(queryEndTimeDay));
     nowResult = results.get(5).asLong();
-    assertTrue(nowResult >= ((queryStartTimeMs / 1000) * 1000));
-    assertTrue(nowResult <= ((queryEndTimeMs / 1000) * 1000));
+    assertTrue(nowResult >= queryStartTimeMs);
+    assertTrue(nowResult <= queryEndTimeMs);
     oneHourAgoResult = results.get(6).asLong();
     assertTrue(oneHourAgoResult >= queryStartTimeMs - TimeUnit.HOURS.toMillis(1));
     assertTrue(oneHourAgoResult <= queryEndTimeMs - TimeUnit.HOURS.toMillis(1));
@@ -998,10 +1180,8 @@ public class MultiStageEngineIntegrationTest extends BaseClusterIntegrationTestS
     assertFalse(jsonNode.get("exceptions").isEmpty());
   }
 
-  /**
-   * Helper method to verify the result of a query that is assumed to return a single column with the same value for
-   * all the rows. Only the first row value is checked.
-   */
+  /// Helper method to verify the result of a query that is assumed to return a single column with the same value for
+  /// all the rows. Only the first row value is checked.
   private void checkSingleColumnSameValueResult(JsonNode result, long expectedRows, String type,
       Object expectedValue) {
     assertEquals(result.get("resultTable").get("dataSchema").get("columnDataTypes").size(), 1);
@@ -1430,7 +1610,7 @@ public class MultiStageEngineIntegrationTest extends BaseClusterIntegrationTestS
       throws Exception {
     // default database check. Default database context passed as "database" http header
     checkQueryResultForDBTest("ActualElapsedTime", DEFAULT_TABLE_NAME,
-        Collections.singletonMap(CommonConstants.DATABASE, DEFAULT_DATABASE_NAME));
+        Map.of(CommonConstants.DATABASE, DEFAULT_DATABASE_NAME));
   }
 
   @Test
@@ -1446,7 +1626,7 @@ public class MultiStageEngineIntegrationTest extends BaseClusterIntegrationTestS
       throws Exception {
     // default database check. Default database context passed as table prefix as well as http header
     checkQueryResultForDBTest("ActualElapsedTime", DEFAULT_DATABASE_NAME + "." + DEFAULT_TABLE_NAME,
-        Collections.singletonMap(CommonConstants.DATABASE, DEFAULT_DATABASE_NAME));
+        Map.of(CommonConstants.DATABASE, DEFAULT_DATABASE_NAME));
   }
 
   @Test
@@ -1472,7 +1652,7 @@ public class MultiStageEngineIntegrationTest extends BaseClusterIntegrationTestS
     // Using renamed column "ActualElapsedTime_2" to ensure that the same table is not being queried.
     // custom database check. Database context passed as "database" http header
     checkQueryResultForDBTest("ActualElapsedTime_2", DEFAULT_TABLE_NAME,
-        Collections.singletonMap(CommonConstants.DATABASE, DATABASE_NAME));
+        Map.of(CommonConstants.DATABASE, DATABASE_NAME));
   }
 
   @Test
@@ -1489,7 +1669,7 @@ public class MultiStageEngineIntegrationTest extends BaseClusterIntegrationTestS
     // Using renamed column "ActualElapsedTime_2" to ensure that the same table is not being queried.
     // custom database check. Database context passed as table prefix as well as http header
     checkQueryResultForDBTest("ActualElapsedTime_2", TABLE_NAME_WITH_DATABASE,
-        Collections.singletonMap(CommonConstants.DATABASE, DATABASE_NAME));
+        Map.of(CommonConstants.DATABASE, DATABASE_NAME));
   }
 
   @Test
@@ -1504,7 +1684,7 @@ public class MultiStageEngineIntegrationTest extends BaseClusterIntegrationTestS
   public void testWithConflictingDatabaseContextFromTableNamePrefixAndHttpHeader()
       throws Exception {
     JsonNode result = getQueryResultForDBTest("ActualElapsedTime", TABLE_NAME_WITH_DATABASE, null,
-        Collections.singletonMap(CommonConstants.DATABASE, DEFAULT_DATABASE_NAME));
+        Map.of(CommonConstants.DATABASE, DEFAULT_DATABASE_NAME));
     checkQueryPlanningErrorForDBTest(result, QueryErrorCode.TABLE_DOES_NOT_EXIST);
   }
 
@@ -1512,7 +1692,7 @@ public class MultiStageEngineIntegrationTest extends BaseClusterIntegrationTestS
   public void testWithConflictingDatabaseContextFromHttpHeaderAndQueryOption()
       throws Exception {
     JsonNode result = getQueryResultForDBTest("ActualElapsedTime", TABLE_NAME_WITH_DATABASE, DATABASE_NAME,
-        Collections.singletonMap(CommonConstants.DATABASE, DEFAULT_DATABASE_NAME));
+        Map.of(CommonConstants.DATABASE, DEFAULT_DATABASE_NAME));
     checkQueryPlanningErrorForDBTest(result, QueryErrorCode.QUERY_VALIDATION);
   }
 
@@ -1538,6 +1718,26 @@ public class MultiStageEngineIntegrationTest extends BaseClusterIntegrationTestS
     assertTrue(tablesQueried.isArray());
     assertEquals(tablesQueried.size(), 1);
     assertEquals(tablesQueried.get(0).asText(), "mytable");
+  }
+
+  @Test(dataProvider = "useBothQueryEngines")
+  public void testTablesQueriedFieldWithPrunedSegments(boolean useMultiStageQueryEngine)
+      throws Exception {
+    setUseMultiStageQueryEngine(useMultiStageQueryEngine);
+    // Query with a filter that is always false, causing all segments to be pruned at the broker
+    String query = "select sum(ActualElapsedTime) from mytable WHERE 1=0;";
+    JsonNode jsonNode = postQuery(query);
+    JsonNode tablesQueried = jsonNode.get("tablesQueried");
+    assertNotNull(tablesQueried, "tablesQueried should not be null even when all segments are pruned");
+    assertTrue(tablesQueried.isArray());
+    if (useMultiStageQueryEngine) {
+      // TODO: Multi-stage engine will optimize the query before getting. Once this is fixed,
+      // we can update the test to expect "mytable" here.
+      assertEquals(tablesQueried.size(), 0);
+    } else {
+      assertEquals(tablesQueried.size(), 1);
+      assertEquals(tablesQueried.get(0).asText(), "mytable");
+    }
   }
 
   @Test
@@ -1639,15 +1839,6 @@ public class MultiStageEngineIntegrationTest extends BaseClusterIntegrationTestS
   public void testLookupJoin()
       throws Exception {
 
-    Schema lookupTableSchema = createSchema(DIM_TABLE_SCHEMA_PATH);
-    addSchema(lookupTableSchema);
-    TableConfig tableConfig = createTableConfig(DIM_TABLE_TABLE_CONFIG_PATH);
-    TenantConfig tenantConfig = new TenantConfig(getBrokerTenant(), getServerTenant(), null);
-    tableConfig.setTenantConfig(tenantConfig);
-    addTableConfig(tableConfig);
-    createAndUploadSegmentFromClasspath(tableConfig, lookupTableSchema, DIM_TABLE_DATA_PATH, FileFormat.CSV,
-        DIM_NUMBER_OF_RECORDS, 60_000);
-
     // Compare total rows in the primary table with number of rows in the result of the join with lookup table
     String query = "select count(*) from " + getTableName();
     JsonNode jsonNode = postQuery(query);
@@ -1670,8 +1861,6 @@ public class MultiStageEngineIntegrationTest extends BaseClusterIntegrationTestS
     }
     assertTrue(stages.contains("LOOKUP_JOIN"), "Could not find LOOKUP_JOIN stage in the query plan");
     assertFalse(stages.contains("HASH_JOIN"), "HASH_JOIN stage should not be present in the query plan");
-
-    dropOfflineTable(tableConfig.getTableName());
   }
 
   public void testSearchLiteralFilter()
@@ -1716,47 +1905,67 @@ public class MultiStageEngineIntegrationTest extends BaseClusterIntegrationTestS
   @Test
   public void testValidateQueryApiSuccess()
       throws Exception {
+    MultiStageQueryValidationRequest request =
+        new MultiStageQueryValidationRequest("SELECT * FROM mytable", null, null, null, null, false);
+    String requestJson = JsonUtils.objectToString(request);
     JsonNode result = JsonUtils.stringToJsonNode(
-        sendPostRequest(getControllerBaseApiUrl() + "/validateMultiStageQuery",
-            "{\"sql\": \"SELECT * FROM mytable\"}", null));
-    assertTrue(result.get("compiledSuccessfully").asBoolean());
-    assertTrue(result.get("errorCode").isNull());
-    assertTrue(result.get("errorMessage").isNull());
+        sendPostRequest(getControllerBaseApiUrl() + "/validateMultiStageQuery", requestJson, null));
+
+    assertTrue(result.isArray(), "Response should be an array");
+    assertEquals(1, result.size(), "Should have exactly one response");
+    JsonNode queryResponse = result.get(0);
+    assertTrue(queryResponse.get("compiledSuccessfully").asBoolean());
+    assertTrue(queryResponse.get("errorCode").isNull());
+    assertTrue(queryResponse.get("errorMessage").isNull());
+    assertEquals("SELECT * FROM mytable", queryResponse.get("sql").asText());
   }
 
   @Test
   public void testValidateQueryApiError()
       throws Exception {
+    MultiStageQueryValidationRequest request =
+        new MultiStageQueryValidationRequest("SELECT invalidColumn FROM invalidTable", null, null, null, null, false);
+    String requestJson = JsonUtils.objectToString(request);
     JsonNode result = JsonUtils.stringToJsonNode(
-        sendPostRequest(getControllerBaseApiUrl() + "/validateMultiStageQuery",
-            "{\"sql\": \"SELECT invalidColumn FROM invalidTable\"}", null));
-    assertFalse(result.get("compiledSuccessfully").asBoolean());
-    assertEquals(result.get("errorCode").asText(), QueryErrorCode.TABLE_DOES_NOT_EXIST.name());
-    assertFalse(result.get("errorMessage").isNull());
+        sendPostRequest(getControllerBaseApiUrl() + "/validateMultiStageQuery", requestJson, null));
+    assertTrue(result.isArray(), "Response should be an array");
+    assertEquals(1, result.size(), "Should have exactly one response");
 
+    JsonNode queryResponse = result.get(0);
+    assertFalse(queryResponse.get("compiledSuccessfully").asBoolean());
+    assertEquals(queryResponse.get("errorCode").asText(), QueryErrorCode.TABLE_DOES_NOT_EXIST.name());
+    assertFalse(queryResponse.get("errorMessage").isNull());
+    assertEquals("SELECT invalidColumn FROM invalidTable", queryResponse.get("sql").asText());
+
+    request = new MultiStageQueryValidationRequest("SELECT CAST('abc' AS INT)", null, null, null, null, false);
+
+    requestJson = JsonUtils.objectToString(request);
     result = JsonUtils.stringToJsonNode(
-        sendPostRequest(getControllerBaseApiUrl() + "/validateMultiStageQuery",
-            "{\"sql\": \"SELECT CAST('abc' AS INT)\"}", null));
-    assertFalse(result.get("compiledSuccessfully").asBoolean());
-    assertEquals(result.get("errorCode").asText(), QueryErrorCode.QUERY_PLANNING.name());
-    assertFalse(result.get("errorMessage").isNull());
+        sendPostRequest(getControllerBaseApiUrl() + "/validateMultiStageQuery", requestJson, null));
+
+    assertTrue(result.isArray(), "Response should be an array");
+    assertEquals(1, result.size(), "Should have exactly one response");
+
+    queryResponse = result.get(0);
+    assertFalse(queryResponse.get("compiledSuccessfully").asBoolean());
+    assertEquals(queryResponse.get("errorCode").asText(), QueryErrorCode.QUERY_PLANNING.name());
+    assertFalse(queryResponse.get("errorMessage").isNull());
+    assertEquals("SELECT CAST('abc' AS INT)", queryResponse.get("sql").asText());
   }
 
   @Test
-  public void testValidateQueryApiSuccessfulQueries() throws Exception {
-    JsonNode tableConfigsNode = JsonUtils.stringToJsonNode(
-        sendGetRequest(getControllerBaseApiUrl() + "/tables/mytable"));
-    JsonNode schemaNode = JsonUtils.stringToJsonNode(
-        sendGetRequest(getControllerBaseApiUrl() + "/schemas/mytable"));
-
-    String[] successfulQueries = {
-        "SELECT COUNT(*) FROM mytable",
+  public void testValidateQueryApiSuccessfulQueries()
+      throws Exception {
+    JsonNode tableConfigsNode =
+        JsonUtils.stringToJsonNode(getOrCreateAdminClient().getTableClient().getTableConfig("mytable"));
+    JsonNode schemaNode =
+        JsonUtils.stringToJsonNode(getOrCreateAdminClient().getSchemaClient().getSchema("mytable"));
+    List<String> successfulQueries = Arrays.asList("SELECT COUNT(*) FROM mytable",
         "SELECT DivAirportSeqIDs, COUNT(*) FROM mytable GROUP BY DivAirportSeqIDs",
         "SELECT DivAirportSeqIDs FROM mytable WHERE arrayToMV(DivAirportSeqIDs) > 0 LIMIT 10",
         "SELECT DivAirportSeqIDs, AirlineID FROM mytable ORDER BY DivAirportSeqIDs LIMIT 5",
         "SELECT SUM(arrayToMV(DivAirportSeqIDs)) AS total FROM mytable",
-        "SELECT AVG(arrayToMV(DivAirportSeqIDs)) FROM mytable WHERE AirlineID IS NOT NULL"
-    };
+        "SELECT AVG(arrayToMV(DivAirportSeqIDs)) FROM mytable WHERE AirlineID IS NOT NULL");
 
     List<TableConfig> tableConfigs = new ArrayList<>();
     JsonNode offlineConfig = tableConfigsNode.get("OFFLINE");
@@ -1769,76 +1978,143 @@ public class MultiStageEngineIntegrationTest extends BaseClusterIntegrationTestS
     }
 
     Schema schema = JsonUtils.jsonNodeToObject(schemaNode, Schema.class);
-    List<Schema> schemas = Collections.singletonList(schema);
+    List<Schema> schemas = List.of(schema);
 
-    for (String query : successfulQueries) {
-      MultiStageQueryValidationRequest request = new MultiStageQueryValidationRequest(
-          query, tableConfigs, schemas, null, false);
-
-      String requestJson = JsonUtils.objectToString(request);
-      JsonNode result = JsonUtils.stringToJsonNode(
-          sendPostRequest(getControllerBaseApiUrl() + "/validateMultiStageQuery", requestJson, null));
-
-      assertTrue(result.get("compiledSuccessfully").asBoolean(),
-          "Query should compile successfully: " + query);
-      assertTrue(result.get("errorCode").isNull());
-      assertTrue(result.get("errorMessage").isNull());
-    }
-  }
-
-  @Test
-  public void testValidateQueryApiUnsuccessfulQueries() throws Exception {
-    JsonNode tableConfigsNode =
-        JsonUtils.stringToJsonNode(sendGetRequest(getControllerBaseApiUrl() + "/tables/mytable"));
-    JsonNode schemaNode =
-        JsonUtils.stringToJsonNode(sendGetRequest(getControllerBaseApiUrl() + "/schemas/mytable"));
-
-    List<TableConfig> tableConfigs = new ArrayList<>();
-    JsonNode offlineConfig = tableConfigsNode.get("OFFLINE");
-    if (offlineConfig != null && !offlineConfig.isMissingNode() && !offlineConfig.isEmpty()) {
-      tableConfigs.add(JsonUtils.jsonNodeToObject(offlineConfig, TableConfig.class));
-    }
-    JsonNode realtimeConfig = tableConfigsNode.get("REALTIME");
-    if (realtimeConfig != null && !realtimeConfig.isMissingNode() && !realtimeConfig.isEmpty()) {
-      tableConfigs.add(JsonUtils.jsonNodeToObject(realtimeConfig, TableConfig.class));
-    }
-
-    Schema schema = JsonUtils.jsonNodeToObject(schemaNode, Schema.class);
-    List<Schema> schemas = Collections.singletonList(schema);
-
-    // Invalid column in the query
-    MultiStageQueryValidationRequest request = new MultiStageQueryValidationRequest(
-        "SELECT nonExistentColumn FROM mytable", tableConfigs, schemas, null, true);
+    MultiStageQueryValidationRequest request =
+        new MultiStageQueryValidationRequest(null, tableConfigs, schemas, null, successfulQueries, false);
 
     String requestJson = JsonUtils.objectToString(request);
     JsonNode result = JsonUtils.stringToJsonNode(
         sendPostRequest(getControllerBaseApiUrl() + "/validateMultiStageQuery", requestJson, null));
-    assertFalse(result.get("compiledSuccessfully").asBoolean());
-    assertEquals(result.get("errorCode").asText(), QueryErrorCode.QUERY_VALIDATION.name());
 
-    // Cannot apply '>' to arguments of type '<INTEGER> to <ARRAY>
+    assertTrue(result.isArray(), "Response should be an array");
+    assertEquals(successfulQueries.size(), result.size(), "Should have response for each query");
+
+    for (int i = 0; i < result.size(); i++) {
+      JsonNode queryResponse = result.get(i);
+      String expectedQuery = successfulQueries.get(i);
+
+      assertTrue(queryResponse.get("compiledSuccessfully").asBoolean(),
+          "Query should compile successfully: " + expectedQuery);
+      assertTrue(queryResponse.get("errorCode").isNull(), "Error code should be null for query: " + expectedQuery);
+      assertTrue(queryResponse.get("errorMessage").isNull(),
+          "Error message should be null for query: " + expectedQuery);
+      assertEquals(expectedQuery, queryResponse.get("sql").asText(), "SQL should match the input query");
+    }
+  }
+
+  @Test
+  public void testValidateQueryApiBatchMixedResults()
+      throws Exception {
+    JsonNode tableConfigsNode =
+        JsonUtils.stringToJsonNode(getOrCreateAdminClient().getTableClient().getTableConfig("mytable"));
+    JsonNode schemaNode =
+        JsonUtils.stringToJsonNode(getOrCreateAdminClient().getSchemaClient().getSchema("mytable"));
+    List<String> mixedQueries = Arrays.asList("SELECT COUNT(*) FROM mytable", "SELECT invalidColumn FROM mytable",
+        "SELECT DivAirportSeqIDs FROM mytable LIMIT 10", "SELECT * FROM nonExistentTable");
+
+    List<TableConfig> tableConfigs = new ArrayList<>();
+    JsonNode offlineConfig = tableConfigsNode.get("OFFLINE");
+    if (offlineConfig != null && !offlineConfig.isMissingNode() && !offlineConfig.isEmpty()) {
+      tableConfigs.add(JsonUtils.jsonNodeToObject(offlineConfig, TableConfig.class));
+    }
+
+    Schema schema = JsonUtils.jsonNodeToObject(schemaNode, Schema.class);
+    List<Schema> schemas = List.of(schema);
+
+    MultiStageQueryValidationRequest request =
+        new MultiStageQueryValidationRequest(null, tableConfigs, schemas, null, mixedQueries, false);
+
+    String requestJson = JsonUtils.objectToString(request);
+    JsonNode result = JsonUtils.stringToJsonNode(
+        sendPostRequest(getControllerBaseApiUrl() + "/validateMultiStageQuery", requestJson, null));
+
+    assertTrue(result.isArray(), "Response should be an array");
+    assertEquals(4, result.size(), "Should have 4 result entries");
+
+    JsonNode result1 = result.get(0);
+    assertTrue(result1.get("compiledSuccessfully").asBoolean(), "First query should succeed");
+    assertEquals("SELECT COUNT(*) FROM mytable", result1.get("sql").asText());
+
+    JsonNode result2 = result.get(1);
+    assertFalse(result2.get("compiledSuccessfully").asBoolean(), "Second query should fail");
+    assertEquals("SELECT invalidColumn FROM mytable", result2.get("sql").asText());
+    assertNotNull(result2.get("errorMessage").asText());
+
+    JsonNode result3 = result.get(2);
+    assertTrue(result3.get("compiledSuccessfully").asBoolean(), "Third query should succeed");
+    assertEquals("SELECT DivAirportSeqIDs FROM mytable LIMIT 10", result3.get("sql").asText());
+
+    JsonNode result4 = result.get(3);
+    assertFalse(result4.get("compiledSuccessfully").asBoolean(), "Fourth query should fail");
+    assertEquals("SELECT * FROM nonExistentTable", result4.get("sql").asText());
+    assertNotNull(result4.get("errorMessage").asText());
+  }
+
+  @Test
+  public void testValidateQueryApiUnsuccessfulQueries()
+      throws Exception {
+    JsonNode tableConfigsNode =
+        JsonUtils.stringToJsonNode(getOrCreateAdminClient().getTableClient().getTableConfig("mytable"));
+    JsonNode schemaNode =
+        JsonUtils.stringToJsonNode(getOrCreateAdminClient().getSchemaClient().getSchema("mytable"));
+
+    List<TableConfig> tableConfigs = new ArrayList<>();
+    JsonNode offlineConfig = tableConfigsNode.get("OFFLINE");
+    if (offlineConfig != null && !offlineConfig.isMissingNode() && !offlineConfig.isEmpty()) {
+      tableConfigs.add(JsonUtils.jsonNodeToObject(offlineConfig, TableConfig.class));
+    }
+    JsonNode realtimeConfig = tableConfigsNode.get("REALTIME");
+    if (realtimeConfig != null && !realtimeConfig.isMissingNode() && !realtimeConfig.isEmpty()) {
+      tableConfigs.add(JsonUtils.jsonNodeToObject(realtimeConfig, TableConfig.class));
+    }
+
+    Schema schema = JsonUtils.jsonNodeToObject(schemaNode, Schema.class);
+    List<Schema> schemas = List.of(schema);
+
+    MultiStageQueryValidationRequest request =
+        new MultiStageQueryValidationRequest("SELECT nonExistentColumn FROM mytable",
+            tableConfigs, schemas, null, null, true);
+
+    String requestJson = JsonUtils.objectToString(request);
+    JsonNode result = JsonUtils.stringToJsonNode(
+        sendPostRequest(getControllerBaseApiUrl() + "/validateMultiStageQuery", requestJson, null));
+
+    assertTrue(result.isArray(), "Response should be an array");
+    assertEquals(1, result.size(), "Should have exactly one response");
+    JsonNode queryResponse = result.get(0);
+    assertFalse(queryResponse.get("compiledSuccessfully").asBoolean());
+    assertEquals(queryResponse.get("errorCode").asText(), QueryErrorCode.QUERY_VALIDATION.name());
+
     String query = "SELECT DivAirportSeqIDs FROM mytable WHERE DivAirportSeqIDs > 0 LIMIT 10";
-    request = new MultiStageQueryValidationRequest(query, tableConfigs, schemas, null, false);
+    request = new MultiStageQueryValidationRequest(query, tableConfigs, schemas, null, null, false);
 
     requestJson = JsonUtils.objectToString(request);
     result = JsonUtils.stringToJsonNode(
         sendPostRequest(getControllerBaseApiUrl() + "/validateMultiStageQuery", requestJson, null));
 
-    assertFalse(result.get("compiledSuccessfully").asBoolean(), "Query should not compile successfully: " + query);
-    assertEquals(result.get("errorCode").asText(), QueryErrorCode.QUERY_VALIDATION.name());
-    assertFalse(result.get("errorMessage").isNull(), "Error message should not be null for: " + query);
+    assertTrue(result.isArray(), "Response should be an array");
+    assertEquals(1, result.size(), "Should have exactly one response");
+    queryResponse = result.get(0);
+    assertFalse(queryResponse.get("compiledSuccessfully").asBoolean(),
+        "Query should not compile successfully: " + query);
+    assertEquals(queryResponse.get("errorCode").asText(), QueryErrorCode.QUERY_VALIDATION.name());
+    assertFalse(queryResponse.get("errorMessage").isNull(), "Error message should not be null for: " + query);
 
-    // Non-existent table
     query = "SELECT count(*) FROM nonExistentTable";
-    request = new MultiStageQueryValidationRequest(query, tableConfigs, schemas, null, false);
+    request = new MultiStageQueryValidationRequest(query, tableConfigs, schemas, null, null, false);
 
     requestJson = JsonUtils.objectToString(request);
     result = JsonUtils.stringToJsonNode(
         sendPostRequest(getControllerBaseApiUrl() + "/validateMultiStageQuery", requestJson, null));
 
-    assertFalse(result.get("compiledSuccessfully").asBoolean(), "Query should not compile successfully: " + query);
-    assertEquals(result.get("errorCode").asText(), QueryErrorCode.TABLE_DOES_NOT_EXIST.name());
-    assertFalse(result.get("errorMessage").isNull(), "Error message should not be null for: " + query);
+    assertTrue(result.isArray(), "Response should be an array");
+    assertEquals(1, result.size(), "Should have exactly one response");
+    queryResponse = result.get(0);
+    assertFalse(queryResponse.get("compiledSuccessfully").asBoolean(),
+        "Query should not compile successfully: " + query);
+    assertEquals(queryResponse.get("errorCode").asText(), QueryErrorCode.TABLE_DOES_NOT_EXIST.name());
+    assertFalse(queryResponse.get("errorMessage").isNull(), "Error message should not be null for: " + query);
   }
 
   @Test
@@ -1849,7 +2125,7 @@ public class MultiStageEngineIntegrationTest extends BaseClusterIntegrationTestS
         .addSingleValueDimension("event_id", FieldSpec.DataType.STRING)
         .addSingleValueDimension("dummy_realtime", FieldSpec.DataType.STRING)
         .addDateTime("mtime", FieldSpec.DataType.LONG, "1:MILLISECONDS:EPOCH", "1:MILLISECONDS")
-        .setPrimaryKeyColumns(Collections.singletonList("event_id")).build();
+        .setPrimaryKeyColumns(List.of("event_id")).build();
 
     Map<String, String> streamConfigs = new HashMap<>();
     streamConfigs.put("streamType", "fake");
@@ -1871,7 +2147,7 @@ public class MultiStageEngineIntegrationTest extends BaseClusterIntegrationTestS
     upsertConfig.setSnapshot(Enablement.ENABLE);
     upsertConfig.setPreload(Enablement.ENABLE);
     upsertConfig.setHashFunction(HashFunction.NONE);
-    upsertConfig.setComparisonColumns(Collections.singletonList("mtime"));
+    upsertConfig.setComparisonColumns(List.of("mtime"));
     upsertConfig.setDeleteRecordColumn("event_id");
     upsertConfig.setMetadataTTL(0);
     upsertConfig.setDeletedKeysTTL(0);
@@ -1880,64 +2156,79 @@ public class MultiStageEngineIntegrationTest extends BaseClusterIntegrationTestS
     upsertConfig.setEnablePreload(true);
     upsertConfig.setDropOutOfOrderRecord(false);
     upsertConfig.setNewSegmentTrackingTimeMs(10000L);
-    upsertConfig.setMetadataManagerClass("ai.startree.pinot.upsert.rocksdb.RocksDBTableUpsertMetadataManager");
-
-    Map<String, String> metadataManagerConfigs = new HashMap<>();
-    metadataManagerConfigs.put("rocksdb.preload.num_partition_overwrite", "2");
-    upsertConfig.setMetadataManagerConfigs(metadataManagerConfigs);
 
     upsertConfig.setDefaultPartialUpsertStrategy(UpsertConfig.Strategy.OVERWRITE);
     upsertConfig.setUpsertViewRefreshIntervalMs(3000L);
 
     RoutingConfig routingConfig =
-        new RoutingConfig(null, Collections.singletonList(RoutingConfig.PARTITION_SEGMENT_PRUNER_TYPE),
+        new RoutingConfig(null, List.of(RoutingConfig.PARTITION_SEGMENT_PRUNER_TYPE),
             RoutingConfig.STRICT_REPLICA_GROUP_INSTANCE_SELECTOR_TYPE, true);
 
-    TableConfig tableConfig =
-        new TableConfigBuilder(TableType.REALTIME).setTableName("staticTableTest").setTimeColumnName("mtime")
-            .setTimeType("MILLISECONDS").setRetentionTimeUnit("DAYS").setRetentionTimeValue("5000")
-            .setDeletedSegmentsRetentionPeriod("7d").setSegmentAssignmentStrategy("BalanceNumSegmentAssignmentStrategy")
-            .setNumReplicas(1).setSegmentPushType("APPEND").setBrokerTenant("DefaultTenant")
-            .setServerTenant("DefaultTenant").setLoadMode("MMAP").setAggregateMetrics(false)
-            .setOptimizeDictionary(false).setOptimizeDictionaryForMetrics(false).setNoDictionarySizeRatioThreshold(0.85)
-            .setNullHandlingEnabled(false).setSkipSegmentPreprocess(false).setOptimizeDictionaryType(false)
-            .setCreateInvertedIndexDuringSegmentGeneration(false).setColumnMajorSegmentBuilderEnabled(false)
-            .setStreamConfigs(streamConfigs).setRoutingConfig(routingConfig).setUpsertConfig(upsertConfig)
-            .setIsDimTable(false).build();
+    TableConfig tableConfig = new TableConfigBuilder(TableType.REALTIME).setTableName("staticTableTest")
+        .setTimeColumnName("mtime")
+        .setTimeType("MILLISECONDS")
+        .setRetentionTimeUnit("DAYS")
+        .setRetentionTimeValue("5000")
+        .setDeletedSegmentsRetentionPeriod("7d")
+        .setNumReplicas(1)
+        .setSegmentPushType("APPEND")
+        .setBrokerTenant("DefaultTenant")
+        .setServerTenant("DefaultTenant")
+        .setLoadMode("MMAP")
+        .setAggregateMetrics(false)
+        .setOptimizeDictionary(false)
+        .setOptimizeDictionaryForMetrics(false)
+        .setNoDictionarySizeRatioThreshold(0.85)
+        .setNullHandlingEnabled(false)
+        .setSkipSegmentPreprocess(false)
+        .setOptimizeDictionaryType(false)
+        .setColumnMajorSegmentBuilderEnabled(false)
+        .setStreamConfigs(streamConfigs)
+        .setRoutingConfig(routingConfig)
+        .setUpsertConfig(upsertConfig)
+        .setIsDimTable(false)
+        .build();
 
-    List<TableConfig> tableConfigs = Collections.singletonList(tableConfig);
-    List<Schema> schemas = Collections.singletonList(schema);
+    List<TableConfig> tableConfigs = List.of(tableConfig);
+    List<Schema> schemas = List.of(schema);
 
     String query = "SELECT nonExistentColumn FROM staticTableTest";
-    // Invalid column in the static table query
+
     MultiStageQueryValidationRequest request =
-        new MultiStageQueryValidationRequest(query, tableConfigs, schemas, null, true);
+        new MultiStageQueryValidationRequest(query, tableConfigs, schemas, null, null, true);
 
     String requestJson = JsonUtils.objectToString(request);
     JsonNode result = JsonUtils.stringToJsonNode(
         sendPostRequest(getControllerBaseApiUrl() + "/validateMultiStageQuery", requestJson, null));
-    assertFalse(result.get("compiledSuccessfully").asBoolean());
-    assertEquals(result.get("errorCode").asText(), QueryErrorCode.QUERY_VALIDATION.name());
 
-    // Successful query with existing column
+    assertTrue(result.isArray(), "Response should be an array");
+    assertEquals(1, result.size(), "Should have exactly one response");
+    JsonNode queryResponse = result.get(0);
+    assertFalse(queryResponse.get("compiledSuccessfully").asBoolean());
+    assertEquals(queryResponse.get("errorCode").asText(), QueryErrorCode.QUERY_VALIDATION.name());
+
     query = "SELECT event_id FROM staticTableTest";
-    request = new MultiStageQueryValidationRequest(query, tableConfigs, schemas, null, false);
+    request = new MultiStageQueryValidationRequest(query, tableConfigs, schemas, null, null, false);
 
     requestJson = JsonUtils.objectToString(request);
     result = JsonUtils.stringToJsonNode(
         sendPostRequest(getControllerBaseApiUrl() + "/validateMultiStageQuery", requestJson, null));
 
-    assertTrue(result.get("compiledSuccessfully").asBoolean(), "Query should compile successfully: " + query);
-    assertTrue(result.get("errorCode").isNull());
-    assertTrue(result.get("errorMessage").isNull());
+    assertTrue(result.isArray(), "Response should be an array");
+    assertEquals(1, result.size(), "Should have exactly one response");
+    queryResponse = result.get(0);
+    assertTrue(queryResponse.get("compiledSuccessfully").asBoolean(), "Query should compile successfully: " + query);
+    assertTrue(queryResponse.get("errorCode").isNull());
+    assertTrue(queryResponse.get("errorMessage").isNull());
   }
 
   @Test
   public void testValidateQueryApiWithIgnoreCaseOption()
       throws Exception {
     JsonNode tableConfigsNode =
-        JsonUtils.stringToJsonNode(sendGetRequest(getControllerBaseApiUrl() + "/tables/mytable"));
-    JsonNode schemaNode = JsonUtils.stringToJsonNode(sendGetRequest(getControllerBaseApiUrl() + "/schemas/mytable"));
+        JsonUtils.stringToJsonNode(getOrCreateAdminClient().getTableClient().getTableConfig("mytable"));
+    JsonNode schemaNode =
+        JsonUtils.stringToJsonNode(getOrCreateAdminClient().getSchemaClient().getSchema("mytable"));
 
     List<TableConfig> tableConfigs = new ArrayList<>();
     JsonNode offlineConfig = tableConfigsNode.get("OFFLINE");
@@ -1949,31 +2240,39 @@ public class MultiStageEngineIntegrationTest extends BaseClusterIntegrationTestS
       tableConfigs.add(JsonUtils.jsonNodeToObject(realtimeConfig, TableConfig.class));
     }
     Schema schema = JsonUtils.jsonNodeToObject(schemaNode, Schema.class);
-    List<Schema> schemas = Collections.singletonList(schema);
+    List<Schema> schemas = List.of(schema);
 
-    // Test case-sensitive mode
-    MultiStageQueryValidationRequest request = new MultiStageQueryValidationRequest(
-        "SELECT divairportseqids FROM mytable", tableConfigs, schemas, null, false);
+    MultiStageQueryValidationRequest request =
+        new MultiStageQueryValidationRequest("SELECT divairportseqids FROM mytable", tableConfigs, schemas, null, null,
+            false);
 
     String requestJson = JsonUtils.objectToString(request);
     JsonNode result = JsonUtils.stringToJsonNode(
         sendPostRequest(getControllerBaseApiUrl() + "/validateMultiStageQuery", requestJson, null));
-    assertTrue(result.get("compiledSuccessfully").asBoolean(),
-        "Query should compile successfully in case-sensitive mode");
-    assertTrue(result.get("errorCode").isNull(), "Error code should be null in case-sensitive mode");
-    assertTrue(result.get("errorMessage").isNull(), "Error message should be null in case-sensitive mode");
 
-    // Test case-insensitive mode
-    request = new MultiStageQueryValidationRequest(
-        "SELECT divairportseqids FROM mytable", tableConfigs, schemas, null, true);
+    assertTrue(result.isArray(), "Response should be an array");
+    assertEquals(1, result.size(), "Should have exactly one response");
+    JsonNode queryResponse = result.get(0);
+    assertTrue(queryResponse.get("compiledSuccessfully").asBoolean(),
+        "Query should compile successfully in case-sensitive mode");
+    assertTrue(queryResponse.get("errorCode").isNull(), "Error code should be null in case-sensitive mode");
+    assertTrue(queryResponse.get("errorMessage").isNull(), "Error message should be null in case-sensitive mode");
+
+    request =
+        new MultiStageQueryValidationRequest("SELECT divairportseqids FROM mytable", tableConfigs, schemas, null, null,
+            true);
 
     requestJson = JsonUtils.objectToString(request);
     result = JsonUtils.stringToJsonNode(
         sendPostRequest(getControllerBaseApiUrl() + "/validateMultiStageQuery", requestJson, null));
-    assertTrue(result.get("compiledSuccessfully").asBoolean(),
+
+    assertTrue(result.isArray(), "Response should be an array");
+    assertEquals(1, result.size(), "Should have exactly one response");
+    queryResponse = result.get(0);
+    assertTrue(queryResponse.get("compiledSuccessfully").asBoolean(),
         "Query should compile successfully in case-insensitive mode");
-    assertTrue(result.get("errorCode").isNull(), "Error code should be null in case-insensitive mode");
-    assertTrue(result.get("errorMessage").isNull(), "Error message should be null in case-insensitive mode");
+    assertTrue(queryResponse.get("errorCode").isNull(), "Error code should be null in case-insensitive mode");
+    assertTrue(queryResponse.get("errorMessage").isNull(), "Error message should be null in case-insensitive mode");
   }
 
   private void checkQueryResultForDBTest(String column, String tableName)
@@ -2007,6 +2306,36 @@ public class MultiStageEngineIntegrationTest extends BaseClusterIntegrationTestS
         .hasErrorCode(errorCode);
   }
 
+  /// Verifies that the streaming group-by feature produces correct results when the query option
+  /// streamingGroupByFlushThreshold is set. Compares streaming results against a baseline query without the option.
+  @Test
+  public void testStreamingGroupBy()
+      throws Exception {
+    // Baseline: normal group-by query
+    String baseQuery = "SELECT AirlineID, SUM(Distance), COUNT(*) FROM mytable GROUP BY AirlineID ORDER BY AirlineID";
+    JsonNode baselineResponse = postQuery(baseQuery);
+    JsonNode baselineRows = baselineResponse.get("resultTable").get("rows");
+    assertTrue(baselineRows.size() > 0, "Baseline query should return results");
+
+    // Streaming group-by with a low flush threshold to force multiple flushes
+    String streamingQuery = "SET streamingGroupByFlushThreshold = 5; "
+        + "SELECT AirlineID, SUM(Distance), COUNT(*) FROM mytable GROUP BY AirlineID ORDER BY AirlineID";
+    JsonNode streamingResponse = postQuery(streamingQuery);
+    JsonNode streamingRows = streamingResponse.get("resultTable").get("rows");
+
+    // Results should be identical
+    assertEquals(streamingRows.size(), baselineRows.size(),
+        "Streaming group-by should return same number of groups as baseline");
+    for (int i = 0; i < baselineRows.size(); i++) {
+      assertEquals(streamingRows.get(i).get(0).asLong(), baselineRows.get(i).get(0).asLong(),
+          "AirlineID mismatch at row " + i);
+      assertEquals(streamingRows.get(i).get(1).asDouble(), baselineRows.get(i).get(1).asDouble(), 0.01,
+          "SUM(Distance) mismatch at row " + i);
+      assertEquals(streamingRows.get(i).get(2).asLong(), baselineRows.get(i).get(2).asLong(),
+          "COUNT(*) mismatch at row " + i);
+    }
+  }
+
   private JsonNode getQueryResultForDBTest(String column, String tableName, @Nullable String database,
       Map<String, String> headers)
       throws Exception {
@@ -2015,11 +2344,164 @@ public class MultiStageEngineIntegrationTest extends BaseClusterIntegrationTestS
     return postQuery(query, headers);
   }
 
+  private void setupDimensionTable()
+      throws Exception {
+    // Set up the dimension table for JOIN tests
+    Schema lookupTableSchema = createSchema(DIM_TABLE_SCHEMA_PATH);
+    addSchema(lookupTableSchema);
+    TableConfig tableConfig = createTableConfig(DIM_TABLE_TABLE_CONFIG_PATH);
+    TenantConfig tenantConfig = new TenantConfig(getBrokerTenant(), getServerTenant(), null);
+    tableConfig.setTenantConfig(tenantConfig);
+    addTableConfig(tableConfig);
+    createAndUploadSegmentFromClasspath(tableConfig, lookupTableSchema, DIM_TABLE_DATA_PATH, FileFormat.CSV,
+        DIM_NUMBER_OF_RECORDS, 60_000);
+  }
+
+  @Test
+  public void testNaturalJoinWithVirtualColumns()
+      throws Exception {
+    String query = "SET excludeVirtualColumns=false; SELECT * FROM mytable a NATURAL JOIN daysOfWeek b LIMIT 5";
+    JsonNode response = postQuery(query);
+    assertNotNull(response.get("exceptions").get(0).get("message"), "Should have an error message");
+  }
+
+  @Test
+  public void testNaturalJoinWithNoVirtualColumns()
+      throws Exception {
+    String query = "SET excludeVirtualColumns=true; SELECT * FROM mytable NATURAL JOIN daysOfWeek LIMIT 5";
+    JsonNode response = postQuery(query);
+    assertEquals(response.get("exceptions").get(0), null);
+    assertNotNull(response.get("resultTable"), "Should have result table");
+  }
+
+  @Test
+  public void testStageStatsPipelineBreaker() {
+    String query = "select * from mytable "
+        + "WHERE DayOfWeek in (select dayid from daysOfWeek)";
+    // Pipeline breaker stats are kept by default. Retry in case a sibling test that overrode the default has just
+    // finished and the reset has not yet propagated to the server.
+    String errorMsg = "Failed to verify presence of pipeline breaker stats after multiple attempts";
+    TestUtils.waitForCondition(() -> {
+      JsonNode response = postQuery(query);
+      assertNotNull(response.get("stageStats"), "Should have stage stats");
+
+      JsonNode receiveNode = response.get("stageStats");
+      Assertions.assertThat(receiveNode.get("type").asText()).isEqualTo("MAILBOX_RECEIVE");
+
+      JsonNode sendNode = receiveNode.get("children").get(0);
+      Assertions.assertThat(sendNode.get("type").asText()).isEqualTo("MAILBOX_SEND");
+
+      JsonNode mytableLeaf = sendNode.get("children").get(0);
+      Assertions.assertThat(mytableLeaf.get("type").asText()).isEqualTo("LEAF");
+      Assertions.assertThat(mytableLeaf.get("table").asText()).isEqualTo("mytable");
+
+      if (mytableLeaf.get("children") == null) {
+        // Sibling test's reset has not yet propagated. Retry.
+        return false;
+      }
+
+      JsonNode pipelineReceive = mytableLeaf.get("children").get(0);
+      Assertions.assertThat(pipelineReceive.get("type").asText()).isEqualTo("MAILBOX_RECEIVE");
+
+      JsonNode pipelineSend = pipelineReceive.get("children").get(0);
+      Assertions.assertThat(pipelineSend.get("type").asText()).isEqualTo("MAILBOX_SEND");
+
+      JsonNode dayOfWeekLeaf = pipelineSend.get("children").get(0);
+      Assertions.assertThat(dayOfWeekLeaf.get("type").asText()).isEqualTo("LEAF");
+      Assertions.assertThat(dayOfWeekLeaf.get("table").asText()).isEqualTo("daysOfWeek");
+      return true;
+    }, 100, 10_000L, errorMsg, Duration.ofSeconds(1));
+  }
+
+  @Test
+  public void testPipelineBreakerKeepsNumGroupsLimitReached() {
+    String query = ""
+        + "SET numGroupsLimit = 1;"
+        + "SELECT * FROM daysOfWeek "
+        + "WHERE dayid in ("
+        + " SELECT DayOfWeek FROM mytable"
+        + " GROUP BY DayOfWeek"
+        + ")";
+
+    // Pipeline breaker stats are kept by default. Retry in case a sibling test that overrode the default has just
+    // finished and the reset has not yet propagated to the server.
+    String errorMsg = "Failed to verify numGroupsLimitReached on a pipeline breaker after multiple attempts";
+    TestUtils.waitForCondition(() -> {
+      JsonNode response = postQuery(query);
+      assertNotNull(response.get("stageStats"), "Should have stage stats");
+
+      JsonNode receiveNode = response.get("stageStats");
+      Assertions.assertThat(receiveNode.get("type").asText()).isEqualTo("MAILBOX_RECEIVE");
+
+      JsonNode sendNode = receiveNode.get("children").get(0);
+      Assertions.assertThat(sendNode.get("type").asText()).isEqualTo("MAILBOX_SEND");
+
+      JsonNode mytableLeaf = sendNode.get("children").get(0);
+      Assertions.assertThat(mytableLeaf.get("type").asText()).isEqualTo("LEAF");
+      Assertions.assertThat(mytableLeaf.get("table").asText()).isEqualToIgnoringCase("daysOfWeek");
+
+      if (mytableLeaf.get("children") == null) {
+        // Sibling test's reset has not yet propagated. Retry.
+        return false;
+      }
+
+      JsonNode pipelineReceive = mytableLeaf.get("children").get(0);
+      Assertions.assertThat(pipelineReceive.get("type").asText()).isEqualTo("MAILBOX_RECEIVE");
+
+      JsonNode pipelineSend = pipelineReceive.get("children").get(0);
+      Assertions.assertThat(pipelineSend.get("type").asText()).isEqualTo("MAILBOX_SEND");
+
+      Assertions.assertThat(response.get("numGroupsLimitReached").asBoolean(false))
+          .describedAs("numGroupsLimitReached should be true even when the limit is reached on a pipeline breaker")
+          .isEqualTo(true);
+      return true;
+    }, 100, 10_000L, errorMsg, Duration.ofSeconds(1));
+  }
+
+  @Test
+  public void testPipelineBreakerWithoutKeepingStats() {
+    HelixConfigScope scope =
+        new HelixConfigScopeBuilder(HelixConfigScope.ConfigScopeProperty.CLUSTER).forCluster(getHelixClusterName())
+            .build();
+    try {
+      // Pipeline breaker stats are kept by default, so explicitly skip them for this test.
+      _helixManager.getConfigAccessor()
+          .set(scope, CommonConstants.MultiStageQueryRunner.KEY_OF_SKIP_PIPELINE_BREAKER_STATS, "true");
+      // let's try several times to give helix time to propagate the config change
+      String errorMsg = "Failed to verify absence of pipeline breaker stats after multiple attempts after 10 attempts";
+      TestUtils.waitForCondition(() -> {
+        String query = "select * from mytable "
+            + "WHERE DayOfWeek in (select dayid from daysOfWeek)";
+        JsonNode response = postQuery(query);
+        assertNotNull(response.get("stageStats"), "Should have stage stats");
+
+        JsonNode receiveNode = response.get("stageStats");
+        Assertions.assertThat(receiveNode.get("type").asText()).isEqualTo("MAILBOX_RECEIVE");
+
+        JsonNode sendNode = receiveNode.get("children").get(0);
+        Assertions.assertThat(sendNode.get("type").asText()).isEqualTo("MAILBOX_SEND");
+
+        JsonNode mytableLeaf = sendNode.get("children").get(0);
+        Assertions.assertThat(mytableLeaf.get("type").asText()).isEqualTo("LEAF");
+        Assertions.assertThat(mytableLeaf.get("table").asText()).isEqualTo("mytable");
+
+        // Once the config change has propagated, there should be no children (pipeline breaker stats) under the leaf
+        // node. Return the result instead of asserting so that waitForCondition keeps retrying while the change is
+        // still propagating (AssertionError would not be caught and retried).
+        return mytableLeaf.get("children") == null;
+      }, 100, 10_000L, errorMsg, Duration.ofSeconds(1));
+    } finally {
+      _helixManager.getConfigAccessor()
+          .set(scope, CommonConstants.MultiStageQueryRunner.KEY_OF_SKIP_PIPELINE_BREAKER_STATS, "false");
+    }
+  }
+
   @AfterClass
   public void tearDown()
       throws Exception {
     dropOfflineTable(DEFAULT_TABLE_NAME);
     dropOfflineTable(TABLE_NAME_WITH_DATABASE);
+    dropOfflineTable(DIM_TABLE);
 
     stopServer();
     stopBroker();

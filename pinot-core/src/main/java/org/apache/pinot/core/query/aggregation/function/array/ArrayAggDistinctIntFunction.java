@@ -27,11 +27,11 @@ import org.apache.pinot.core.common.BlockValSet;
 import org.apache.pinot.core.common.ObjectSerDeUtils;
 import org.apache.pinot.core.query.aggregation.AggregationResultHolder;
 import org.apache.pinot.core.query.aggregation.groupby.GroupByResultHolder;
-import org.apache.pinot.spi.data.FieldSpec;
+import org.apache.pinot.spi.data.FieldSpec.DataType;
 
 
 public class ArrayAggDistinctIntFunction extends BaseArrayAggIntFunction<IntSet> {
-  public ArrayAggDistinctIntFunction(ExpressionContext expression, FieldSpec.DataType dataType,
+  public ArrayAggDistinctIntFunction(ExpressionContext expression, DataType dataType,
       boolean nullHandlingEnabled) {
     super(expression, dataType, nullHandlingEnabled);
   }
@@ -40,15 +40,26 @@ public class ArrayAggDistinctIntFunction extends BaseArrayAggIntFunction<IntSet>
   public void aggregate(int length, AggregationResultHolder aggregationResultHolder,
       Map<ExpressionContext, BlockValSet> blockValSetMap) {
     BlockValSet blockValSet = blockValSetMap.get(_expression);
-    int[] value = blockValSet.getIntValuesSV();
     IntOpenHashSet valueSet =
         aggregationResultHolder.getResult() != null ? aggregationResultHolder.getResult() : new IntOpenHashSet(length);
-
-    forEachNotNull(length, blockValSet, (from, to) -> {
-      for (int i = from; i < to; i++) {
-        valueSet.add(value[i]);
-      }
-    });
+    if (blockValSet.isSingleValue()) {
+      int[] values = blockValSet.getIntValuesSV();
+      forEachNotNull(length, blockValSet, (from, to) -> {
+        for (int i = from; i < to; i++) {
+          valueSet.add(values[i]);
+        }
+      });
+    } else {
+      int[][] valuesArray = blockValSet.getIntValuesMV();
+      forEachNotNull(length, blockValSet, (from, to) -> {
+        for (int i = from; i < to; i++) {
+          int[] values = valuesArray[i];
+          for (int v : values) {
+            valueSet.add(v);
+          }
+        }
+      });
+    }
     aggregationResultHolder.setValue(valueSet);
   }
 

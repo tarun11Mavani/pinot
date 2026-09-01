@@ -18,11 +18,10 @@
  */
 package org.apache.pinot.common.config;
 
-import java.util.ArrayList;
-import java.util.HashMap;
-import java.util.List;
+import com.google.common.collect.ImmutableSet;
 import java.util.Map;
 import java.util.Set;
+import java.util.concurrent.CopyOnWriteArrayList;
 import org.apache.helix.NotificationContext;
 import org.apache.helix.api.listeners.BatchMode;
 import org.apache.helix.api.listeners.ClusterConfigChangeListener;
@@ -38,11 +37,11 @@ public class DefaultClusterConfigChangeHandler implements ClusterConfigChangeLis
   private static final Logger LOGGER = LoggerFactory.getLogger(DefaultClusterConfigChangeHandler.class);
 
   private volatile Map<String, String> _properties;
-  private final List<PinotClusterConfigChangeListener> _clusterConfigChangeListeners;
+  private final CopyOnWriteArrayList<PinotClusterConfigChangeListener> _clusterConfigChangeListeners;
 
   public DefaultClusterConfigChangeHandler() {
-    _properties = new HashMap<>();
-    _clusterConfigChangeListeners = new ArrayList<>();
+    _properties = Map.of();
+    _clusterConfigChangeListeners = new CopyOnWriteArrayList<>();
   }
 
   @Override
@@ -53,9 +52,11 @@ public class DefaultClusterConfigChangeHandler implements ClusterConfigChangeLis
   }
 
   private synchronized void process(Map<String, String> properties) {
-    Set<String> changedProperties = getChangedProperties(_properties, properties);
-    _properties = properties;
-    _clusterConfigChangeListeners.forEach(l -> l.onChange(changedProperties, _properties));
+    Set<String> changedProperties = ImmutableSet.copyOf(getChangedProperties(_properties, properties));
+    _properties = Map.copyOf(properties);
+    for (PinotClusterConfigChangeListener listener : _clusterConfigChangeListeners) {
+      listener.onChange(changedProperties, _properties);
+    }
   }
 
   @Override

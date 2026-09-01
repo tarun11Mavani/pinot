@@ -18,7 +18,6 @@
  */
 package org.apache.pinot.controller.api.resources;
 
-import com.google.common.collect.ImmutableList;
 import io.swagger.annotations.Api;
 import io.swagger.annotations.ApiKeyAuthDefinition;
 import io.swagger.annotations.ApiOperation;
@@ -195,7 +194,7 @@ public class PinotBrokerRestletResource {
             Integer.parseInt(HelixHelper.getGrpcPort(x))))
         .collect(Collectors.toSet());
     applyStateChanges(instanceInfoSet, state);
-    return ImmutableList.copyOf(instanceInfoSet);
+    return List.copyOf(instanceInfoSet);
   }
 
   @GET
@@ -212,7 +211,7 @@ public class PinotBrokerRestletResource {
   @GET
   @Produces(MediaType.APPLICATION_JSON)
   @Path("/v2/brokers/tables/{tableName}")
-  @Authorize(targetType = TargetType.CLUSTER, paramName = "tableName", action = Actions.Table.GET_BROKER)
+  @Authorize(targetType = TargetType.TABLE, paramName = "tableName", action = Actions.Table.GET_BROKER)
   @ApiOperation(value = "List brokers for a given table", notes = "List brokers for a given table")
   public List<InstanceInfo> getBrokersForTableV2(
       @ApiParam(value = "Name of the table", required = true) @PathParam("tableName") String tableName,
@@ -233,7 +232,7 @@ public class PinotBrokerRestletResource {
               Integer.parseInt(HelixHelper.getGrpcPort(x))))
           .collect(Collectors.toSet());
       applyStateChanges(instanceInfoSet, state);
-      return ImmutableList.copyOf(instanceInfoSet);
+      return List.copyOf(instanceInfoSet);
     } catch (TableNotFoundException e) {
       throw new ControllerApplicationException(LOGGER, String.format("Table '%s' not found.", tableName),
           Response.Status.NOT_FOUND);

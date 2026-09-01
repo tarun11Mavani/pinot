@@ -18,15 +18,15 @@
  */
 package org.apache.pinot.controller.utils;
 
-import java.util.Collections;
 import java.util.Set;
 import java.util.TreeMap;
 import java.util.concurrent.TimeUnit;
+import java.util.concurrent.atomic.AtomicLong;
 import org.apache.pinot.common.metadata.segment.SegmentZKMetadata;
+import org.apache.pinot.common.partition.function.MurmurPartitionFunction;
 import org.apache.pinot.segment.spi.ColumnMetadata;
 import org.apache.pinot.segment.spi.SegmentMetadata;
 import org.apache.pinot.segment.spi.index.metadata.SegmentMetadataImpl;
-import org.apache.pinot.segment.spi.partition.MurmurPartitionFunction;
 import org.joda.time.Interval;
 import org.mockito.Mockito;
 
@@ -35,6 +35,8 @@ import static org.mockito.Mockito.when;
 
 
 public class SegmentMetadataMockUtils {
+  private static final AtomicLong UNIQUE_ID_GENERATOR = new AtomicLong();
+
   private SegmentMetadataMockUtils() {
   }
 
@@ -45,6 +47,7 @@ public class SegmentMetadataMockUtils {
     Mockito.when(segmentMetadata.getName()).thenReturn(segmentName);
     Mockito.when(segmentMetadata.getTotalDocs()).thenReturn(numTotalDocs);
     Mockito.when(segmentMetadata.getCrc()).thenReturn(crc);
+    Mockito.when(segmentMetadata.getDataCrc()).thenReturn(String.valueOf(Long.parseLong(crc) + 100));
     Mockito.when(segmentMetadata.getStartTime()).thenReturn(startTime);
     Mockito.when(segmentMetadata.getEndTime()).thenReturn(endTime);
     Mockito.when(segmentMetadata.getTimeInterval()).thenReturn(
@@ -60,20 +63,24 @@ public class SegmentMetadataMockUtils {
   }
 
   public static SegmentMetadata mockSegmentMetadata(String tableName) {
-    String uniqueNumericString = Long.toString(System.nanoTime());
+    String uniqueNumericString = nextUniqueNumericString();
     return mockSegmentMetadata(tableName, tableName + uniqueNumericString, 100, uniqueNumericString);
   }
 
   public static SegmentMetadata mockSegmentMetadata(String tableName, long startTime,
       long endTime, TimeUnit timeUnit) {
-    String uniqueNumericString = Long.toString(System.nanoTime());
+    String uniqueNumericString = nextUniqueNumericString();
     return mockSegmentMetadata(tableName, tableName + uniqueNumericString, 100,
         uniqueNumericString, startTime, endTime, timeUnit);
   }
 
   public static SegmentMetadata mockSegmentMetadata(String tableName, String segmentName) {
-    String uniqueNumericString = Long.toString(System.nanoTime());
+    String uniqueNumericString = nextUniqueNumericString();
     return mockSegmentMetadata(tableName, segmentName, 100, uniqueNumericString);
+  }
+
+  private static String nextUniqueNumericString() {
+    return Long.toString(UNIQUE_ID_GENERATOR.incrementAndGet());
   }
 
   public static SegmentZKMetadata mockSegmentZKMetadata(String segmentName, long numTotalDocs) {
@@ -83,12 +90,26 @@ public class SegmentMetadataMockUtils {
     return segmentZKMetadata;
   }
 
+  public static SegmentMetadata mockSegmentMetadata(String tableName, String segmentName, int numTotalDocs,
+      String crc, long startTime, long endTime, TimeUnit timeUnit, String partitionColumn, int partitionId,
+      int numPartitions) {
+    SegmentMetadata segmentMetadata =
+        mockSegmentMetadata(tableName, segmentName, numTotalDocs, crc, startTime, endTime, timeUnit);
+    ColumnMetadata colMeta = mock(ColumnMetadata.class);
+    when(colMeta.getPartitions()).thenReturn(Set.of(partitionId));
+    when(colMeta.getPartitionFunction()).thenReturn(new MurmurPartitionFunction(numPartitions, null));
+    TreeMap<String, ColumnMetadata> columnMetadataMap = new TreeMap<>();
+    columnMetadataMap.put(partitionColumn, colMeta);
+    when(segmentMetadata.getColumnMetadataMap()).thenReturn(columnMetadataMap);
+    return segmentMetadata;
+  }
+
   public static SegmentMetadata mockSegmentMetadataWithPartitionInfo(String rawTableName, String segmentName,
       String columnName, int partitionNumber) {
     ColumnMetadata columnMetadata = mock(ColumnMetadata.class);
-    Set<Integer> partitions = Collections.singleton(partitionNumber);
+    Set<Integer> partitions = Set.of(partitionNumber);
     when(columnMetadata.getPartitions()).thenReturn(partitions);
-    when(columnMetadata.getPartitionFunction()).thenReturn(new MurmurPartitionFunction(5));
+    when(columnMetadata.getPartitionFunction()).thenReturn(new MurmurPartitionFunction(5, null));
 
     SegmentMetadataImpl segmentMetadata = mock(SegmentMetadataImpl.class);
     if (columnName != null) {
@@ -97,6 +118,7 @@ public class SegmentMetadataMockUtils {
     when(segmentMetadata.getTableName()).thenReturn(rawTableName);
     when(segmentMetadata.getName()).thenReturn(segmentName);
     when(segmentMetadata.getCrc()).thenReturn("0");
+    when(segmentMetadata.getDataCrc()).thenReturn("1");
 
     TreeMap<String, ColumnMetadata> columnMetadataMap = new TreeMap<>();
     columnMetadataMap.put(columnName, columnMetadata);
@@ -110,6 +132,7 @@ public class SegmentMetadataMockUtils {
     Mockito.when(segmentMetadata.getName()).thenReturn(segmentName);
     Mockito.when(segmentMetadata.getTotalDocs()).thenReturn(10);
     Mockito.when(segmentMetadata.getCrc()).thenReturn(Long.toString(System.nanoTime()));
+    Mockito.when(segmentMetadata.getDataCrc()).thenReturn(Long.toString(System.nanoTime()));
     Mockito.when(segmentMetadata.getStartTime()).thenReturn(endTime - 10);
     Mockito.when(segmentMetadata.getEndTime()).thenReturn(endTime);
     Mockito.when(segmentMetadata.getTimeInterval()).thenReturn(

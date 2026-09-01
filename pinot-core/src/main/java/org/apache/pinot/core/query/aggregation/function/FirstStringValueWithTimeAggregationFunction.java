@@ -26,19 +26,17 @@ import org.apache.pinot.core.common.ObjectSerDeUtils;
 import org.apache.pinot.core.query.aggregation.groupby.GroupByResultHolder;
 import org.apache.pinot.segment.local.customobject.StringLongPair;
 import org.apache.pinot.segment.local.customobject.ValueLongPair;
-import org.roaringbitmap.IntIterator;
 
 
-/**
- * This function is used for FirstWithTime calculations for data column with string type.
- * <p>The function can be used as FirstWithTime(dataExpression, timeExpression, 'string')
- * <p>Following arguments are supported:
- * <ul>
- *   <li>dataExpression: expression that contains the string data column to be calculated first on</li>
- *   <li>timeExpression: expression that contains the column to be used to decide which data is first, can be any
- *   Numeric column</li>
- * </ul>
- */
+/// This function is used for FirstWithTime calculations for data column with string type.
+///
+/// The function can be used as FirstWithTime(dataExpression, timeExpression, 'string')
+///
+/// Following arguments are supported:
+///
+/// - dataExpression: expression that contains the string data column to be calculated first on
+/// - timeExpression: expression that contains the column to be used to decide which data is first, can be any
+///   Numeric column
 public class FirstStringValueWithTimeAggregationFunction extends FirstWithTimeAggregationFunction<String> {
   private final static ValueLongPair<String> DEFAULT_VALUE_TIME_PAIR = new StringLongPair("", Long.MAX_VALUE);
 
@@ -68,8 +66,7 @@ public class FirstStringValueWithTimeAggregationFunction extends FirstWithTimeAg
     String[] stringValues = blockValSet.getStringValuesSV();
     long[] timeValues = timeValSet.getLongValuesSV();
 
-    IntIterator nullIdxIterator = orNullIterator(blockValSet, timeValSet);
-    forEachNotNull(length, nullIdxIterator, (from, to) -> {
+    forEachNotNull(length, blockValSet, timeValSet, (from, to) -> {
       for (int i = from; i < to; i++) {
         String data = stringValues[i];
         long time = timeValues[i];
@@ -84,8 +81,7 @@ public class FirstStringValueWithTimeAggregationFunction extends FirstWithTimeAg
     String[] stringValues = blockValSet.getStringValuesSV();
     long[] timeValues = timeValSet.getLongValuesSV();
 
-    IntIterator nullIdxIterator = orNullIterator(blockValSet, timeValSet);
-    forEachNotNull(length, nullIdxIterator, (from, to) -> {
+    forEachNotNull(length, blockValSet, timeValSet, (from, to) -> {
       for (int i = from; i < to; i++) {
         String value = stringValues[i];
         long time = timeValues[i];

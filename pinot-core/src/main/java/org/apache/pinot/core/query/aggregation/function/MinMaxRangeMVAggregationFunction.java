@@ -19,13 +19,7 @@
 package org.apache.pinot.core.query.aggregation.function;
 
 import java.util.List;
-import java.util.Map;
-import java.util.concurrent.atomic.AtomicBoolean;
 import org.apache.pinot.common.request.context.ExpressionContext;
-import org.apache.pinot.core.common.BlockValSet;
-import org.apache.pinot.core.query.aggregation.AggregationResultHolder;
-import org.apache.pinot.core.query.aggregation.groupby.GroupByResultHolder;
-import org.apache.pinot.segment.local.customobject.MinMaxRangePair;
 import org.apache.pinot.segment.spi.AggregationFunctionType;
 
 
@@ -38,70 +32,5 @@ public class MinMaxRangeMVAggregationFunction extends MinMaxRangeAggregationFunc
   @Override
   public AggregationFunctionType getType() {
     return AggregationFunctionType.MINMAXRANGEMV;
-  }
-
-  @Override
-  public void aggregate(int length, AggregationResultHolder aggregationResultHolder,
-      Map<ExpressionContext, BlockValSet> blockValSetMap) {
-    BlockValSet blockValSet = blockValSetMap.get(_expression);
-    double[][] valuesArray = blockValSet.getDoubleValuesMV();
-
-    MinMaxRangePair minMax = new MinMaxRangePair();
-    AtomicBoolean empty = new AtomicBoolean(true);
-    forEachNotNull(length, blockValSet, (from, to) -> {
-      for (int i = from; i < to; i++) {
-        for (double value : valuesArray[i]) {
-          minMax.apply(value);
-          empty.set(false);
-        }
-      }
-    });
-
-    if (!empty.get()) {
-      setAggregationResult(aggregationResultHolder, minMax.getMin(), minMax.getMax());
-    }
-  }
-
-  @Override
-  public void aggregateGroupBySV(int length, int[] groupKeyArray, GroupByResultHolder groupByResultHolder,
-      Map<ExpressionContext, BlockValSet> blockValSetMap) {
-    BlockValSet blockValSet = blockValSetMap.get(_expression);
-    double[][] valuesArray = blockValSet.getDoubleValuesMV();
-
-    forEachNotNull(length, blockValSet, (from, to) -> {
-      for (int i = from; i < to; i++) {
-        aggregateOnGroupKey(groupKeyArray[i], groupByResultHolder, valuesArray[i]);
-      }
-    });
-  }
-
-  @Override
-  public void aggregateGroupByMV(int length, int[][] groupKeysArray, GroupByResultHolder groupByResultHolder,
-      Map<ExpressionContext, BlockValSet> blockValSetMap) {
-    BlockValSet blockValSet = blockValSetMap.get(_expression);
-    double[][] valuesArray = blockValSet.getDoubleValuesMV();
-
-    forEachNotNull(length, blockValSet, (from, to) -> {
-      for (int i = from; i < to; i++) {
-        double[] values = valuesArray[i];
-        for (int groupKey : groupKeysArray[i]) {
-          aggregateOnGroupKey(groupKey, groupByResultHolder, values);
-        }
-      }
-    });
-  }
-
-  private void aggregateOnGroupKey(int groupKey, GroupByResultHolder groupByResultHolder, double[] values) {
-    double min = Double.POSITIVE_INFINITY;
-    double max = Double.NEGATIVE_INFINITY;
-    for (double value : values) {
-      if (value < min) {
-        min = value;
-      }
-      if (value > max) {
-        max = value;
-      }
-    }
-    setGroupByResult(groupKey, groupByResultHolder, min, max);
   }
 }

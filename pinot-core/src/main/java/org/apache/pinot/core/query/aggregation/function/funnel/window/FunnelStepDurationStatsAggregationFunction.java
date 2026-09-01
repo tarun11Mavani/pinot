@@ -27,6 +27,7 @@ import java.util.Map;
 import java.util.PriorityQueue;
 import java.util.concurrent.atomic.AtomicInteger;
 import java.util.concurrent.atomic.AtomicReference;
+import javax.annotation.Nullable;
 import org.apache.pinot.common.request.context.ExpressionContext;
 import org.apache.pinot.common.utils.DataSchema;
 import org.apache.pinot.core.query.aggregation.function.funnel.FunnelStepEvent;
@@ -35,6 +36,7 @@ import org.apache.pinot.segment.local.aggregator.PercentileEstValueAggregator;
 import org.apache.pinot.segment.local.customobject.AvgPair;
 import org.apache.pinot.segment.local.customobject.QuantileDigest;
 import org.apache.pinot.segment.spi.AggregationFunctionType;
+import org.apache.pinot.spi.query.QueryThreadContext;
 import org.apache.pinot.spi.utils.CommonConstants;
 
 
@@ -47,8 +49,8 @@ public class FunnelStepDurationStatsAggregationFunction extends FunnelBaseAggreg
   private final List<String> _durationFunctions = new ArrayList<>();
   private boolean _canSkipNonMatchedFunnel = true;
 
-  public FunnelStepDurationStatsAggregationFunction(List<ExpressionContext> arguments) {
-    super(arguments);
+  public FunnelStepDurationStatsAggregationFunction(List<ExpressionContext> arguments, boolean nullHandlingEnabled) {
+    super(arguments, nullHandlingEnabled);
     if (_extraArguments.get("DURATIONFUNCTIONS") != null) {
       String[] durationFunctions = _extraArguments.get("DURATIONFUNCTIONS").split(",");
       for (String durationFunction : durationFunctions) {
@@ -91,7 +93,7 @@ public class FunnelStepDurationStatsAggregationFunction extends FunnelBaseAggreg
   }
 
   @Override
-  public DoubleArrayList extractFinalResult(PriorityQueue<FunnelStepEvent> stepEvents) {
+  public DoubleArrayList extractFinalResult(@Nullable PriorityQueue<FunnelStepEvent> stepEvents) {
     if (stepEvents == null || stepEvents.isEmpty()) {
       return new DoubleArrayList();
     }
@@ -218,7 +220,10 @@ public class FunnelStepDurationStatsAggregationFunction extends FunnelBaseAggreg
   protected Integer processWindow(ArrayDeque<FunnelStepEvent> slidingWindow) {
     int maxStep = 0;
     long previousTimestamp = -1;
+    int numEventsProcessed = 0;
     for (FunnelStepEvent event : slidingWindow) {
+      QueryThreadContext.checkTerminationAndSampleUsagePeriodically(numEventsProcessed++,
+          "FunnelStepDurationStatsAggregationFunction#processWindow");
       int currentEventStep = event.getStep();
       // If the same condition holds for the sequence of events, then such repeating event interrupts further
       // processing.
@@ -253,9 +258,6 @@ public class FunnelStepDurationStatsAggregationFunction extends FunnelBaseAggreg
 
   @Override
   public DoubleArrayList mergeFinalResult(DoubleArrayList finalResult1, DoubleArrayList finalResult2) {
-    if (finalResult1 == null) {
-      return finalResult2;
-    }
     return finalResult1;
   }
 }

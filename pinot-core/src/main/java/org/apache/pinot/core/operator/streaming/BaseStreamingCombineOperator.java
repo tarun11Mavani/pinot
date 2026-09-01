@@ -30,14 +30,13 @@ import org.apache.pinot.core.operator.blocks.results.BaseResultsBlock;
 import org.apache.pinot.core.operator.blocks.results.ExceptionResultsBlock;
 import org.apache.pinot.core.operator.blocks.results.MetadataResultsBlock;
 import org.apache.pinot.core.operator.combine.BaseCombineOperator;
-import org.apache.pinot.core.operator.combine.CombineOperatorUtils;
 import org.apache.pinot.core.operator.combine.merger.ResultsBlockMerger;
 import org.apache.pinot.core.query.request.context.QueryContext;
-import org.apache.pinot.core.query.scheduler.resources.ResourceManager;
 import org.apache.pinot.spi.exception.EarlyTerminationException;
 import org.apache.pinot.spi.exception.QueryErrorCode;
 import org.apache.pinot.spi.exception.QueryErrorMessage;
 import org.apache.pinot.spi.exception.QueryException;
+import org.apache.pinot.spi.query.QueryThreadContext;
 import org.apache.pinot.spi.utils.CommonConstants;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
@@ -67,30 +66,27 @@ public abstract class BaseStreamingCombineOperator<T extends BaseResultsBlock> e
     _querySatisfiedTracker = createQuerySatisfiedTracker();
   }
 
-  /**
-   * {@inheritDoc}
-   *
-   * When all the results blocks are returned, returns a final metadata block. Caller shouldn't call this method after
-   * it returns the metadata block or exception block.
-   */
+  /// @inheritDoc
+  ///
+  /// When all the results blocks are returned, returns a final metadata block. Caller shouldn't call this method after
+  /// it returns the metadata block or exception block.
+  /// Handles exceptions here so that execution stats can be attached.
   @Override
   protected BaseResultsBlock getNextBlock() {
     long endTimeMs = _queryContext.getEndTimeMs();
-    while (!_querySatisfied && _numOperatorsFinished < _numOperators) {
-      try {
+    try {
+      while (!_querySatisfied && _numOperatorsFinished < _numOperators) {
+        QueryThreadContext.checkTermination(this::getExplainName);
         BaseResultsBlock resultsBlock =
             _blockingQueue.poll(endTimeMs - System.currentTimeMillis(), TimeUnit.MILLISECONDS);
         if (resultsBlock == null) {
           // Query times out, skip streaming the remaining results blocks
-          String userMsg = "Timed out while polling results block";
-          String logMsg = userMsg + " (query: " + _queryContext + ")";
-          LOGGER.error(logMsg);
-          return new ExceptionResultsBlock(new QueryErrorMessage(QueryErrorCode.EXECUTION_TIMEOUT, userMsg, logMsg));
+          throw QueryErrorCode.EXECUTION_TIMEOUT.asException("Timed out while polling results block");
         }
-        if (resultsBlock.getErrorMessages() != null) {
+        if (resultsBlock instanceof ExceptionResultsBlock) {
           // Caught exception while processing segment, skip streaming the remaining results blocks and directly return
           // the exception
-          return resultsBlock;
+          return checkTerminateExceptionAndAttachExecutionStats(resultsBlock);
         }
         if (resultsBlock == LAST_RESULTS_BLOCK) {
           // Caught LAST_RESULTS_BLOCK from a specific task, indicated it has finished.
@@ -100,21 +96,12 @@ public abstract class BaseStreamingCombineOperator<T extends BaseResultsBlock> e
         }
         _querySatisfied = isQuerySatisfied((T) resultsBlock, _querySatisfiedTracker);
         return resultsBlock;
-      } catch (InterruptedException e) {
-        throw new EarlyTerminationException("Interrupted while streaming results blocks", e);
-      } catch (Exception e) {
-        String userMsg = "Caught exception while streaming results block";
-        String logMsg = userMsg + " (query: " + _queryContext + ")";
-        LOGGER.error(logMsg, e);
-        return new ExceptionResultsBlock(new QueryErrorMessage(QueryErrorCode.INTERNAL, userMsg, logMsg));
       }
+    } catch (Exception e) {
+      return createExceptionResultsBlockAndAttachExecutionStats(e, "streaming results blocks");
     }
-    // Setting the execution stats for the final return
-    BaseResultsBlock finalBlock = new MetadataResultsBlock();
-    int numServerThreads = Math.min(_numTasks, ResourceManager.DEFAULT_QUERY_WORKER_THREADS);
-    CombineOperatorUtils.setExecutionStatistics(finalBlock, _operators, _totalWorkerThreadCpuTimeNs.get(),
-        numServerThreads, _totalWorkerThreadMemAllocatedBytes.get());
-    return finalBlock;
+    // After all results blocks are returned, return a final metadata block with execution stats
+    return attachExecutionStats(new MetadataResultsBlock());
   }
 
   @Override
@@ -128,7 +115,7 @@ public abstract class BaseStreamingCombineOperator<T extends BaseResultsBlock> e
           ((AcquireReleaseColumnsSegmentOperator) operator).acquire();
         }
         if (isChildOperatorSingleBlock()) {
-          T resultsBlock = operator.nextBlock();
+          T resultsBlock = detachFromWorkerThreadState(operator.nextBlock());
           addResultsBlock(resultsBlock);
           // When query is satisfied, skip processing the remaining segments
           if (isQuerySatisfied(resultsBlock, tracker)) {
@@ -138,6 +125,7 @@ public abstract class BaseStreamingCombineOperator<T extends BaseResultsBlock> e
         } else {
           T resultsBlock;
           while ((resultsBlock = operator.nextBlock()) != null) {
+            resultsBlock = detachFromWorkerThreadState(resultsBlock);
             addResultsBlock(resultsBlock);
             // When query is satisfied, skip processing the remaining segments
             if (isQuerySatisfied(resultsBlock, tracker)) {
@@ -156,6 +144,15 @@ public abstract class BaseStreamingCombineOperator<T extends BaseResultsBlock> e
       // offer the LAST_RESULTS_BLOCK indicate finish of the current operator.
       addResultsBlock(LAST_RESULTS_BLOCK);
     }
+  }
+
+  /// Hook invoked on the worker thread for each child results block, before it is handed off to the
+  /// consumer thread via [#addResultsBlock]. Subclasses override this to eagerly materialize any
+  /// per-segment state that is backed by reused worker-thread-local storage (e.g. the group-by
+  /// group-key maps), so the consumer thread never reads state the worker may mutate for its next
+  /// segment. The default implementation returns the block unchanged.
+  protected T detachFromWorkerThreadState(T resultsBlock) {
+    return resultsBlock;
   }
 
   // NOTE: Throw EarlyTerminationException when interrupted or timed out
@@ -188,23 +185,17 @@ public abstract class BaseStreamingCombineOperator<T extends BaseResultsBlock> e
   protected void onProcessSegmentsFinish() {
   }
 
-  /**
-   * Returns whether the child operator returns only a single block.
-   */
+  /// Returns whether the child operator returns only a single block.
   protected boolean isChildOperatorSingleBlock() {
     return true;
   }
 
-  /**
-   * Creates a tracker object to track if the query is satisfied.
-   */
+  /// Creates a tracker object to track if the query is satisfied.
   protected Object createQuerySatisfiedTracker() {
     return null;
   }
 
-  /**
-   * Returns {@code true} if the query is already satisfied with the results block.
-   */
+  /// Returns `true` if the query is already satisfied with the results block.
   protected boolean isQuerySatisfied(T resultsBlock, Object tracker) {
     return _resultsBlockMerger.isQuerySatisfied(resultsBlock);
   }

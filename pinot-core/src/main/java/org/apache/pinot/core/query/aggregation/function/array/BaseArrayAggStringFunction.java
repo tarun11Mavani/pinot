@@ -25,13 +25,13 @@ import java.util.Map;
 import org.apache.pinot.common.request.context.ExpressionContext;
 import org.apache.pinot.core.common.BlockValSet;
 import org.apache.pinot.core.query.aggregation.groupby.GroupByResultHolder;
-import org.apache.pinot.spi.data.FieldSpec;
+import org.apache.pinot.spi.data.FieldSpec.DataType;
 
 
 public abstract class BaseArrayAggStringFunction<I extends ObjectCollection<String>>
     extends BaseArrayAggFunction<I, ObjectArrayList<String>> {
   public BaseArrayAggStringFunction(ExpressionContext expression, boolean nullHandlingEnabled) {
-    super(expression, FieldSpec.DataType.STRING, nullHandlingEnabled);
+    super(expression, DataType.STRING, nullHandlingEnabled);
   }
 
   abstract void setGroupByResult(GroupByResultHolder groupByResultHolder, int groupKey, String value);
@@ -40,29 +40,55 @@ public abstract class BaseArrayAggStringFunction<I extends ObjectCollection<Stri
   public void aggregateGroupBySV(int length, int[] groupKeyArray, GroupByResultHolder groupByResultHolder,
       Map<ExpressionContext, BlockValSet> blockValSetMap) {
     BlockValSet blockValSet = blockValSetMap.get(_expression);
-    String[] values = blockValSet.getStringValuesSV();
-
-    forEachNotNull(length, blockValSet, (from, to) -> {
-      for (int i = from; i < to; i++) {
-        setGroupByResult(groupByResultHolder, groupKeyArray[i], values[i]);
-      }
-    });
+    if (blockValSet.isSingleValue()) {
+      String[] values = blockValSet.getStringValuesSV();
+      forEachNotNull(length, blockValSet, (from, to) -> {
+        for (int i = from; i < to; i++) {
+          setGroupByResult(groupByResultHolder, groupKeyArray[i], values[i]);
+        }
+      });
+    } else {
+      String[][] valuesArray = blockValSet.getStringValuesMV();
+      forEachNotNull(length, blockValSet, (from, to) -> {
+        for (int i = from; i < to; i++) {
+          int groupKey = groupKeyArray[i];
+          String[] values = valuesArray[i];
+          for (String v : values) {
+            setGroupByResult(groupByResultHolder, groupKey, v);
+          }
+        }
+      });
+    }
   }
 
   @Override
   public void aggregateGroupByMV(int length, int[][] groupKeysArray, GroupByResultHolder groupByResultHolder,
       Map<ExpressionContext, BlockValSet> blockValSetMap) {
     BlockValSet blockValSet = blockValSetMap.get(_expression);
-    String[] values = blockValSet.getStringValuesSV();
-
-    forEachNotNull(length, blockValSet, (from, to) -> {
-      for (int i = from; i < to; i++) {
-        int[] groupKeys = groupKeysArray[i];
-        for (int groupKey : groupKeys) {
-          setGroupByResult(groupByResultHolder, groupKey, values[i]);
+    if (blockValSet.isSingleValue()) {
+      String[] values = blockValSet.getStringValuesSV();
+      forEachNotNull(length, blockValSet, (from, to) -> {
+        for (int i = from; i < to; i++) {
+          int[] groupKeys = groupKeysArray[i];
+          for (int groupKey : groupKeys) {
+            setGroupByResult(groupByResultHolder, groupKey, values[i]);
+          }
         }
-      }
-    });
+      });
+    } else {
+      String[][] valuesArray = blockValSet.getStringValuesMV();
+      forEachNotNull(length, blockValSet, (from, to) -> {
+        for (int i = from; i < to; i++) {
+          int[] groupKeys = groupKeysArray[i];
+          String[] values = valuesArray[i];
+          for (int groupKey : groupKeys) {
+            for (String v : values) {
+              setGroupByResult(groupByResultHolder, groupKey, v);
+            }
+          }
+        }
+      });
+    }
   }
 
   @Override
