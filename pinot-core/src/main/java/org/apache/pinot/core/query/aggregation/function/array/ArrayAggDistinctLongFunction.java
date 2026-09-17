@@ -27,11 +27,11 @@ import org.apache.pinot.core.common.BlockValSet;
 import org.apache.pinot.core.common.ObjectSerDeUtils;
 import org.apache.pinot.core.query.aggregation.AggregationResultHolder;
 import org.apache.pinot.core.query.aggregation.groupby.GroupByResultHolder;
-import org.apache.pinot.spi.data.FieldSpec;
+import org.apache.pinot.spi.data.FieldSpec.DataType;
 
 
 public class ArrayAggDistinctLongFunction extends BaseArrayAggLongFunction<LongSet> {
-  public ArrayAggDistinctLongFunction(ExpressionContext expression, FieldSpec.DataType dataType,
+  public ArrayAggDistinctLongFunction(ExpressionContext expression, DataType dataType,
       boolean nullHandlingEnabled) {
     super(expression, dataType, nullHandlingEnabled);
   }
@@ -40,15 +40,26 @@ public class ArrayAggDistinctLongFunction extends BaseArrayAggLongFunction<LongS
   public void aggregate(int length, AggregationResultHolder aggregationResultHolder,
       Map<ExpressionContext, BlockValSet> blockValSetMap) {
     BlockValSet blockValSet = blockValSetMap.get(_expression);
-    long[] value = blockValSet.getLongValuesSV();
     LongOpenHashSet valueSet =
         aggregationResultHolder.getResult() != null ? aggregationResultHolder.getResult() : new LongOpenHashSet(length);
-
-    forEachNotNull(length, blockValSet, (from, to) -> {
-      for (int i = from; i < to; i++) {
-        valueSet.add(value[i]);
-      }
-    });
+    if (blockValSet.isSingleValue()) {
+      long[] values = blockValSet.getLongValuesSV();
+      forEachNotNull(length, blockValSet, (from, to) -> {
+        for (int i = from; i < to; i++) {
+          valueSet.add(values[i]);
+        }
+      });
+    } else {
+      long[][] valuesArray = blockValSet.getLongValuesMV();
+      forEachNotNull(length, blockValSet, (from, to) -> {
+        for (int i = from; i < to; i++) {
+          long[] values = valuesArray[i];
+          for (long v : values) {
+            valueSet.add(v);
+          }
+        }
+      });
+    }
     aggregationResultHolder.setValue(valueSet);
   }
 

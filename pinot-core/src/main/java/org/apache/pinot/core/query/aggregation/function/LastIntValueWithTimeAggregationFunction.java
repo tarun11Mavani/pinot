@@ -26,20 +26,18 @@ import org.apache.pinot.core.common.ObjectSerDeUtils;
 import org.apache.pinot.core.query.aggregation.groupby.GroupByResultHolder;
 import org.apache.pinot.segment.local.customobject.IntLongPair;
 import org.apache.pinot.segment.local.customobject.ValueLongPair;
-import org.roaringbitmap.IntIterator;
 
 
-/**
- * This function is used for LastWithTime calculations for data column with int/boolean type.
- * <p>The function can be used as LastWithTime(dataExpression, timeExpression, 'int')
- * or LastWithTime(dataExpression, timeExpression, 'boolean')
- * <p>Following arguments are supported:
- * <ul>
- *   <li>dataExpression: expression that contains the int/boolean data column to be calculated last on</li>
- *   <li>timeExpression: expression that contains the column to be used to decide which data is last, can be any
- *   Numeric column</li>
- * </ul>
- */
+/// This function is used for LastWithTime calculations for data column with int/boolean type.
+///
+/// The function can be used as LastWithTime(dataExpression, timeExpression, 'int')
+/// or LastWithTime(dataExpression, timeExpression, 'boolean')
+///
+/// Following arguments are supported:
+///
+/// - dataExpression: expression that contains the int/boolean data column to be calculated last on
+/// - timeExpression: expression that contains the column to be used to decide which data is last, can be any
+///   Numeric column
 public class LastIntValueWithTimeAggregationFunction extends LastWithTimeAggregationFunction<Integer> {
   private final static ValueLongPair<Integer> DEFAULT_VALUE_TIME_PAIR =
       new IntLongPair(Integer.MIN_VALUE, Long.MIN_VALUE);
@@ -73,8 +71,7 @@ public class LastIntValueWithTimeAggregationFunction extends LastWithTimeAggrega
     int[] intValues = blockValSet.getIntValuesSV();
     long[] timeValues = timeValSet.getLongValuesSV();
 
-    IntIterator nullIdxIterator = orNullIterator(blockValSet, timeValSet);
-    forEachNotNull(length, nullIdxIterator, (from, to) -> {
+    forEachNotNull(length, blockValSet, timeValSet, (from, to) -> {
       for (int i = from; i < to; i++) {
         int data = intValues[i];
         long time = timeValues[i];
@@ -89,8 +86,7 @@ public class LastIntValueWithTimeAggregationFunction extends LastWithTimeAggrega
     int[] intValues = blockValSet.getIntValuesSV();
     long[] timeValues = timeValSet.getLongValuesSV();
 
-    IntIterator nullIdxIterator = orNullIterator(blockValSet, timeValSet);
-    forEachNotNull(length, nullIdxIterator, (from, to) -> {
+    forEachNotNull(length, blockValSet, timeValSet, (from, to) -> {
       for (int i = from; i < to; i++) {
         int value = intValues[i];
         long time = timeValues[i];

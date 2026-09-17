@@ -21,7 +21,6 @@ package org.apache.pinot.segment.local.segment.index.loader;
 import com.fasterxml.jackson.core.JsonProcessingException;
 import java.io.IOException;
 import java.util.Arrays;
-import java.util.Collections;
 import java.util.List;
 import java.util.Map;
 import org.apache.pinot.segment.spi.index.FieldIndexConfigs;
@@ -74,9 +73,9 @@ public class IndexLoadingConfigTest {
     //@formatter:on
     StarTreeIndexConfig stIdxCfg = JsonUtils.stringToObject(stIdxCfgStr, StarTreeIndexConfig.class);
     TableConfig tableConfig = new TableConfigBuilder(TableType.OFFLINE).setTableName(TABLE_NAME)
-        .setInvertedIndexColumns(Collections.singletonList("col1"))
-        .setStarTreeIndexConfigs(Collections.singletonList(stIdxCfg))
-        .setFieldConfigList(Collections.singletonList(col2Cfg)).build();
+        .setInvertedIndexColumns(List.of("col1"))
+        .setStarTreeIndexConfigs(List.of(stIdxCfg))
+        .setFieldConfigList(List.of(col2Cfg)).build();
     IndexLoadingConfig ilc = new IndexLoadingConfig(idmCfg, tableConfig, schema);
     // Check index configs for default tier
     assertEquals(ilc.getStarTreeIndexConfigs().size(), 1);
@@ -139,7 +138,7 @@ public class IndexLoadingConfigTest {
     //@formatter:on
     StarTreeIndexConfig stIdxCfg = JsonUtils.stringToObject(stIdxCfgStr, StarTreeIndexConfig.class);
     TableConfig tableConfig = new TableConfigBuilder(TableType.OFFLINE).setTableName(TABLE_NAME)
-        .setStarTreeIndexConfigs(Collections.singletonList(stIdxCfg))
+        .setStarTreeIndexConfigs(List.of(stIdxCfg))
         .setTierOverwrites(JsonUtils.stringToJsonNode("{\"coldTier\": {\"starTreeIndexConfigs\": []}}"))
         .setFieldConfigList(Arrays.asList(col1Cfg, col2Cfg)).build();
     IndexLoadingConfig ilc = new IndexLoadingConfig(idmCfg, tableConfig, schema);
@@ -155,6 +154,37 @@ public class IndexLoadingConfigTest {
     assertFalse(fieldCfgs.getConfig(StandardIndexes.inverted()).isEnabled());
     assertFalse(fieldCfgs.getConfig(StandardIndexes.bloomFilter()).isEnabled());
     assertFalse(fieldCfgs.getConfig(StandardIndexes.dictionary()).isEnabled());
+  }
+
+  @Test
+  public void testSkipSegmentPreprocessRespectsTierOverwrites()
+      throws IOException {
+    InstanceDataManagerConfig idmCfg = mock(InstanceDataManagerConfig.class);
+    when(idmCfg.getConfig()).thenReturn(new PinotConfiguration());
+    Schema schema =
+        new Schema.SchemaBuilder().setSchemaName(TABLE_NAME).addSingleValueDimension("col1", FieldSpec.DataType.INT)
+            .build();
+    // Table-level skipSegmentPreprocess=true; override to false on "preprocessed" tier.
+    TableConfig tableConfig = new TableConfigBuilder(TableType.OFFLINE).setTableName(TABLE_NAME)
+        .setSkipSegmentPreprocess(true)
+        .setTierOverwrites(JsonUtils.stringToJsonNode("{\"preprocessed\": {\"skipSegmentPreprocess\": false}}"))
+        .build();
+
+    IndexLoadingConfig ilc = new IndexLoadingConfig(idmCfg, tableConfig, schema);
+    // Default tier: no override applied, table-level value flows through.
+    assertTrue(ilc.isSkipSegmentPreprocess());
+
+    // Unknown tier: no override for it, still falls back to table-level value.
+    ilc.setSegmentTier("someOtherTier");
+    assertTrue(ilc.isSkipSegmentPreprocess());
+
+    // "preprocessed" tier: override kicks in and flips the flag.
+    ilc.setSegmentTier("preprocessed");
+    assertFalse(ilc.isSkipSegmentPreprocess());
+
+    // Switching back to a tier without an override: table-level value again.
+    ilc.setSegmentTier(null);
+    assertTrue(ilc.isSkipSegmentPreprocess());
   }
 
   @Test
@@ -181,6 +211,7 @@ public class IndexLoadingConfigTest {
     assertNotNull(indexConfigs);
     ForwardIndexConfig forwardIndexConfig = indexConfigs.getConfig(StandardIndexes.forward());
     assertTrue(forwardIndexConfig.isEnabled());
+    assertEquals(forwardIndexConfig.getEncodingType(), FieldConfig.EncodingType.RAW);
     assertNull(forwardIndexConfig.getCompressionCodec());
     assertFalse(forwardIndexConfig.isDeriveNumDocsPerChunk());
     assertEquals(forwardIndexConfig.getRawIndexWriterVersion(), ForwardIndexConfig.getDefaultRawWriterVersion());
@@ -214,6 +245,7 @@ public class IndexLoadingConfigTest {
     assertNotNull(indexConfigs);
     forwardIndexConfig = indexConfigs.getConfig(StandardIndexes.forward());
     assertTrue(forwardIndexConfig.isEnabled());
+    assertEquals(forwardIndexConfig.getEncodingType(), FieldConfig.EncodingType.RAW);
     assertEquals(forwardIndexConfig.getCompressionCodec(), FieldConfig.CompressionCodec.SNAPPY);
     assertTrue(forwardIndexConfig.isDeriveNumDocsPerChunk());
     assertEquals(forwardIndexConfig.getRawIndexWriterVersion(), 4);

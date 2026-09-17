@@ -29,10 +29,10 @@ import org.apache.pinot.common.response.BrokerResponse;
 import org.apache.pinot.common.response.broker.ResultTable;
 import org.apache.pinot.common.utils.DataSchema;
 import org.apache.pinot.core.transport.server.routing.stats.ServerRoutingStatsManager;
+import org.apache.pinot.spi.accounting.ThreadAccountantUtils;
 import org.apache.pinot.spi.env.PinotConfiguration;
 import org.apache.pinot.spi.eventlistener.query.BrokerQueryEventListenerFactory;
 import org.apache.pinot.spi.exception.QueryErrorCode;
-import org.apache.pinot.spi.trace.Tracing;
 import org.apache.pinot.spi.utils.BytesUtils;
 import org.apache.pinot.sql.parsers.CalciteSqlParser;
 import org.testng.annotations.BeforeClass;
@@ -78,6 +78,37 @@ public class LiteralOnlyBrokerRequestTest {
     assertTrue(isLiteralOnlyQuery(CalciteSqlParser.compileToPinotQuery("SELECT 1, '2', 3")));
     assertTrue(isLiteralOnlyQuery(CalciteSqlParser.compileToPinotQuery("SELECT 1 FROM myTable")));
     assertTrue(isLiteralOnlyQuery(CalciteSqlParser.compileToPinotQuery("SELECT 1, '2', 3 FROM myTable")));
+  }
+
+  @Test
+  public void testArrayLiteralBrokerRequestFromSQL()
+      throws Exception {
+    SingleConnectionBrokerRequestHandler requestHandler =
+        new SingleConnectionBrokerRequestHandler(new PinotConfiguration(), "testBrokerId",
+            new BrokerRequestIdGenerator(), null, ACCESS_CONTROL_FACTORY, null, null, null, null,
+            mock(ServerRoutingStatsManager.class), mock(FailureDetector.class),
+            ThreadAccountantUtils.getNoOpAccountant(), null, null);
+
+    BrokerResponse brokerResponse = requestHandler.handleRequest(
+        "SELECT ARRAY[1, 2] AS ints, ARRAY['one', 'two'] AS strings");
+    ResultTable resultTable = brokerResponse.getResultTable();
+    assertEquals(resultTable.getDataSchema().getColumnDataType(0), DataSchema.ColumnDataType.INT_ARRAY);
+    assertEquals(resultTable.getDataSchema().getColumnDataType(1), DataSchema.ColumnDataType.STRING_ARRAY);
+    assertEquals((int[]) resultTable.getRows().get(0)[0], new int[]{1, 2});
+    assertEquals((String[]) resultTable.getRows().get(0)[1], new String[]{"one", "two"});
+
+    brokerResponse = requestHandler.handleRequest("SELECT ARRAY[X'00', X'0102'] AS bytes");
+    resultTable = brokerResponse.getResultTable();
+    assertEquals(resultTable.getDataSchema().getColumnName(0), "bytes");
+    assertEquals(resultTable.getDataSchema().getColumnDataType(0), DataSchema.ColumnDataType.BYTES_ARRAY);
+    assertEquals(resultTable.getRows().size(), 1);
+    assertEquals(resultTable.getRows().get(0), new Object[]{new String[]{"00", "0102"}});
+
+    brokerResponse = requestHandler.handleRequest(
+        "SELECT ARRAYS_OVERLAP(ARRAY[X'00', X'0102'], ARRAY[X'03', X'0102']) AS overlaps");
+    resultTable = brokerResponse.getResultTable();
+    assertEquals(resultTable.getDataSchema().getColumnDataType(0), DataSchema.ColumnDataType.BOOLEAN);
+    assertEquals(resultTable.getRows().get(0)[0], true);
   }
 
   @Test
@@ -174,7 +205,7 @@ public class LiteralOnlyBrokerRequestTest {
         new SingleConnectionBrokerRequestHandler(new PinotConfiguration(), "testBrokerId",
             new BrokerRequestIdGenerator(), null, ACCESS_CONTROL_FACTORY, null, null, null, null,
             mock(ServerRoutingStatsManager.class), mock(FailureDetector.class),
-            new Tracing.DefaultThreadResourceUsageAccountant());
+            ThreadAccountantUtils.getNoOpAccountant(), null, null);
 
     long randNum = RANDOM.nextLong();
     byte[] randBytes = new byte[12];
@@ -200,7 +231,7 @@ public class LiteralOnlyBrokerRequestTest {
         new SingleConnectionBrokerRequestHandler(new PinotConfiguration(), "testBrokerId",
             new BrokerRequestIdGenerator(), null, ACCESS_CONTROL_FACTORY, null, null, null, null,
             mock(ServerRoutingStatsManager.class), mock(FailureDetector.class),
-            new Tracing.DefaultThreadResourceUsageAccountant());
+            ThreadAccountantUtils.getNoOpAccountant(), null, null);
     long currentTsMin = System.currentTimeMillis();
     BrokerResponse brokerResponse = requestHandler.handleRequest(
         "SELECT now() AS currentTs, fromDateTime('2020-01-01 UTC', 'yyyy-MM-dd z') AS firstDayOf2020");
@@ -348,7 +379,7 @@ public class LiteralOnlyBrokerRequestTest {
     assertEquals(brokerResponse.getExceptions().get(0).getErrorCode(), QueryErrorCode.SQL_PARSING.getId());
   }
 
-  /** Tests for EXPLAIN PLAN for literal only queries. */
+  /// Tests for EXPLAIN PLAN for literal only queries.
   @Test
   public void testExplainPlanLiteralOnly()
       throws Exception {
@@ -356,7 +387,7 @@ public class LiteralOnlyBrokerRequestTest {
         new SingleConnectionBrokerRequestHandler(new PinotConfiguration(), "testBrokerId",
             new BrokerRequestIdGenerator(), null, ACCESS_CONTROL_FACTORY, null, null, null, null,
             mock(ServerRoutingStatsManager.class), mock(FailureDetector.class),
-            new Tracing.DefaultThreadResourceUsageAccountant());
+            ThreadAccountantUtils.getNoOpAccountant(), null, null);
 
     // Test 1: select constant
     BrokerResponse brokerResponse = requestHandler.handleRequest("EXPLAIN PLAN FOR SELECT 1.5, 'test'");

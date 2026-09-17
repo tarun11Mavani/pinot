@@ -134,8 +134,8 @@ public class JsonIndexHandler extends BaseIndexHandler {
     // Create new json index for the column.
     LOGGER.info("Creating new json index for segment: {}, column: {}", segmentName, columnName);
     Preconditions.checkState(columnMetadata.isSingleValue() && (columnMetadata.getDataType() == DataType.STRING
-            || columnMetadata.getDataType() == DataType.JSON),
-        "Json index can only be applied to single-value STRING or JSON columns");
+            || columnMetadata.getDataType() == DataType.JSON || columnMetadata.getDataType() == DataType.MAP),
+        "Json index can only be applied to single-value STRING, JSON, or MAP columns");
     if (columnMetadata.hasDictionary()) {
       handleDictionaryBasedColumn(segmentWriter, columnMetadata);
     } else {
@@ -157,13 +157,7 @@ public class JsonIndexHandler extends BaseIndexHandler {
       throws Exception {
     File indexDir = _segmentDirectory.getSegmentMetadata().getIndexDir();
     String columnName = columnMetadata.getColumnName();
-    IndexCreationContext context = IndexCreationContext.builder()
-        .withIndexDir(indexDir)
-        .withColumnMetadata(columnMetadata)
-        .withTableNameWithType(_tableConfig.getTableName())
-        .withContinueOnError(_tableConfig.getIngestionConfig() != null
-            && _tableConfig.getIngestionConfig().isContinueOnError())
-        .build();
+    IndexCreationContext context = new IndexCreationContext.Builder(indexDir, _tableConfig, columnMetadata).build();
     JsonIndexConfig config = _jsonIndexConfigs.get(columnName);
     IndexReaderFactory<ForwardIndexReader> readerFactory = StandardIndexes.forward().getReaderFactory();
     try (ForwardIndexReader forwardIndexReader = readerFactory.createIndexReader(segmentWriter,
@@ -184,13 +178,7 @@ public class JsonIndexHandler extends BaseIndexHandler {
       throws Exception {
     File indexDir = _segmentDirectory.getSegmentMetadata().getIndexDir();
     String columnName = columnMetadata.getColumnName();
-    IndexCreationContext context = IndexCreationContext.builder()
-        .withIndexDir(indexDir)
-        .withColumnMetadata(columnMetadata)
-        .withTableNameWithType(_tableConfig.getTableName())
-        .withContinueOnError(_tableConfig.getIngestionConfig() != null
-            && _tableConfig.getIngestionConfig().isContinueOnError())
-        .build();
+    IndexCreationContext context = new IndexCreationContext.Builder(indexDir, _tableConfig, columnMetadata).build();
     JsonIndexConfig config = _jsonIndexConfigs.get(columnName);
     IndexReaderFactory<ForwardIndexReader> readerFactory = StandardIndexes.forward().getReaderFactory();
     try (ForwardIndexReader forwardIndexReader = readerFactory.createIndexReader(segmentWriter,

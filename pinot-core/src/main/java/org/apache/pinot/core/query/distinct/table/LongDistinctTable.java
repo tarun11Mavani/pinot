@@ -36,20 +36,20 @@ import org.apache.pinot.common.utils.DataSchema;
 import org.apache.pinot.common.utils.DataSchema.ColumnDataType;
 import org.apache.pinot.core.common.datatable.DataTableBuilder;
 import org.apache.pinot.core.common.datatable.DataTableBuilderFactory;
-import org.apache.pinot.spi.trace.Tracing;
+import org.apache.pinot.spi.query.QueryThreadContext;
 import org.apache.pinot.spi.utils.CommonConstants;
 import org.roaringbitmap.RoaringBitmap;
 
 
 public class LongDistinctTable extends DistinctTable {
+  private static final String MERGE_SCOPE = "LongDistinctTable#mergeDistinctTable";
+
   private final LongOpenHashSet _valueSet;
   private final OrderByExpressionContext _orderByExpression;
 
   private LongHeapPriorityQueue _priorityQueue;
 
-  /**
-   * Constructor for distinct table without data table (on the server side).
-   */
+  /// Constructor for distinct table without data table (on the server side).
   public LongDistinctTable(DataSchema dataSchema, int limit, boolean nullHandlingEnabled,
       @Nullable OrderByExpressionContext orderByExpression) {
     super(dataSchema, limit, nullHandlingEnabled);
@@ -58,9 +58,7 @@ public class LongDistinctTable extends DistinctTable {
     _orderByExpression = orderByExpression;
   }
 
-  /**
-   * Constructor for distinct table with data table (on the broker side).
-   */
+  /// Constructor for distinct table with data table (on the broker side).
   public LongDistinctTable(DataSchema dataSchema, int limit, boolean nullHandlingEnabled,
       @Nullable OrderByExpressionContext orderByExpression, DataTable dataTable) {
     super(dataSchema, limit, nullHandlingEnabled);
@@ -138,14 +136,17 @@ public class LongDistinctTable extends DistinctTable {
     if (longDistinctTable._hasNull) {
       addNull();
     }
+    int numValuesMerged = 0;
     LongIterator longIterator = longDistinctTable._valueSet.iterator();
     if (hasLimit()) {
       if (hasOrderBy()) {
         while (longIterator.hasNext()) {
+          QueryThreadContext.checkTerminationAndSampleUsagePeriodically(numValuesMerged++, MERGE_SCOPE);
           addWithOrderBy(longIterator.nextLong());
         }
       } else {
         while (longIterator.hasNext()) {
+          QueryThreadContext.checkTerminationAndSampleUsagePeriodically(numValuesMerged++, MERGE_SCOPE);
           if (addWithoutOrderBy(longIterator.nextLong())) {
             return;
           }
@@ -154,6 +155,7 @@ public class LongDistinctTable extends DistinctTable {
     } else {
       // NOTE: Do not use _valueSet.addAll() to avoid unnecessary resize when most values are common.
       while (longIterator.hasNext()) {
+        QueryThreadContext.checkTerminationAndSampleUsagePeriodically(numValuesMerged++, MERGE_SCOPE);
         addUnbounded(longIterator.nextLong());
       }
     }
@@ -235,11 +237,10 @@ public class LongDistinctTable extends DistinctTable {
     int numRowsAdded = 0;
     LongIterator longIterator = _valueSet.iterator();
     while (longIterator.hasNext()) {
-      Tracing.ThreadAccountantOps.sampleAndCheckInterruptionPeriodically(numRowsAdded);
+      QueryThreadContext.checkTerminationAndSampleUsagePeriodically(numRowsAdded++, "LongDistinctTable#toDataTable");
       dataTableBuilder.startRow();
       dataTableBuilder.setColumn(0, longIterator.nextLong());
       dataTableBuilder.finishRow();
-      numRowsAdded++;
     }
     if (_hasNull) {
       RoaringBitmap nullBitmap = new RoaringBitmap();

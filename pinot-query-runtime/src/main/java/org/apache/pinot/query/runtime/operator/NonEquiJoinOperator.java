@@ -30,14 +30,14 @@ import org.apache.pinot.query.runtime.blocks.MseBlock;
 import org.apache.pinot.query.runtime.plan.OpChainExecutionContext;
 
 
-/**
- * The {@code NonEquiJoinOperator} implements the join algorithm without join keys. Right table is materialized into a
- * list.
- */
+/// The `NonEquiJoinOperator` implements the join algorithm without join keys. Right table is materialized into a
+/// list.
 public class NonEquiJoinOperator extends BaseJoinOperator {
   private static final String EXPLAIN_NAME = "NON_EQUI_JOIN";
+  private static final String BUILD_JOINED_ROWS_SCOPE = "NonEquiJoinOperator#buildJoinedRows";
+  private static final String BUILD_NON_MATCH_RIGHT_ROWS_SCOPE = "NonEquiJoinOperator#buildNonMatchRightRows";
 
-  private final List<Object[]> _rightTable;
+  private List<Object[]> _rightTable;
   // Track matched right rows for right join and full join to output non-matched right rows.
   // TODO: Revisit whether we should use IntList or RoaringBitmap for smaller memory footprint.
   @Nullable
@@ -69,9 +69,18 @@ public class NonEquiJoinOperator extends BaseJoinOperator {
     }
   }
 
+  /// Replaces `_rightTable` with a fresh, empty list rather than clearing it: `clear()` would keep the element array
+  /// it grew to. A new `ArrayList` rather than `List.of()` because the field is read — and, if the operator were ever
+  /// re-entered, written — unconditionally, so it must stay both non-null and mutable.
   @Override
-  protected void onEosProduced() {
+  protected void releaseBuffers() {
+    _rightTable = new ArrayList<>();
     _matchedRightRows = null;
+  }
+
+  @Override
+  protected boolean hasBufferedState() {
+    return !_rightTable.isEmpty() || _matchedRightRows != null;
   }
 
   @Override
@@ -90,7 +99,7 @@ public class NonEquiJoinOperator extends BaseJoinOperator {
             maxRowsLimitReached = true;
             break;
           }
-          sampleAndCheckInterruptionPeriodically(rows.size());
+          checkTerminationAndSampleUsagePeriodically(rows.size(), BUILD_JOINED_ROWS_SCOPE);
           rows.add(joinRowView.toArray());
           hasMatchForLeftRow = true;
           if (_matchedRightRows != null) {
@@ -105,7 +114,7 @@ public class NonEquiJoinOperator extends BaseJoinOperator {
         if (isMaxRowsLimitReached(rows.size())) {
           break;
         }
-        sampleAndCheckInterruptionPeriodically(rows.size());
+        checkTerminationAndSampleUsagePeriodically(rows.size(), BUILD_JOINED_ROWS_SCOPE);
         rows.add(joinRow(leftRow, null));
       }
     }
@@ -123,7 +132,7 @@ public class NonEquiJoinOperator extends BaseJoinOperator {
     List<Object[]> rows = new ArrayList<>(numRightRows - numMatchedRightRows);
     int unmatchedIndex = 0;
     while ((unmatchedIndex = _matchedRightRows.nextClearBit(unmatchedIndex)) < numRightRows) {
-      sampleAndCheckInterruptionPeriodically(rows.size());
+      checkTerminationAndSampleUsagePeriodically(rows.size(), BUILD_NON_MATCH_RIGHT_ROWS_SCOPE);
       rows.add(joinRow(null, _rightTable.get(unmatchedIndex++)));
     }
     return rows;

@@ -63,9 +63,22 @@ public class PipelineBreakerOperator extends MultiStageOperator {
   }
 
   @Override
-  public void registerExecution(long time, int numRows) {
+  public void registerExecution(long time, int numRows, long memoryUsedBytes, long gcTimeMs) {
     _statMap.merge(StatKey.EXECUTION_TIME_MS, time);
+    _statMap.merge(StatKey.ALLOCATED_MEMORY_BYTES, memoryUsedBytes);
+    _statMap.merge(StatKey.GC_TIME_MS, gcTimeMs);
+    // This is actually unnecessary given that pipeline breaker does not emit any rows upstream.
     _statMap.merge(StatKey.EMITTED_ROWS, numRows);
+  }
+
+  /// Deliberately releases nothing, unlike every other operator.
+  ///
+  /// `_resultMap` is this operator's *output*, not scratch space: [PipelineBreakerExecutor] reads it through
+  /// [#getResultMap()] after the op chain has finished, and `OpChain#close()` fires the callback that unblocks that
+  /// read only after `close()` has already run. Dropping the map here would hand the main op chain empty
+  /// pipeline-breaker results, which `nextBlock()` would then surface as an unexplained error block.
+  @Override
+  protected void releaseBuffers() {
   }
 
   @Override
@@ -146,13 +159,24 @@ public class PipelineBreakerOperator extends MultiStageOperator {
   }
 
   @Override
-  protected StatMap<?> copyStatMaps() {
+  public StatMap<StatKey> copyStatMaps() {
+    if (_statMap.getLong(StatKey.EMITTED_ROWS) == 0) {
+      long totalRows = _resultMap.values().stream()
+          .flatMap(List::stream)
+          .mapToLong(block -> ((MseBlock.Data) block).getNumRows())
+          .sum();
+      _statMap.merge(StatKey.EMITTED_ROWS, totalRows);
+    }
     return new StatMap<>(_statMap);
   }
 
   public enum StatKey implements StatMap.Key {
     EXECUTION_TIME_MS(StatMap.Type.LONG),
-    EMITTED_ROWS(StatMap.Type.LONG);
+    EMITTED_ROWS(StatMap.Type.LONG),
+    /// Allocated memory in bytes for this operator or its children in the same stage.
+    ALLOCATED_MEMORY_BYTES(StatMap.Type.LONG),
+    /// Time spent on GC while this operator or its children in the same stage were running.
+    GC_TIME_MS(StatMap.Type.LONG);
     private final StatMap.Type _type;
 
     StatKey(StatMap.Type type) {

@@ -18,10 +18,10 @@
  */
 package org.apache.pinot.core.startree;
 
+import com.google.common.annotations.VisibleForTesting;
 import it.unimi.dsi.fastutil.objects.ObjectBooleanPair;
 import java.util.ArrayDeque;
 import java.util.ArrayList;
-import java.util.Collections;
 import java.util.HashMap;
 import java.util.HashSet;
 import java.util.List;
@@ -34,7 +34,9 @@ import org.apache.pinot.common.request.context.ExpressionContext;
 import org.apache.pinot.common.request.context.FilterContext;
 import org.apache.pinot.common.request.context.predicate.Predicate;
 import org.apache.pinot.core.operator.BaseProjectOperator;
+import org.apache.pinot.core.operator.filter.FilterOperatorUtils;
 import org.apache.pinot.core.operator.filter.predicate.PredicateEvaluator;
+import org.apache.pinot.core.operator.filter.predicate.PredicateEvaluatorProvider;
 import org.apache.pinot.core.query.aggregation.function.AggregationFunction;
 import org.apache.pinot.core.query.aggregation.function.AggregationFunctionUtils;
 import org.apache.pinot.core.query.request.context.QueryContext;
@@ -57,11 +59,9 @@ public class StarTreeUtils {
 
   private static final Logger LOGGER = LoggerFactory.getLogger(StarTreeUtils.class);
 
-  /**
-   * Extracts the {@link AggregationFunctionColumnPair}s from the given {@link AggregationFunction}s. Returns
-   * {@code null} if any {@link AggregationFunction} cannot be represented as an {@link AggregationFunctionColumnPair}
-   * (e.g. has multiple arguments, argument is not column etc.).
-   */
+  /// Extracts the [AggregationFunctionColumnPair]s from the given [AggregationFunction]s. Returns
+  /// `null` if any [AggregationFunction] cannot be represented as an [AggregationFunctionColumnPair]
+  /// (e.g. has multiple arguments, argument is not column etc.).
   @Nullable
   public static AggregationFunctionColumnPair[] extractAggregationFunctionPairs(
       AggregationFunction[] aggregationFunctions) {
@@ -80,22 +80,25 @@ public class StarTreeUtils {
     return aggregationFunctionColumnPairs;
   }
 
-  /**
-   * Extracts a map from the column to a list of {@link CompositePredicateEvaluator}s for it. Returns {@code null} if
-   * the filter cannot be solved by the star-tree.
-   *
-   * A predicate can be simple (d1 > 10) or composite (d1 > 10 AND d2 < 50) or multi levelled
-   * (d1 > 50 AND (d2 > 10 OR NOT d2 > 35)).
-   * This method represents a list of CompositePredicates per dimension. For each dimension, all CompositePredicates in
-   * the list are implicitly ANDed together. Any OR and NOT predicates are nested within a CompositePredicate.
-   *
-   * A map from predicates to their evaluators is passed in to accelerate the computation.
-   */
+  /// Extracts a map from the column to a list of [CompositePredicateEvaluator]s for it. Returns `null` if
+  /// the filter cannot be solved by the star-tree.
+  ///
+  /// A predicate can be simple (d1 > 10) or composite (d1 > 10 AND d2 < 50) or multi levelled
+  /// (d1 > 50 AND (d2 > 10 OR NOT d2 > 35)).
+  /// This method represents a list of CompositePredicates per dimension. For each dimension, all CompositePredicates in
+  /// the list are implicitly ANDed together. Any OR and NOT predicates are nested within a CompositePredicate.
+  ///
+  /// A map from predicates to their evaluators is passed in to accelerate the computation.
+  ///
+  /// A predicate that is always true over a column's values is left out of the map, unless null handling is enabled
+  /// and the column holds nulls: a null row is UNKNOWN rather than true, so the predicate is kept, and the column stays
+  /// visible to the null checks that decide whether a star-tree can serve the query.
   @Nullable
   public static Map<String, List<CompositePredicateEvaluator>> extractPredicateEvaluatorsMap(IndexSegment indexSegment,
-      @Nullable FilterContext filter, List<Pair<Predicate, PredicateEvaluator>> predicateEvaluatorMapping) {
+      @Nullable FilterContext filter, List<Pair<Predicate, PredicateEvaluator>> predicateEvaluatorMapping,
+      boolean nullHandlingEnabled) {
     if (filter == null) {
-      return Collections.emptyMap();
+      return Map.of();
     }
 
     Map<String, List<CompositePredicateEvaluator>> predicateEvaluatorsMap = new HashMap<>();
@@ -109,7 +112,7 @@ public class StarTreeUtils {
           break;
         case OR:
           Pair<String, CompositePredicateEvaluator> pair =
-              isOrClauseValidForStarTree(indexSegment, filterNode, predicateEvaluatorMapping);
+              isOrClauseValidForStarTree(indexSegment, filterNode, predicateEvaluatorMapping, nullHandlingEnabled);
           if (pair == null) {
             return null;
           }
@@ -136,7 +139,8 @@ public class StarTreeUtils {
                 return null;
               }
               // Skip adding always true predicate
-              if ((predicateEvaluator.isAlwaysTrue() && !negated) || (predicateEvaluator.isAlwaysFalse() && negated)) {
+              if (isAlwaysTrue(predicateEvaluator, negated, indexSegment, predicate.getLhs().getIdentifier(),
+                  nullHandlingEnabled)) {
                 break;
               }
               predicateEvaluatorsMap.computeIfAbsent(predicate.getLhs().getIdentifier(), k -> new ArrayList<>())
@@ -160,7 +164,8 @@ public class StarTreeUtils {
           if (predicateEvaluator == null || predicateEvaluator.isAlwaysFalse()) {
             return null;
           }
-          if (!predicateEvaluator.isAlwaysTrue()) {
+          if (!isAlwaysTrue(predicateEvaluator, false, indexSegment, predicate.getLhs().getIdentifier(),
+              nullHandlingEnabled)) {
             predicateEvaluatorsMap.computeIfAbsent(predicate.getLhs().getIdentifier(), k -> new ArrayList<>())
                 .add(new CompositePredicateEvaluator(List.of(ObjectBooleanPair.of(predicateEvaluator, false))));
           }
@@ -172,14 +177,12 @@ public class StarTreeUtils {
     return predicateEvaluatorsMap;
   }
 
-  /**
-   * Returns whether the query is fit for star tree index.
-   * <p>The query is fit for star tree index if the following conditions are met:
-   * <ul>
-   *   <li>Star-tree contains all aggregation function column pairs</li>
-   *   <li>All predicate columns and group-by columns are star-tree dimensions</li>
-   * </ul>
-   */
+  /// Returns whether the query is fit for star tree index.
+  ///
+  /// The query is fit for star tree index if the following conditions are met:
+  ///
+  /// - Star-tree contains all aggregation function column pairs
+  /// - All predicate columns and group-by columns are star-tree dimensions
   public static boolean isFitForStarTree(StarTreeV2Metadata starTreeV2Metadata,
       List<Pair<AggregationFunction, AggregationFunctionColumnPair>> aggregations,
       @Nullable ExpressionContext[] groupByExpressions, Set<String> predicateColumns) {
@@ -213,16 +216,15 @@ public class StarTreeUtils {
     return starTreeDimensions.containsAll(predicateColumns);
   }
 
-  /**
-   * Evaluates whether the given OR clause is valid for StarTree processing.
-   * StarTree supports OR predicates on a single dimension only (d1 < 10 OR d1 > 50).
-   *
-   * @return The pair of single identifier and predicate evaluators applied to it if true; {@code null} if the OR clause
-   *         cannot be solved with star-tree; a pair of nulls if the OR clause always evaluates to true.
-   */
+  /// Evaluates whether the given OR clause is valid for StarTree processing.
+  /// StarTree supports OR predicates on a single dimension only (d1 < 10 OR d1 > 50).
+  ///
+  /// @return The pair of single identifier and predicate evaluators applied to it if true; `null` if the OR
+  ///         clause cannot be solved with star-tree; a pair of nulls if the OR clause always evaluates to true.
   @Nullable
   private static Pair<String, CompositePredicateEvaluator> isOrClauseValidForStarTree(IndexSegment indexSegment,
-      FilterContext filter, List<Pair<Predicate, PredicateEvaluator>> predicateEvaluatorMapping) {
+      FilterContext filter, List<Pair<Predicate, PredicateEvaluator>> predicateEvaluatorMapping,
+      boolean nullHandlingEnabled) {
     assert filter.getType() == FilterContext.Type.OR;
 
     List<ObjectBooleanPair<Predicate>> predicates = new ArrayList<>();
@@ -241,7 +243,8 @@ public class StarTreeUtils {
       }
       boolean negated = predicate.rightBoolean();
       // Use a pair of null values to represent always true
-      if ((predicateEvaluator.isAlwaysTrue() && !negated) || (predicateEvaluator.isAlwaysFalse() && negated)) {
+      if (isAlwaysTrue(predicateEvaluator, negated, indexSegment, predicate.left().getLhs().getIdentifier(),
+          nullHandlingEnabled)) {
         return Pair.of(null, null);
       }
       // Skip the always false predicate
@@ -266,10 +269,8 @@ public class StarTreeUtils {
     return Pair.of(identifier, new CompositePredicateEvaluator(predicateEvaluators));
   }
 
-  /**
-   * Extracts the predicates under the given OR clause, returns {@code false} if there is nested AND or NOT under OR
-   * clause.
-   */
+  /// Extracts the predicates under the given OR clause, returns `false` if there is nested AND or NOT under OR
+  /// clause.
   private static boolean extractOrClausePredicates(FilterContext filter,
       List<ObjectBooleanPair<Predicate>> predicates) {
     assert filter.getType() == FilterContext.Type.OR;
@@ -311,10 +312,20 @@ public class StarTreeUtils {
     return true;
   }
 
-  /**
-   * Returns the predicate evaluator for the given predicate, or {@code null} if the predicate cannot be solved with
-   * star-tree.
-   */
+  /// Returns whether the predicate is always true for the query, so that the star-tree filter can drop it.
+  ///
+  /// The evaluator's verdict is over the column's real values. With null handling enabled a null row is UNKNOWN rather
+  /// than true, so the predicate is only always true when the column holds no null. Kept in the map otherwise, the
+  /// column reaches the null checks that decide whether a star-tree can serve the query.
+  private static boolean isAlwaysTrue(PredicateEvaluator predicateEvaluator, boolean negated, IndexSegment indexSegment,
+      String column, boolean nullHandlingEnabled) {
+    boolean alwaysTrueOverValues = negated ? predicateEvaluator.isAlwaysFalse() : predicateEvaluator.isAlwaysTrue();
+    return alwaysTrueOverValues
+        && !(nullHandlingEnabled && FilterOperatorUtils.hasNulls(indexSegment.getDataSource(column)));
+  }
+
+  /// Returns the predicate evaluator for the given predicate, or `null` if the predicate cannot be solved with
+  /// star-tree.
   @Nullable
   private static PredicateEvaluator getPredicateEvaluator(IndexSegment indexSegment, Predicate predicate,
       List<Pair<Predicate, PredicateEvaluator>> predicatesEvaluatorMapping) {
@@ -348,15 +359,26 @@ public class StarTreeUtils {
     }
     for (Pair<Predicate, PredicateEvaluator> pair : predicatesEvaluatorMapping) {
       if (pair.getKey() == predicate) {
-        return pair.getValue();
+        return toDictionaryBased(pair.getValue(), predicate, dataSource);
       }
     }
     return null;
   }
 
-  /**
-   * Returns a {@link BaseProjectOperator} when the filter can be solved with star-tree, or {@code null} otherwise.
-   */
+  /// Star-tree traversal reads dictionary ids; a raw-value evaluator (built when the forward index is RAW and no
+  /// dict-consuming scan operator was available) would throw from `getMatchingDictIds` / `applySV(int)`. Rebuild
+  /// against the segment dictionary when needed.
+  @VisibleForTesting
+  static PredicateEvaluator toDictionaryBased(PredicateEvaluator evaluator, Predicate predicate,
+      DataSource dataSource) {
+    if (evaluator.isDictionaryBased()) {
+      return evaluator;
+    }
+    return PredicateEvaluatorProvider.getPredicateEvaluator(predicate, dataSource.getDictionary(),
+        dataSource.getDataSourceMetadata().getDataType(), null);
+  }
+
+  /// Returns a [BaseProjectOperator] when the filter can be solved with star-tree, or `null` otherwise.
   @Nullable
   public static BaseProjectOperator<?> createStarTreeBasedProjectOperator(IndexSegment indexSegment,
       QueryContext queryContext, AggregationFunction[] aggregationFunctions, @Nullable FilterContext filter,
@@ -373,7 +395,7 @@ public class StarTreeUtils {
     }
 
     Map<String, List<CompositePredicateEvaluator>> predicateEvaluatorsMap =
-        extractPredicateEvaluatorsMap(indexSegment, filter, predicateEvaluators);
+        extractPredicateEvaluatorsMap(indexSegment, filter, predicateEvaluators, queryContext.isNullHandlingEnabled());
     if (predicateEvaluatorsMap == null) {
       return null;
     }
@@ -385,9 +407,21 @@ public class StarTreeUtils {
     if (queryContext.isNullHandlingEnabled()) {
       // We can still use the star-tree index if there aren't actually any null values in this segment for all the
       // metrics being aggregated, all the dimensions being filtered on / grouped by.
-      for (AggregationFunctionColumnPair aggregationFunctionColumnPair : aggregationFunctionColumnPairs) {
+      for (int i = 0; i < aggregationFunctionColumnPairs.length; i++) {
+        AggregationFunctionColumnPair aggregationFunctionColumnPair = aggregationFunctionColumnPairs[i];
         if (aggregationFunctionColumnPair == AggregationFunctionColumnPair.COUNT_STAR) {
-          // Null handling is irrelevant for COUNT(*)
+          // COUNT aggregation function returns a non-empty input expressions list only when null handling is enabled
+          // and the input operand is a non-star identifier or function.
+          List<ExpressionContext> inputExpressions = aggregationFunctions[i].getInputExpressions();
+          if (!inputExpressions.isEmpty()) {
+            if (inputExpressions.get(0).getType() == ExpressionContext.Type.IDENTIFIER) {
+              DataSource dataSource = indexSegment.getDataSource(inputExpressions.get(0).getIdentifier());
+              if (FilterOperatorUtils.hasNulls(dataSource)) {
+                return null;
+              }
+            }
+          }
+          // Null handling is irrelevant for COUNT(*), COUNT(literal), COUNT(nonNullColumn)
           continue;
         }
 
@@ -397,7 +431,7 @@ public class StarTreeUtils {
           LOGGER.debug("Cannot use star-tree index because aggregation column: '{}' does not exist", column);
           return null;
         }
-        if (dataSource.getNullValueVector() != null && !dataSource.getNullValueVector().getNullBitmap().isEmpty()) {
+        if (FilterOperatorUtils.hasNulls(dataSource)) {
           LOGGER.debug("Cannot use star-tree index because aggregation column: '{}' has null values", column);
           return null;
         }
@@ -409,7 +443,7 @@ public class StarTreeUtils {
           LOGGER.debug("Cannot use star-tree index because filter column: '{}' does not exist", column);
           return null;
         }
-        if (dataSource.getNullValueVector() != null && !dataSource.getNullValueVector().getNullBitmap().isEmpty()) {
+        if (FilterOperatorUtils.hasNulls(dataSource)) {
           LOGGER.debug("Cannot use star-tree index because filter column: '{}' has null values", column);
           return null;
         }
@@ -427,7 +461,7 @@ public class StarTreeUtils {
           LOGGER.debug("Cannot use star-tree index because group-by column: '{}' does not exist", column);
           return null;
         }
-        if (dataSource.getNullValueVector() != null && !dataSource.getNullValueVector().getNullBitmap().isEmpty()) {
+        if (FilterOperatorUtils.hasNulls(dataSource)) {
           LOGGER.debug("Cannot use star-tree index because group-by column: '{}' has null values", column);
           return null;
         }

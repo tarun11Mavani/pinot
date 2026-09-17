@@ -37,6 +37,7 @@ import org.apache.helix.zookeeper.datamodel.ZNRecord;
 import org.apache.logging.log4j.util.Strings;
 import org.apache.pinot.common.lineage.SegmentLineage;
 import org.apache.pinot.common.lineage.SegmentLineageAccessHelper;
+import org.apache.pinot.common.lineage.SegmentLineageUtils;
 import org.apache.pinot.common.metadata.ZKMetadataProvider;
 import org.apache.pinot.common.metadata.segment.SegmentZKMetadata;
 import org.apache.pinot.common.metrics.ControllerGauge;
@@ -70,30 +71,38 @@ import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
 
 
-/**
- * The <code>RetentionManager</code> class manages retention for all segments and delete expired segments.
- * <p>It is scheduled to run only on leader controller.
- */
+/// The `RetentionManager` class manages retention for all segments and delete expired segments.
+///
+/// It is scheduled to run only on leader controller.
 public class RetentionManager extends ControllerPeriodicTask<Void> {
   public static final String TASK_NAME = "RetentionManager";
   public static final long OLD_LLC_SEGMENTS_RETENTION_IN_MILLIS = TimeUnit.DAYS.toMillis(5L);
   public static final int DEFAULT_UNTRACKED_SEGMENTS_DELETION_BATCH_SIZE = 100;
   private static final RetryPolicy DEFAULT_RETRY_POLICY = RetryPolicies.randomDelayRetryPolicy(20, 100L, 200L);
-  private final boolean _untrackedSegmentDeletionEnabled;
+  private volatile boolean _untrackedSegmentDeletionEnabled;
+  private volatile int _untrackedSegmentsRetentionTimeInDays;
+  private final int _agedSegmentsDeletionBatchSize;
 
   private static final Logger LOGGER = LoggerFactory.getLogger(RetentionManager.class);
-  private final boolean _isHybridTableRetentionStrategyEnabled;
+  private volatile boolean _isHybridTableRetentionStrategyEnabled;
+  private volatile boolean _useCreationTimeFallbackForRetention;
   private final BrokerServiceHelper _brokerServiceHelper;
+  private final ControllerConf _controllerConf;
 
   public RetentionManager(PinotHelixResourceManager pinotHelixResourceManager,
       LeadControllerManager leadControllerManager, ControllerConf config, ControllerMetrics controllerMetrics,
       BrokerServiceHelper brokerServiceHelper) {
     super(TASK_NAME, config.getRetentionControllerFrequencyInSeconds(),
-        config.getRetentionManagerInitialDelayInSeconds(), pinotHelixResourceManager, leadControllerManager,
-        controllerMetrics);
+            config.getRetentionManagerInitialDelayInSeconds(), config.getRetentionControllerCronExpression(),
+        pinotHelixResourceManager,
+        leadControllerManager, controllerMetrics);
     _untrackedSegmentDeletionEnabled = config.getUntrackedSegmentDeletionEnabled();
+    _untrackedSegmentsRetentionTimeInDays = config.getUntrackedSegmentsRetentionTimeInDays();
+    _agedSegmentsDeletionBatchSize = config.getAgedSegmentsDeletionBatchSize();
     _isHybridTableRetentionStrategyEnabled = config.isHybridTableRetentionStrategyEnabled();
+    _useCreationTimeFallbackForRetention = config.isRetentionCreationTimeFallbackEnabled();
     _brokerServiceHelper = brokerServiceHelper;
+    _controllerConf = config;
     LOGGER.info("Starting RetentionManager with runFrequencyInSeconds: {}", getIntervalInSeconds());
   }
 
@@ -118,7 +127,8 @@ public class RetentionManager extends ControllerPeriodicTask<Void> {
   @Override
   protected void postprocess() {
     LOGGER.info("Removing aged deleted segments for all tables");
-    _pinotHelixResourceManager.getSegmentDeletionManager().removeAgedDeletedSegments(_leadControllerManager);
+    _pinotHelixResourceManager.getSegmentDeletionManager()
+        .removeAgedDeletedSegments(_leadControllerManager, _agedSegmentsDeletionBatchSize);
   }
 
   private void manageRetentionForTable(TableConfig tableConfig) {
@@ -132,25 +142,23 @@ public class RetentionManager extends ControllerPeriodicTask<Void> {
       LOGGER.info("Segment push type is not APPEND for table: {}, skip managing retention", tableNameWithType);
       return;
     }
-    String retentionTimeUnit = validationConfig.getRetentionTimeUnit();
-    String retentionTimeValue = validationConfig.getRetentionTimeValue();
     int untrackedSegmentsDeletionBatchSize =
         validationConfig.getUntrackedSegmentsDeletionBatchSize() != null ? Integer.parseInt(
             validationConfig.getUntrackedSegmentsDeletionBatchSize()) : DEFAULT_UNTRACKED_SEGMENTS_DELETION_BATCH_SIZE;
 
-    RetentionStrategy retentionStrategy;
-    try {
-      retentionStrategy = new TimeRetentionStrategy(TimeUnit.valueOf(retentionTimeUnit.toUpperCase()),
-          Long.parseLong(retentionTimeValue));
-    } catch (Exception e) {
-      LOGGER.warn("Invalid retention time: {} {} for table: {}, skip", retentionTimeUnit, retentionTimeValue,
-          tableNameWithType);
+    RetentionStrategy retentionStrategy =
+        TableConfigRetentionUtils.buildRetentionStrategy(tableConfig, _useCreationTimeFallbackForRetention);
+    if (retentionStrategy == null) {
       return;
     }
 
+    RetentionStrategy untrackedSegmentsRetentionStrategy =
+        createUntrackedSegmentsRetentionStrategy(validationConfig, tableNameWithType);
+
     // Scan all segment ZK metadata and purge segments if necessary
     if (TableNameBuilder.isOfflineTableResource(tableNameWithType)) {
-      manageRetentionForOfflineTable(tableNameWithType, retentionStrategy, untrackedSegmentsDeletionBatchSize);
+      manageRetentionForOfflineTable(tableNameWithType, retentionStrategy, untrackedSegmentsDeletionBatchSize,
+          untrackedSegmentsRetentionStrategy);
     } else {
       String rawTableName = TableNameBuilder.extractRawTableName(tableNameWithType);
       TableConfig offlineTableConfig = _pinotHelixResourceManager.getOfflineTableConfig(rawTableName);
@@ -159,26 +167,28 @@ public class RetentionManager extends ControllerPeriodicTask<Void> {
         // TODO: handle the orphan segment deletion for hybrid table
         manageRetentionForHybridTable(tableConfig, offlineTableConfig);
       } else {
-        manageRetentionForRealtimeTable(tableNameWithType, retentionStrategy, untrackedSegmentsDeletionBatchSize);
+        manageRetentionForRealtimeTable(tableNameWithType, retentionStrategy, untrackedSegmentsDeletionBatchSize,
+            untrackedSegmentsRetentionStrategy);
       }
     }
   }
 
   private void manageRetentionForOfflineTable(String offlineTableName, RetentionStrategy retentionStrategy,
-      int untrackedSegmentsDeletionBatchSize) {
+      int untrackedSegmentsDeletionBatchSize, RetentionStrategy untrackedSegmentsRetentionStrategy) {
     List<SegmentZKMetadata> segmentZKMetadataList = _pinotHelixResourceManager.getSegmentsZKMetadata(offlineTableName);
 
     // fetch those segments that are beyond the retention period and don't have an entry in ZK i.e.
     // SegmentZkMetadata is missing for those segments
     List<String> segmentsToDelete =
         getSegmentsToDeleteFromDeepstore(offlineTableName, retentionStrategy, segmentZKMetadataList,
-            untrackedSegmentsDeletionBatchSize);
+            untrackedSegmentsDeletionBatchSize, untrackedSegmentsRetentionStrategy);
 
     for (SegmentZKMetadata segmentZKMetadata : segmentZKMetadataList) {
       if (retentionStrategy.isPurgeable(offlineTableName, segmentZKMetadata)) {
         segmentsToDelete.add(segmentZKMetadata.getSegmentName());
       }
     }
+    removeLineageLockedSegments(offlineTableName, segmentsToDelete);
     if (!segmentsToDelete.isEmpty()) {
       LOGGER.info("Deleting {} segments from table: {}", segmentsToDelete.size(), offlineTableName);
       _pinotHelixResourceManager.deleteSegments(offlineTableName, segmentsToDelete);
@@ -186,14 +196,14 @@ public class RetentionManager extends ControllerPeriodicTask<Void> {
   }
 
   private void manageRetentionForRealtimeTable(String realtimeTableName, RetentionStrategy retentionStrategy,
-      int untrackedSegmentsDeletionBatchSize) {
+      int untrackedSegmentsDeletionBatchSize, RetentionStrategy untrackedSegmentsRetentionStrategy) {
     List<SegmentZKMetadata> segmentZKMetadataList = _pinotHelixResourceManager.getSegmentsZKMetadata(realtimeTableName);
 
     // fetch those segments that are beyond the retention period and don't have an entry in ZK i.e.
     // SegmentZkMetadata is missing for those segments
     List<String> segmentsToDelete =
         getSegmentsToDeleteFromDeepstore(realtimeTableName, retentionStrategy, segmentZKMetadataList,
-            untrackedSegmentsDeletionBatchSize);
+            untrackedSegmentsDeletionBatchSize, untrackedSegmentsRetentionStrategy);
 
     IdealState idealState = _pinotHelixResourceManager.getHelixAdmin()
         .getResourceIdealState(_pinotHelixResourceManager.getHelixClusterName(), realtimeTableName);
@@ -217,6 +227,7 @@ public class RetentionManager extends ControllerPeriodicTask<Void> {
     // Remove last sealed segments such that the table can still create new consuming segments if it's paused
     segmentsToDelete.removeAll(_pinotHelixResourceManager.getLastLLCCompletedSegments(realtimeTableName));
 
+    removeLineageLockedSegments(realtimeTableName, segmentsToDelete);
     if (!segmentsToDelete.isEmpty()) {
       LOGGER.info("Deleting {} segments from table: {}", segmentsToDelete.size(), realtimeTableName);
       _pinotHelixResourceManager.deleteSegments(realtimeTableName, segmentsToDelete);
@@ -264,6 +275,7 @@ public class RetentionManager extends ControllerPeriodicTask<Void> {
           segmentsToDelete.add(segmentZKMetadata.getSegmentName());
         }
       }
+      removeLineageLockedSegments(realtimeTableName, segmentsToDelete);
       LOGGER.info("Deleting {} segments from table: {}", segmentsToDelete.size(), realtimeTableName);
       if (!segmentsToDelete.isEmpty()) {
         _pinotHelixResourceManager.deleteSegments(realtimeTableName, segmentsToDelete);
@@ -299,8 +311,21 @@ public class RetentionManager extends ControllerPeriodicTask<Void> {
     }
   }
 
+  @VisibleForTesting
+  protected Set<String> getSegmentNames(String tableNameWithType,
+      List<SegmentZKMetadata> segmentZKMetadataList) {
+    return segmentZKMetadataList.stream()
+        .map(SegmentZKMetadata::getSegmentName)
+        .collect(Collectors.toCollection(HashSet::new));
+  }
+
+  protected List<String> getSegmentNames(String tableNameWithType) {
+    return _pinotHelixResourceManager.getSegmentsFor(tableNameWithType, false);
+  }
+
   private List<String> getSegmentsToDeleteFromDeepstore(String tableNameWithType, RetentionStrategy retentionStrategy,
-      List<SegmentZKMetadata> segmentZKMetadataList, int untrackedSegmentsDeletionBatchSize) {
+      List<SegmentZKMetadata> segmentZKMetadataList, int untrackedSegmentsDeletionBatchSize,
+      RetentionStrategy untrackedSegmentsRetentionStrategy) {
     List<String> segmentsToDelete = new ArrayList<>();
     String rawTableName = TableNameBuilder.extractRawTableName(tableNameWithType);
     boolean isHybridTable = _pinotHelixResourceManager.hasOfflineTable(rawTableName)
@@ -330,25 +355,19 @@ public class RetentionManager extends ControllerPeriodicTask<Void> {
       return segmentsToDelete;
     }
 
-    List<String> segmentsPresentInZK;
+    Set<String> segmentsPresentInZK = getSegmentNames(tableNameWithType, segmentZKMetadataList);
     if (isHybridTable) {
-      segmentsPresentInZK = new ArrayList<>();
       // This must be the OFFLINE table
-      segmentsPresentInZK.addAll(
-          segmentZKMetadataList.stream().map(SegmentZKMetadata::getSegmentName).collect(Collectors.toList()));
       // Add segments from the REALTIME table as well
-      segmentsPresentInZK.addAll(
-          _pinotHelixResourceManager.getSegmentsFor(TableNameBuilder.REALTIME.tableNameWithType(rawTableName), false));
-    } else {
-      segmentsPresentInZK =
-          segmentZKMetadataList.stream().map(SegmentZKMetadata::getSegmentName).collect(Collectors.toList());
+      segmentsPresentInZK.addAll(getSegmentNames(TableNameBuilder.REALTIME.tableNameWithType(rawTableName)));
     }
 
     try {
       LOGGER.info("Fetch segments present in deep store that are beyond retention period for table: {}",
           tableNameWithType);
       segmentsToDelete =
-          findUntrackedSegmentsToDeleteFromDeepstore(tableNameWithType, retentionStrategy, segmentsPresentInZK);
+          findUntrackedSegmentsToDeleteFromDeepstore(tableNameWithType, retentionStrategy, segmentsPresentInZK,
+              untrackedSegmentsRetentionStrategy);
       _controllerMetrics.setValueOfTableGauge(tableNameWithType, ControllerGauge.UNTRACKED_SEGMENTS_COUNT,
           segmentsToDelete.size());
 
@@ -359,34 +378,42 @@ public class RetentionManager extends ControllerPeriodicTask<Void> {
       }
     } catch (IOException e) {
       LOGGER.warn("Unable to fetch segments from deep store that are beyond retention period for table: {}",
-          tableNameWithType);
+          tableNameWithType, e);
     }
 
     return segmentsToDelete;
   }
 
-  /**
-   * Identifies segments in deepstore that are ready for deletion based on the retention strategy.
-   *
-   * This method finds segments that are beyond the retention period and are ready to be purged.
-   * It only considers segments that do not have entries in ZooKeeper metadata i.e. untracked segments.
-   * The lastModified time of the file in deepstore is used to determine whether the segment
-   * should be retained or purged.
-   *
-   * @param tableNameWithType   Name of the offline table
-   * @param retentionStrategy  Strategy to determine if a segment should be purged
-   * @param segmentsToExclude  List of segment names that should be excluded from deletion
-   * @return List of segment names that should be deleted from deepstore
-   * @throws IOException If there's an error accessing the filesystem
-   */
-  private List<String> findUntrackedSegmentsToDeleteFromDeepstore(String tableNameWithType,
-      RetentionStrategy retentionStrategy, List<String> segmentsToExclude)
+  /// Identifies segments in deepstore that are ready for deletion based on the retention strategy.
+  ///
+  /// This method finds segments that are beyond the retention period and are ready to be purged.
+  /// It only considers segments that do not have entries in ZooKeeper metadata i.e. untracked segments.
+  /// The lastModified time of the file in deepstore is used to determine whether the segment
+  /// should be retained or purged.
+  ///
+  /// @param tableNameWithType   Name of the offline table
+  /// @param retentionStrategy  Strategy to determine if a segment should be purged
+  /// @param segmentsToExclude  Set of segment names that should be excluded from deletion
+  /// @return List of segment names that should be deleted from deepstore
+  /// @throws IOException If there's an error accessing the filesystem
+  @VisibleForTesting
+  List<String> findUntrackedSegmentsToDeleteFromDeepstore(String tableNameWithType, RetentionStrategy retentionStrategy,
+      Set<String> segmentsToExclude, RetentionStrategy untrackedSegmentsRetentionStrategy)
       throws IOException {
 
     List<String> segmentsToDelete = new ArrayList<>();
     String rawTableName = TableNameBuilder.extractRawTableName(tableNameWithType);
     URI tableDataUri = URIUtils.getUri(_pinotHelixResourceManager.getDataDir(), rawTableName);
     PinotFS pinotFS = PinotFSFactory.create(tableDataUri.getScheme());
+
+    // The data dir is created when the first segment is pushed, so it is legitimately absent for a table that has
+    // never had a segment in deep store. Such a table has no untracked segments to delete, and listing a
+    // non-existent directory fails on most file systems.
+    if (!pinotFS.exists(tableDataUri)) {
+      LOGGER.info("Skipping deep store scan for untracked segments for table: {} as data dir: {} does not exist",
+          tableNameWithType, tableDataUri);
+      return segmentsToDelete;
+    }
 
     long startTimeMs = System.currentTimeMillis();
 
@@ -408,7 +435,11 @@ public class RetentionManager extends ControllerPeriodicTask<Void> {
       // determine whether the segment should be purged or not based on the last modified time of the file
       long lastModifiedTime = fileMetadata.getLastModifiedTime();
 
-      if (retentionStrategy.isPurgeable(tableNameWithType, segmentName, lastModifiedTime)) {
+      // the segment is either beyond the table retention or the retention set for untracked segments
+      boolean shouldDelete = retentionStrategy.isPurgeable(tableNameWithType, segmentName, lastModifiedTime)
+          || untrackedSegmentsRetentionStrategy.isPurgeable(tableNameWithType, segmentName, lastModifiedTime);
+
+      if (shouldDelete) {
         segmentsToDelete.add(segmentName);
       }
     }
@@ -430,6 +461,41 @@ public class RetentionManager extends ControllerPeriodicTask<Void> {
       segmentName = segmentName.substring(0, segmentName.length() - TarCompressionUtils.TAR_GZ_FILE_EXTENSION.length());
     }
     return segmentName;
+  }
+
+  /// Strips out any segments that participate in a live segment lineage entry from the retention-driven
+  /// delete batch. Time-based retention must not delete lineage-locked segments — they are owned by the
+  /// lineage lifecycle and get cleaned up by [#manageSegmentLineageCleanupForTable] when the lineage
+  /// entry becomes eligible. If we left them in, the public delete check would reject the whole batch and
+  /// the rest of the eligible segments would never get cleaned up.
+  ///
+  /// Gated by [ControllerConf#LINEAGE_EXCLUSIVE_DELETE_ENABLED]: when the kill switch is off,
+  /// `deleteSegments` also stops rejecting lineage-locked targets, so retention must mirror legacy
+  /// behavior and pass them through to the delete path instead of silently dropping them here.
+  private void removeLineageLockedSegments(String tableNameWithType, List<String> segmentsToDelete) {
+    if (segmentsToDelete.isEmpty()) {
+      return;
+    }
+    if (!_controllerConf.isLineageExclusiveDeleteEnabled()) {
+      return;
+    }
+    SegmentLineage segmentLineage =
+        SegmentLineageAccessHelper.getSegmentLineage(_pinotHelixResourceManager.getPropertyStore(), tableNameWithType);
+    if (segmentLineage == null) {
+      return;
+    }
+    Set<String> blocked = SegmentLineageUtils.getDeleteBlockedSegments(segmentLineage);
+    if (blocked.isEmpty()) {
+      return;
+    }
+    int sizeBefore = segmentsToDelete.size();
+    segmentsToDelete.removeIf(blocked::contains);
+    int removed = sizeBefore - segmentsToDelete.size();
+    if (removed > 0) {
+      LOGGER.info(
+          "Skipping {} segments in retention pass for table: {} because they participate in a live lineage entry; "
+              + "they will be cleaned up by the lineage retention path.", removed, tableNameWithType);
+    }
   }
 
   private void manageSegmentLineageCleanupForTable(TableConfig tableConfig) {
@@ -477,10 +543,198 @@ public class RetentionManager extends ControllerPeriodicTask<Void> {
     }
     // Delete segments based on the segment lineage
     if (!segmentsToDelete.isEmpty()) {
-      _pinotHelixResourceManager.deleteSegments(tableNameWithType, segmentsToDelete);
+      _pinotHelixResourceManager.deleteSegmentsForLineageCleanup(tableNameWithType, segmentsToDelete);
       LOGGER.info("Finished cleaning up segment lineage for table: {} in {}ms, deleted segments: {}",
           tableNameWithType, (System.currentTimeMillis() - cleanupStartTime), segmentsToDelete);
     }
     LOGGER.info("Segment lineage metadata clean-up is successfully processed for table: {}", tableNameWithType);
+  }
+
+  private RetentionStrategy createUntrackedSegmentsRetentionStrategy(
+      SegmentsValidationAndRetentionConfig validationConfig, String tableNameWithType) {
+    if (validationConfig.getUntrackedSegmentsRetentionTimeUnit() != null
+        && validationConfig.getUntrackedSegmentsRetentionTimeValue() != null) {
+      try {
+        return new TimeRetentionStrategy(
+            TimeUnit.valueOf(validationConfig.getUntrackedSegmentsRetentionTimeUnit().toUpperCase()),
+            Long.parseLong(validationConfig.getUntrackedSegmentsRetentionTimeValue()));
+      } catch (Exception e) {
+        LOGGER.warn("Invalid untracked segments retention time: {} {} for table: {}, using default 3 days",
+            validationConfig.getUntrackedSegmentsRetentionTimeUnit(),
+            validationConfig.getUntrackedSegmentsRetentionTimeValue(), tableNameWithType, e);
+      }
+    }
+    return new TimeRetentionStrategy(TimeUnit.DAYS, _untrackedSegmentsRetentionTimeInDays);
+  }
+
+  @Override
+  public void onChange(Set<String> changedConfigs, Map<String, String> clusterConfigs) {
+    if (changedConfigs.contains(ControllerConf.ControllerPeriodicTasksConf.ENABLE_UNTRACKED_SEGMENT_DELETION)) {
+      updateUntrackedSegmentDeletionEnabled(
+          clusterConfigs.get(ControllerConf.ControllerPeriodicTasksConf.ENABLE_UNTRACKED_SEGMENT_DELETION));
+    }
+
+    if (changedConfigs.contains(ControllerConf.ControllerPeriodicTasksConf.UNTRACKED_SEGMENTS_RETENTION_TIME_IN_DAYS)) {
+      updateUntrackedSegmentsRetentionTimeInDays(
+          clusterConfigs.get(ControllerConf.ControllerPeriodicTasksConf.UNTRACKED_SEGMENTS_RETENTION_TIME_IN_DAYS));
+    }
+
+    if (changedConfigs.contains(ControllerConf.ENABLE_HYBRID_TABLE_RETENTION_STRATEGY)) {
+      updateHybridTableRetentionStrategyEnabled(
+          clusterConfigs.get(ControllerConf.ENABLE_HYBRID_TABLE_RETENTION_STRATEGY));
+    }
+
+    if (changedConfigs.contains(
+        ControllerConf.ControllerPeriodicTasksConf.ENABLE_RETENTION_CREATION_TIME_FALLBACK)) {
+      updateRetentionCreationTimeFallbackEnabled(
+          clusterConfigs.get(ControllerConf.ControllerPeriodicTasksConf.ENABLE_RETENTION_CREATION_TIME_FALLBACK));
+    }
+  }
+
+  private void updateUntrackedSegmentDeletionEnabled(String newValue) {
+    boolean oldValue = _untrackedSegmentDeletionEnabled;
+
+    // When the cluster config key is deleted, newValue will be null. Reset to default.
+    boolean defaultValue =
+        ControllerConf.ControllerPeriodicTasksConf.DEFAULT_ENABLE_UNTRACKED_SEGMENT_DELETION;
+    if (newValue == null) {
+      if (oldValue != defaultValue) {
+        _untrackedSegmentDeletionEnabled = defaultValue;
+        LOGGER.info("Cluster config for untrackedSegmentDeletionEnabled was removed, "
+            + "reverting from {} to default ({})", oldValue, defaultValue);
+      } else {
+        LOGGER.info("Cluster config for untrackedSegmentDeletionEnabled was removed, "
+            + "already at default ({})", defaultValue);
+      }
+      return;
+    }
+
+    // Validate that the value is a proper boolean string
+    if (!"true".equalsIgnoreCase(newValue) && !"false".equalsIgnoreCase(newValue)) {
+      LOGGER.warn("Invalid value for untrackedSegmentDeletionEnabled: {}, keeping current value: {}", newValue,
+          oldValue);
+      return;
+    }
+
+    boolean parsedValue = Boolean.parseBoolean(newValue);
+    if (oldValue == parsedValue) {
+      LOGGER.info("No change in untrackedSegmentDeletionEnabled, current value: {}", oldValue);
+    } else {
+      _untrackedSegmentDeletionEnabled = parsedValue;
+      LOGGER.info("Updated untrackedSegmentDeletionEnabled from {} to {}", oldValue, parsedValue);
+    }
+  }
+
+  private void updateUntrackedSegmentsRetentionTimeInDays(String newValue) {
+    int oldValue = _untrackedSegmentsRetentionTimeInDays;
+
+    // When the cluster config key is deleted, newValue will be null. Reset to default.
+    if (newValue == null) {
+      int defaultValue = ControllerConf.ControllerPeriodicTasksConf.DEFAULT_UNTRACKED_SEGMENTS_RETENTION_TIME_IN_DAYS;
+      if (oldValue != defaultValue) {
+        _untrackedSegmentsRetentionTimeInDays = defaultValue;
+        LOGGER.info("Cluster config for untrackedSegmentsRetentionTimeInDays was removed, "
+            + "reverting from {} to default ({})", oldValue, defaultValue);
+      } else {
+        LOGGER.info("Cluster config for untrackedSegmentsRetentionTimeInDays was removed, "
+            + "already at default ({})", defaultValue);
+      }
+      return;
+    }
+
+    try {
+      int parsedValue = Integer.parseInt(newValue);
+      if (parsedValue <= 0) {
+        LOGGER.warn(
+            "Invalid value for untrackedSegmentsRetentionTimeInDays: {}, must be positive, keeping current value: {}",
+            parsedValue, oldValue);
+      } else if (oldValue == parsedValue) {
+        LOGGER.info("No change in untrackedSegmentsRetentionTimeInDays, current value: {}", oldValue);
+      } else {
+        _untrackedSegmentsRetentionTimeInDays = parsedValue;
+        LOGGER.info("Updated untrackedSegmentsRetentionTimeInDays from {} to {}", oldValue, parsedValue);
+      }
+    } catch (NumberFormatException e) {
+      LOGGER.warn("Invalid value for untrackedSegmentsRetentionTimeInDays: {}, keeping current value: {}", newValue,
+          oldValue);
+    }
+  }
+
+  private void updateHybridTableRetentionStrategyEnabled(String newValue) {
+    boolean oldValue = _isHybridTableRetentionStrategyEnabled;
+
+    // When the cluster config key is deleted, newValue will be null. Reset to default.
+    boolean defaultValue = ControllerConf.DEFAULT_ENABLE_HYBRID_TABLE_RETENTION_STRATEGY;
+    if (newValue == null) {
+      if (oldValue != defaultValue) {
+        _isHybridTableRetentionStrategyEnabled = defaultValue;
+        LOGGER.info("Cluster config for isHybridTableRetentionStrategyEnabled was removed, "
+            + "reverting from {} to default ({})", oldValue, defaultValue);
+      } else {
+        LOGGER.info("Cluster config for isHybridTableRetentionStrategyEnabled was removed, "
+            + "already at default ({})", defaultValue);
+      }
+      return;
+    }
+
+    // Validate that the value is a proper boolean string
+    if (!"true".equalsIgnoreCase(newValue) && !"false".equalsIgnoreCase(newValue)) {
+      LOGGER.warn("Invalid value for isHybridTableRetentionStrategyEnabled: {}, keeping current value: {}", newValue,
+          oldValue);
+      return;
+    }
+
+    boolean parsedValue = Boolean.parseBoolean(newValue);
+    if (oldValue == parsedValue) {
+      LOGGER.info("No change in isHybridTableRetentionStrategyEnabled, current value: {}", oldValue);
+    } else {
+      _isHybridTableRetentionStrategyEnabled = parsedValue;
+      LOGGER.info("Updated isHybridTableRetentionStrategyEnabled from {} to {}", oldValue, parsedValue);
+    }
+  }
+
+  private void updateRetentionCreationTimeFallbackEnabled(String newValue) {
+    boolean oldValue = _useCreationTimeFallbackForRetention;
+
+    // When the cluster config key is deleted, newValue will be null.
+    // Reset to default since this flag gates destructive retention deletion.
+    boolean defaultValue =
+        ControllerConf.ControllerPeriodicTasksConf.DEFAULT_ENABLE_RETENTION_CREATION_TIME_FALLBACK;
+    if (newValue == null) {
+      if (oldValue != defaultValue) {
+        _useCreationTimeFallbackForRetention = defaultValue;
+        LOGGER.info("Cluster config for retentionCreationTimeFallbackEnabled was removed, "
+            + "reverting from {} to default ({})", oldValue, defaultValue);
+      } else {
+        LOGGER.info("Cluster config for retentionCreationTimeFallbackEnabled was removed, "
+            + "already at default ({})", defaultValue);
+      }
+      return;
+    }
+
+    // Validate that the value is a proper boolean string
+    if (!"true".equalsIgnoreCase(newValue) && !"false".equalsIgnoreCase(newValue)) {
+      LOGGER.warn("Invalid value for retentionCreationTimeFallbackEnabled: {}, keeping current value: {}", newValue,
+          oldValue);
+      return;
+    }
+
+    boolean parsedValue = Boolean.parseBoolean(newValue);
+    if (oldValue == parsedValue) {
+      LOGGER.info("No change in retentionCreationTimeFallbackEnabled, current value: {}", oldValue);
+    } else {
+      _useCreationTimeFallbackForRetention = parsedValue;
+      LOGGER.info("Updated retentionCreationTimeFallbackEnabled from {} to {}", oldValue, parsedValue);
+    }
+  }
+
+  @VisibleForTesting
+  public boolean isUntrackedSegmentDeletionEnabled() {
+    return _untrackedSegmentDeletionEnabled;
+  }
+
+  @VisibleForTesting
+  public boolean isRetentionCreationTimeFallbackEnabled() {
+    return _useCreationTimeFallbackForRetention;
   }
 }
